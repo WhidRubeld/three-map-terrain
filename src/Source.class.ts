@@ -1,9 +1,4 @@
-export enum MapSupportedApi {
-  OSM = 'osm',
-  Mapbox = 'mapbox',
-  EOX = 'eox',
-  Maptiler = 'maptiler'
-}
+export type MapSupportedApi = 'osm' | 'mapbox' | 'eox' | 'maptiler'
 
 export class Source {
   api: MapSupportedApi
@@ -16,10 +11,10 @@ export class Source {
 
   constructor(api: MapSupportedApi, token: string) {
     this.supportedApis = {
-      [MapSupportedApi.OSM]: this.mapUrlOSM.bind(this),
-      [MapSupportedApi.Mapbox]: this.mapUrlMapbox.bind(this),
-      [MapSupportedApi.EOX]: this.mapUrlSentinel2Cloudless.bind(this),
-      [MapSupportedApi.Maptiler]: this.mapUrlmapTiler.bind(this)
+      osm: this.mapUrlOSM.bind(this),
+      mapbox: this.mapUrlMapbox.bind(this),
+      eox: this.mapUrlSentinel2Cloudless.bind(this),
+      maptiler: this.mapUrlmapTiler.bind(this)
     }
 
     if (!(api in this.supportedApis)) throw new Error('Unknown source api')

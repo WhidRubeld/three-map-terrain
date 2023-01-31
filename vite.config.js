@@ -1,26 +1,32 @@
 import path from 'path'
 import { defineConfig } from 'vite'
+import { nodePolyfills } from 'vite-plugin-node-polyfills'
+import dts from 'vite-plugin-dts'
 
-const config = {
+export default defineConfig({
   build: {
-    build: {
-      minify: false,
-      sourcemap: true,
-      target: 'esnext',
-      lib: {
-        formats: ['es', 'cjs'],
-        entry: 'src/index.ts',
-        fileName: '[name]'
-      },
-      rollupOptions: {
-        external: (id) => !id.startsWith('.') && !path.isAbsolute(id),
-        output: {
-          preserveModules: true,
-          sourcemapExcludeSources: true
-        }
+    minify: false,
+    sourcemap: true,
+    target: 'esnext',
+    lib: {
+      entry: path.resolve(__dirname, 'src/index.ts'),
+      formats: ['es', 'cjs'],
+
+      fileName: '[name]'
+    },
+    rollupOptions: {
+      external: (id) => !id.startsWith('.') && !path.isAbsolute(id),
+      output: {
+        preserveModules: true,
+        sourcemapExcludeSources: true
       }
     }
-  }
-}
-
-export default defineConfig(({ command }) => config[command])
+  },
+  plugins: [
+    dts(),
+    nodePolyfills({
+      // Whether to polyfill `node:` protocol imports.
+      protocolImports: true
+    })
+  ]
+})
