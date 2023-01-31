@@ -1,6 +1,5 @@
 import path from 'path'
 import { defineConfig } from 'vite'
-import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import dts from 'vite-plugin-dts'
 
 export default defineConfig({
@@ -22,11 +21,5 @@ export default defineConfig({
       }
     }
   },
-  plugins: [
-    dts(),
-    nodePolyfills({
-      // Whether to polyfill `node:` protocol imports.
-      protocolImports: true
-    })
-  ]
+  plugins: [dts()]
 })

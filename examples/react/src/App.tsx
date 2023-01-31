@@ -5,7 +5,7 @@ import { MapTerrain } from './components/MapTerrain'
 function App() {
   return (
     <Canvas
-      style={{ width: '100vw !important', height: '100vh !important' }}
+      className='scene'
       onCreated={(state) => state.gl.setClearColor('#353535')}
     >
       <MapTerrain
