@@ -23,9 +23,5 @@
   "dependencies": {
     "three": "^0.149.0",
     "three-geo-terrain": "link:../.."
-  },
-  "browser": {
-    "path": false,
-    "stream": false
   }
 }
