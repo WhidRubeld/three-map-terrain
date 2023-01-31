@@ -4,11 +4,10 @@ import ndarray from 'ndarray'
 
 import {
   QuadTextureMaterial,
-  defaultTextureOptions,
   QuadTextureMaterialOptions
 } from './quad-texture-material'
 import { Utils } from './Utils.class'
-import { defaultMapOptions, MapOptions } from './Map.class'
+import { MapOptions } from './Map.class'
 
 const tileMaterial = new MeshNormalMaterial({ wireframe: true })
 
