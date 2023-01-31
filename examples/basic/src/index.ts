@@ -51,7 +51,9 @@ controls.autoRotate = true
 controls.maxPolarAngle = Math.PI * 0.3
 
 const axisHelper = new AxesHelper(2e3)
-// scene.add(axisHelper)
+
+const gridHelper = new GridHelper(3e3, 20, 'white')
+gridHelper.rotateX(Math.PI / 2)
 
 const ambientLight = new AmbientLight(0x404040, 2.5) // soft white light
 const dirLight = new DirectionalLight(0xffffff, 3.5)
@@ -61,15 +63,12 @@ dirLight.position.set(1e4, 1e4, 1e4)
 scene.add(axisHelper)
 scene.add(ambientLight)
 scene.add(dirLight)
+scene.add(gridHelper)
 
-scene.background = new Color(0x91abb5)
-scene.fog = new FogExp2(0x91abb5, 0.0000001)
+scene.background = new Color(0x353535)
+scene.fog = new FogExp2(0x353535, 0.0000001)
 
-// grid-helper
-// const gridHelper = new GridHelper(20, 20, 'white')
-// scene.add(gridHelper)
-// map
-const source = new Source('mapbox', 'your-token-here')
+const source = new Source('mapbox', 'your-api-key')
 const map = new Map({
   source: source,
   location: [27.986065, 86.922623],
@@ -77,6 +76,9 @@ const map = new Map({
 })
 scene.add(map.terrain)
 map.init()
+map.getPositionAsync([27.986065, 86.922623, 0]).then((res) => {
+  console.log('TEST', res)
+})
 
 document.body.appendChild(renderer.domElement)
 
