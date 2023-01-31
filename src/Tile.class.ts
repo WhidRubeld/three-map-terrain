@@ -30,8 +30,8 @@ export class Tile {
   seamX = false
   seamY = false
 
-  options = defaultMapOptions
-  materialOptions = defaultTextureOptions
+  options: MapOptions
+  materialOptions: QuadTextureMaterialOptions
   mesh: Mesh = new Mesh()
   geometry = new PlaneGeometry()
 

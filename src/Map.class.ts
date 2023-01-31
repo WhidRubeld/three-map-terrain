@@ -8,23 +8,6 @@ import { Source } from './Source.class'
 import { Tile } from './Tile.class'
 import { Utils } from './Utils.class'
 
-export const scales = {
-  2: 0.002,
-  3: 0.003,
-  4: 0.0075,
-  5: 0.009,
-  6: 0.01,
-  7: 0.012,
-  8: 0.015,
-  9: 0.02,
-  10: 0.03,
-  11: 0.045,
-  12: 0.085,
-  13: 0.15,
-  14: 0.18,
-  15: 0.225
-}
-
 export type MapOptions = {
   nTiles: number
   zoom: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15
@@ -45,7 +28,7 @@ export const defaultMapOptions: MapOptions = {
   zoom: 11,
   tileSize: 600,
   tileSegments: 100,
-  zScale: scales[11]
+  zScale: 0.045
 }
 
 export class Map {
@@ -72,7 +55,7 @@ export class Map {
     zoom: 11,
     tileSize: 600,
     tileSegments: 100,
-    zScale: scales[11]
+    zScale: 0.045
   }
 
   constructor({ source, location, options = {}, material = {} }: MapProps) {
@@ -91,7 +74,6 @@ export class Map {
 
   getOptions(providedOptions: MapProps['options'] = {}) {
     const options = Object.assign({}, this.defaultOptions, providedOptions)
-    options.zScale = scales[options.zoom]
     options.tileSegments = Math.min(256, Math.round(options.tileSegments))
     return options
   }
