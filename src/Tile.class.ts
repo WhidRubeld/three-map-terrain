@@ -47,6 +47,9 @@ export class Tile {
     this.x = x
     this.y = y
     this.mapCenter = mapCenter
+    this.mapUrl = mapUrl
+    this.options = options
+    this.materialOptions = materialOptions
     this.position = Utils.tile2position(
       this.z,
       this.x,
@@ -54,9 +57,6 @@ export class Tile {
       this.mapCenter,
       this.options.tileSize
     )
-    this.mapUrl = mapUrl
-    this.options = options
-    this.materialOptions = materialOptions
   }
 
   key() {

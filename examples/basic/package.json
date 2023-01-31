@@ -4,13 +4,14 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "webpack serve --open"
+    "start": "webpack serve"
   },
   "author": "",
   "license": "ISC",
   "devDependencies": {
     "css-loader": "^6.7.3",
     "html-webpack-plugin": "^5.5.0",
+    "node-polyfill-webpack-plugin": "^2.0.1",
     "progress-bar-webpack-plugin": "^2.1.0",
     "style-loader": "^3.3.1",
     "ts-loader": "^9.4.2",

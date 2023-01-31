@@ -2,6 +2,7 @@ const { resolve } = require('path')
 
 const HtmlWebpackPlugin = require('html-webpack-plugin')
 const ProgressBarPlugin = require('progress-bar-webpack-plugin')
+const NodePolyfillPlugin = require('node-polyfill-webpack-plugin')
 
 module.exports = {
   mode: 'development',
@@ -41,6 +42,7 @@ module.exports = {
     extensions: ['.ts', '.tsx', '.js', '.jsx']
   },
   plugins: [
+    new NodePolyfillPlugin(),
     new ProgressBarPlugin(),
     new HtmlWebpackPlugin({
       template: `${__dirname}/src/index.html`,

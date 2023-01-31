@@ -47,6 +47,9 @@ void main() {
 
 const fragmentShader = `
 #define PHONG
+#ifndef FLAT_SHADED
+	varying vec3 vNormal;
+#endif
 uniform vec3 diffuse;
 uniform vec3 emissive;
 uniform vec3 specular;

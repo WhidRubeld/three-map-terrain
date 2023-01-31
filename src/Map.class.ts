@@ -33,13 +33,9 @@ export const defaultMapOptions: MapOptions = {
 
 export class Map {
   materialOptions: QuadTextureMaterialOptions = defaultTextureOptions
-  zoom: number
   source: Source
   geoLocation: [number, number]
   options: MapOptions
-  tileSize: number
-  nTiles: number
-
   tileCache: {
     [key: string]: Tile
   } = {}
@@ -64,9 +60,6 @@ export class Map {
 
     this.materialOptions = Object.assign(defaultTextureOptions, material)
     this.options = this.getOptions(options)
-    this.nTiles = this.options.nTiles
-    this.zoom = this.options.zoom
-    this.tileSize = this.options.tileSize
 
     this.terrain = new Group()
     this.tileCache = {}
@@ -80,20 +73,20 @@ export class Map {
 
   init(cb?: () => void) {
     const [lat, lng] = this.geoLocation
-    const [x, y] = point2tile(lng, lat, this.zoom)
+    const [x, y] = point2tile(lng, lat, this.options.zoom)
     this.center = { x, y }
 
-    const tileOffset = Math.floor(this.nTiles / 2)
+    const tileOffset = Math.floor(this.options.nTiles / 2)
 
-    for (let i = 0; i < this.nTiles; i++) {
-      for (let j = 0; j < this.nTiles; j++) {
+    for (let i = 0; i < this.options.nTiles; i++) {
+      for (let j = 0; j < this.options.nTiles; j++) {
         const tile = new Tile(
-          this.zoom,
+          this.options.zoom,
           this.center.x + i - tileOffset,
           this.center.y + j - tileOffset,
           this.center,
           this.source.mapUrl(
-            this.zoom,
+            this.options.zoom,
             this.center.x + i - tileOffset,
             this.center.y + j - tileOffset
           ),
@@ -102,7 +95,7 @@ export class Map {
         )
         this.tileCache[tile.key()] = tile
 
-        if (i === this.nTiles - 1 && j === this.nTiles - 1) {
+        if (i === this.options.nTiles - 1 && j === this.options.nTiles - 1) {
           if (cb) cb()
         }
       }
@@ -126,11 +119,11 @@ export class Map {
 
   addTileSegment(x: number, y: number) {
     const tile = new Tile(
-      this.zoom,
+      this.options.zoom,
       x,
       y,
       this.center,
-      this.source.mapUrl(this.zoom, x, y),
+      this.source.mapUrl(this.options.zoom, x, y),
       this.options,
       this.materialOptions
     )
@@ -170,22 +163,22 @@ export class Map {
     const defaultOptions = { loadTile: true }
     const opts = Object.assign({}, defaultOptions, providedOptions)
 
-    const { options, zoom, tileCache, center, tileSize } = this
+    const { options, tileCache, center } = this
     const { zScale } = options
 
-    const [x, y, z] = point2tile(lng, lat, zoom)
+    const [x, y, z] = point2tile(lng, lat, options.zoom)
     const tileKey = Utils.getTileKey(z, x, y)
 
     if (opts.loadTile && !(tileKey in tileCache)) this.addTileSegment(x, y)
 
     const [w, s, e, n] = tile2bbox([x, y, z])
-    const position = Utils.tile2position(z, x, y, center, tileSize)
+    const position = Utils.tile2position(z, x, y, center, options.tileSize)
 
-    const xStart = position.x - tileSize / 2
-    const yStart = position.y - tileSize / 2
+    const xStart = position.x - options.tileSize / 2
+    const yStart = position.y - options.tileSize / 2
 
-    const xOffset = tileSize * (1 - (e - lng) / (e - w))
-    const yOffset = tileSize * (1 - (n - lat) / (n - s))
+    const xOffset = options.tileSize * (1 - (e - lng) / (e - w))
+    const yOffset = options.tileSize * (1 - (n - lat) / (n - s))
 
     return [xStart + xOffset, yStart + yOffset, alt * zScale]
   }
