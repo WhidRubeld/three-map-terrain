@@ -134,7 +134,7 @@ export type QuadTextureMaterialOptions = {
 
 export const defaultTextureOptions: QuadTextureMaterialOptions = {
   lights: true,
-  wireframe: true,
+  wireframe: false,
   fog: true
 }
 

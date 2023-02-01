@@ -68,17 +68,14 @@ scene.add(gridHelper)
 scene.background = new Color(0x353535)
 scene.fog = new FogExp2(0x353535, 0.0000001)
 
-const source = new Source('mapbox', 'your-api-key')
+const source = new Source('mapbox', 'your-mapbox-key')
 const map = new Map({
   source: source,
   location: [27.986065, 86.922623],
-  material: { wireframe: false }
+  material: { wireframe: true }
 })
 scene.add(map.terrain)
 map.init()
-map.getPositionAsync([27.986065, 86.922623, 0]).then((res) => {
-  console.log('TEST', res)
-})
 
 document.body.appendChild(renderer.domElement)
 

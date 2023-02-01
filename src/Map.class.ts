@@ -110,37 +110,28 @@ export class Map {
     // this.onReady()
   }
 
-  addTileSegmentAsync(x: number, y: number) {
-    return new Promise<Tile>(async (resolve, reject) => {
-      try {
-        const tile = new Tile(
-          this.options.zoom,
-          x,
-          y,
-          this.center,
-          this.source.mapUrl(this.options.zoom, x, y),
-          this.options,
-          this.materialOptions
-        )
+  addTileSegment(x: number, y: number) {
+    const tile = new Tile(
+      this.options.zoom,
+      x,
+      y,
+      this.center,
+      this.source.mapUrl(this.options.zoom, x, y),
+      this.options,
+      this.materialOptions
+    )
 
-        if (tile.key() in this.tileCache) {
-          throw new Error('Tile already added')
-        }
+    if (tile.key() in this.tileCache) return
+    this.tileCache[tile.key()] = tile
 
-        this.tileCache[tile.key()] = tile
-
-        const data = await tile.fetch()
-        this.terrain.add(data.mesh)
-
+    tile
+      .fetch()
+      .then((v) => this.terrain.add(v.mesh))
+      .then(() => {
         Object.values(this.tileCache).forEach((v) => {
           v.resolveSeams(this.tileCache)
         })
-
-        resolve(data)
-      } catch (e) {
-        reject(e)
-      }
-    })
+      })
   }
 
   clean() {
@@ -157,44 +148,27 @@ export class Map {
     this.tileCache = {}
   }
 
-  getPositionAsync(
+  getPosition(
     [lat, lng, alt]: [number, number, number],
-    providedOptions: { loadTile: boolean } = { loadTile: true }
+    opts: { loadTile: boolean } = { loadTile: true }
   ) {
-    return new Promise<[number, number, number]>(async (resolve, reject) => {
-      try {
-        const defaultOptions = { loadTile: true }
-        const opts = Object.assign({}, defaultOptions, providedOptions)
+    const { options, tileCache, center } = this
+    const { zScale } = options
 
-        const { options, tileCache, center } = this
-        const { zScale } = options
+    const [x, y, z] = point2tile(lng, lat, options.zoom)
+    const tileKey = Utils.getTileKey(z, x, y)
 
-        const [x, y, z] = point2tile(lng, lat, options.zoom)
-        const tileKey = Utils.getTileKey(z, x, y)
+    if (!(tileKey in tileCache) && opts.loadTile) this.addTileSegment(x, y)
 
-        let tile: Tile
-        if (!(tileKey in tileCache)) {
-          if (opts.loadTile) {
-            tile = await this.addTileSegmentAsync(x, y)
-          }
-          // TODO: add reject if location without elevation
-        } else tile = tileCache[tileKey]
+    const [w, s, e, n] = tile2bbox([x, y, z])
+    const position = Utils.tile2position(z, x, y, center, options.tileSize)
 
-        // console.log(tile)
+    const xStart = position.x - options.tileSize / 2
+    const yStart = position.y - options.tileSize / 2
 
-        const [w, s, e, n] = tile2bbox([x, y, z])
-        const position = Utils.tile2position(z, x, y, center, options.tileSize)
+    const xOffset = options.tileSize * (1 - (e - lng) / (e - w))
+    const yOffset = options.tileSize * (1 - (n - lat) / (n - s))
 
-        const xStart = position.x - options.tileSize / 2
-        const yStart = position.y - options.tileSize / 2
-
-        const xOffset = options.tileSize * (1 - (e - lng) / (e - w))
-        const yOffset = options.tileSize * (1 - (n - lat) / (n - s))
-
-        resolve([xStart + xOffset, yStart + yOffset, alt * zScale])
-      } catch (e) {
-        reject(e)
-      }
-    })
+    return [xStart + xOffset, yStart + yOffset, alt * zScale]
   }
 }
