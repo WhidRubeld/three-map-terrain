@@ -8,6 +8,8 @@
 A JavaScript library to build 3D maps with [three.js](https://threejs.org).
 <img width="1149" alt="Screenshot 2023-02-02 at 23 21 12" src="https://user-images.githubusercontent.com/35730139/216441342-ffaeeaee-6811-476f-95d1-d2119d76b9d4.png">
 
+[Live demo](https://whidrubeld.github.io/three-geo-map/) / [Source code](https://github.com/WhidRubeld/three-geo-map/tree/master/examples/basic)
+
 ## About
 
 [three-geo-map](https://github.com/WhidRubeld/three-geo-map) takes two slippy map tilesets, one to fetch elevation data tiles, the other to texture the meshes built from said elevation data (any XYZ tileserver will do).
