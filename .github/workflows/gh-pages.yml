@@ -23,15 +23,13 @@ jobs:
           yarn build
       - name: Install project deps
         run: |
-          cd examples/basic
+          cd ./examples/basic
           yarn
       - name: Build project
         run: |
-          cd examples/basic
-          yarn
           yarn build
-      - name: Deploy to GH Page
-        uses: JamesIves/github-pages-deploy-action@v4
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4.4.1
         with:
           branch: gh-pages
-          folder: examples/basic/dist
+          folder: dist
