@@ -160,6 +160,6 @@ export class Map {
     const xOffset = options.tileSize * (1 - (e - lng) / (e - w))
     const yOffset = options.tileSize * (1 - (n - lat) / (n - s))
 
-    return [xStart + xOffset, yStart + yOffset, alt * zScale]
+    return { x: xStart + xOffset, y: yStart + yOffset, z: alt * zScale }
   }
 }
