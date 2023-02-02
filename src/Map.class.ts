@@ -17,7 +17,7 @@ export type MapOptions = {
 
 export type MapProps = {
   source: Source
-  location: [number, number]
+  location: { lat: number, lon: number }
   options?: Partial<MapOptions>
   material?: Partial<QuadTextureMaterialOptions>
 }
@@ -33,7 +33,7 @@ export const defaultMapOptions: MapOptions = {
 export class Map {
   materialOptions: QuadTextureMaterialOptions = defaultTextureOptions
   source: Source
-  geoLocation: [number, number]
+  geoLocation: { lat: number, lon: number }
   options: MapOptions
   tileCache: {
     [key: string]: Tile

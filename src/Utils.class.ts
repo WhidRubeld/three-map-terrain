@@ -35,11 +35,11 @@ export class Utils {
     return [w, s, e, n]
   }
 
-  static geo2tile(geoLocation: [number, number], zoom: number) {
+  static geo2tile(geoLocation: { lat: number, lon: number }, zoom: number) {
     const maxTile = Math.pow(2, zoom)
     return {
-      x: Math.abs(Math.floor(Utils.long2tile(geoLocation[1], zoom)) % maxTile),
-      y: Math.abs(Math.floor(Utils.lat2tile(geoLocation[0], zoom)) % maxTile)
+      x: Math.abs(Math.floor(Utils.long2tile(geoLocation.lon, zoom)) % maxTile),
+      y: Math.abs(Math.floor(Utils.lat2tile(geoLocation.lat, zoom)) % maxTile)
     }
   }
 

@@ -9,7 +9,7 @@ function App() {
       onCreated={(state) => state.gl.setClearColor('#353535')}
     >
       <MapTerrain
-        location={[27.986065, 86.922623]}
+        location={{ lat: 45.916216, lon: 6.860973 }}
         source={{ api: 'mapbox', token: '123' }}
       />
     </Canvas>

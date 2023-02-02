@@ -73,9 +73,8 @@ scene.fog = new FogExp2(0x222222, 0.0000001)
 
 const source = new Source({ api: 'eox' })
 const map = new Map({
-  source: source,
-  // location: [27.986065, 86.922623],
-  location: [45.916216, 6.860973]
+  source,
+  location: { lat: 45.916216, lon: 6.860973 }
 })
 scene.add(map.terrain)
 map.init()
