@@ -15,13 +15,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install deps
+      - name: Install package deps
         run: yarn
 
       - name: Build package
         run: |
-          yarn
           yarn build
+      - name: Install project deps
+        run: |
+          cd examples/basic
+          yarn
       - name: Build project
         run: |
           cd examples/basic
