@@ -163,9 +163,8 @@ export class Tile {
         this.mesh.geometry.attributes.position.setZ(i, z)
       }
     } else {
-      // TODO - test
-      for (let i = tPosition - nPosition; i < tPosition; i++) {
-        const z = this.mesh.geometry.attributes.position.getZ(i)
+      for (let i = tPosition - nPosition; i < tPosition - 1; i++) {
+        const z = this.mesh.geometry.attributes.position.getZ(i - nPosition)
         this.mesh.geometry.attributes.position.setZ(i, z)
       }
     }
