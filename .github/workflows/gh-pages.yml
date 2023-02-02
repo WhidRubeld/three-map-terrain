@@ -24,7 +24,7 @@ jobs:
           yarn build
       - name: Build project
         run: |
-          cd examples/basic
+          cd examples/basic/
           yarn
           yarn build
       - name: Deploy to GH Page
