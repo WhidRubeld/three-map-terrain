@@ -23,12 +23,13 @@ jobs:
           yarn
           yarn build
       - name: Build project
+        with:
+          folder: examples/basic
         run: |
-          cd examples/basic/
           yarn
           yarn build
       - name: Deploy to GH Page
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           branch: gh-pages
-          folder: examples/dist
+          folder: examples/basic/dist
