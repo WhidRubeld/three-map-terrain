@@ -2,12 +2,9 @@ import getPixels from 'get-pixels'
 import { Mesh, MeshNormalMaterial, PlaneGeometry } from 'three'
 import ndarray from 'ndarray'
 
-import {
-  QuadTextureMaterial,
-  QuadTextureMaterialOptions
-} from './quad-texture-material'
+import { QuadTextureMaterial } from './quad-texture-material'
 import { Utils } from './Utils.class'
-import { Map, MapOptions } from './Map.class'
+import { Map } from './Map.class'
 
 const tileMaterial = new MeshNormalMaterial({ wireframe: true })
 
@@ -18,19 +15,27 @@ export class Tile {
   z: number
 
   baseURL = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium'
-  shape: number[] | null = null
-  elevation: Float32Array | null = null
-  seamX = false
-  seamY = false
 
-  mesh: Mesh = new Mesh()
-  geometry = new PlaneGeometry()
+  shape: number[] | null
+  elevation: Float32Array | null
+
+  seamX: boolean
+  seamY: boolean
+
+  mesh: Mesh
+  geometry: PlaneGeometry
 
   constructor(map: Map, z: number, x: number, y: number) {
     this.map = map
     this.z = z
     this.x = x
     this.y = y
+
+    this.shape = null
+    this.elevation = null
+
+    this.seamX = false
+    this.seamY = false
   }
 
   key() {
@@ -156,17 +161,15 @@ export class Tile {
         )
         return
       }
-      for (let i = tPosition - nPosition; i < tPosition; i++) {
-        const z = neighbor.mesh.geometry.attributes.position.getZ(
-          i - (tPosition - nPosition)
-        )
-        this.mesh.geometry.attributes.position.setZ(i, z)
-      }
-    } else {
-      for (let i = tPosition - nPosition; i < tPosition - 1; i++) {
-        const z = this.mesh.geometry.attributes.position.getZ(i - nPosition)
-        this.mesh.geometry.attributes.position.setZ(i, z)
-      }
+    }
+
+    for (let i = tPosition - nPosition; i < tPosition; i++) {
+      const z = neighbor
+        ? neighbor.mesh.geometry.attributes.position.getZ(
+            i - (tPosition - nPosition)
+          )
+        : this.mesh.geometry.attributes.position.getZ(i - nPosition)
+      this.mesh.geometry.attributes.position.setZ(i, z)
     }
   }
 
@@ -184,21 +187,15 @@ export class Tile {
         )
         return
       }
+    }
 
-      for (let i = nPosition - 1; i <= tPosition; i += nPosition) {
-        const z = neighbor.mesh.geometry.attributes.position.getZ(
-          i - nPosition + 1
-        )
-        this.mesh.geometry.attributes.position.setZ(i, z)
-      }
-    } else {
-      for (let i = nPosition - 1; i <= tPosition; i += nPosition) {
-        const z = this.mesh.geometry.attributes.position.getZ(i - nPosition - 1)
-        this.mesh.geometry.attributes.position.setZ(i, z)
-      }
+    for (let i = nPosition - 1; i <= tPosition; i += nPosition) {
+      const z = neighbor
+        ? neighbor.mesh.geometry.attributes.position.getZ(i - nPosition + 1)
+        : this.mesh.geometry.attributes.position.getZ(i - 1)
+      this.mesh.geometry.attributes.position.setZ(i, z)
     }
   }
-  // https://thecodersblog.com/polyfill-node-core-modules-webpack-5
 
   resolveSeams(cache: { [key: string]: Tile }) {
     this.resolveSeamY(cache[this.keyNeighY()])
