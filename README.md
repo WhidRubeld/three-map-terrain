@@ -1,1 +1,1 @@
-# three-geo-terrain
+# three-geo-map

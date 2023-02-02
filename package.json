@@ -1,5 +1,5 @@
 {
-  "name": "three-geo-terrain",
+  "name": "three-geo-map",
   "version": "1.0.0",
   "description": "",
   "author": "WhidRubeld",
@@ -26,13 +26,13 @@
     "react"
   ],
   "bugs": {
-    "url": "https://github.com/WhidRubeld/three-geo-terrain/issues"
+    "url": "https://github.com/WhidRubeld/three-geo-map/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/WhidRubeld/three-geo-terrain.git"
+    "url": "git+https://github.com/WhidRubeld/three-geo-map.git"
   },
-  "homepage": "https://github.com/WhidRubeld/three-geo-terrain#readme",
+  "homepage": "https://github.com/WhidRubeld/three-geo-map#readme",
   "devDependencies": {
     "@types/get-pixels": "^3.3.2",
     "@types/three": "^0.148.0",

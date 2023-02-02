@@ -6,7 +6,7 @@ import React, {
   useImperativeHandle
 } from 'react'
 
-import { MapProps, Map, Source } from 'three-geo-terrain'
+import { MapProps, Map, Source } from 'three-geo-map'
 
 export type MapTerrainProps = Omit<MapProps, 'source'> & {
   source: { api: string; token: string }

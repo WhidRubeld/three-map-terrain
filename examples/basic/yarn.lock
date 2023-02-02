@@ -2752,7 +2752,7 @@ terser@^5.10.0, terser@^5.14.1:
     commander "^2.20.0"
     source-map-support "~0.5.20"
 
-"three-geo-terrain@link:../..":
+"three-geo-map@link:../..":
   version "0.0.0"
   uid ""
 
