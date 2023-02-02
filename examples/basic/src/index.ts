@@ -11,7 +11,10 @@ import {
   AmbientLight,
   DirectionalLight,
   Color,
-  FogExp2
+  FogExp2,
+  SphereGeometry,
+  MeshBasicMaterial,
+  Mesh
 } from 'three'
 import { MapControls } from 'three/examples/jsm/controls/OrbitControls.js'
 
@@ -76,6 +79,18 @@ const map = new Map({
 })
 scene.add(map.terrain)
 map.init()
+
+// add object by coords
+const geometry = new SphereGeometry(8, 24, 12)
+const material = new MeshBasicMaterial({ color: 0xf04040 })
+const sphere = new Mesh(geometry, material)
+const spherePosition = map.getPosition({
+  lat: 45.916216,
+  lon: 6.860973,
+  alt: 1027
+})
+sphere.position.set(spherePosition.x, spherePosition.y, spherePosition.z + 8)
+scene.add(sphere)
 
 document.body.appendChild(renderer.domElement)
 

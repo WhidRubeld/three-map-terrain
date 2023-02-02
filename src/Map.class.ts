@@ -134,7 +134,7 @@ export class Map {
   }
 
   getPosition(
-    [lat, lng, alt]: [number, number, number],
+    { lat, lon, alt }: { lat: number; lon: number; alt: number },
     opts: { loadTile: boolean } = { loadTile: true }
   ) {
     const { options, tileCache, center } = this
@@ -143,7 +143,7 @@ export class Map {
     const { x, y, z } = Utils.position2tile(
       options.zoom,
       lat,
-      lng,
+      lon,
       center,
       options.tileSize
     )
@@ -157,7 +157,7 @@ export class Map {
     const xStart = position.x - options.tileSize / 2
     const yStart = position.y - options.tileSize / 2
 
-    const xOffset = options.tileSize * (1 - (e - lng) / (e - w))
+    const xOffset = options.tileSize * (1 - (e - lon) / (e - w))
     const yOffset = options.tileSize * (1 - (n - lat) / (n - s))
 
     return { x: xStart + xOffset, y: yStart + yOffset, z: alt * zScale }
