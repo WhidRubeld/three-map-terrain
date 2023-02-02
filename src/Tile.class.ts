@@ -190,61 +190,73 @@ export class Tile {
     })
   }
 
-  resolveSeamY(neighbor: Tile) {
+  resolveSeamY(neighbor?: Tile) {
     const tPosition = this.mesh.geometry.attributes.position.count
     const nPosition = Math.sqrt(tPosition)
-    const nPositionN = Math.sqrt(
-      neighbor.mesh.geometry.attributes.position.count
-    )
-    if (nPosition !== nPositionN) {
-      console.error('resolveSeamY only implemented for geometries of same size')
-      return
-    }
-    for (let i = tPosition - nPosition; i < tPosition; i++) {
-      this.mesh.geometry.attributes.position.setZ(
-        i,
-        neighbor.mesh.geometry.attributes.position.getZ(
+
+    if (neighbor) {
+      const nPositionN = Math.sqrt(
+        neighbor.mesh.geometry.attributes.position.count
+      )
+      if (nPosition !== nPositionN) {
+        console.error(
+          'resolveSeamY only implemented for geometries of same size'
+        )
+        return
+      }
+      for (let i = tPosition - nPosition; i < tPosition; i++) {
+        const z = neighbor.mesh.geometry.attributes.position.getZ(
           i - (tPosition - nPosition)
         )
-      )
+        this.mesh.geometry.attributes.position.setZ(i, z)
+      }
+    } else {
+      // TODO - test
+      for (let i = tPosition - nPosition; i < tPosition; i++) {
+        const z = this.mesh.geometry.attributes.position.getZ(i)
+        this.mesh.geometry.attributes.position.setZ(i, z)
+      }
     }
   }
 
-  resolveSeamX(neighbor: Tile) {
+  resolveSeamX(neighbor?: Tile) {
     const tPosition = this.mesh.geometry.attributes.position.count
     const nPosition = Math.sqrt(tPosition)
-    const nPositionN = Math.sqrt(
-      neighbor.mesh.geometry.attributes.position.count
-    )
-    if (nPosition !== nPositionN) {
-      console.error('resolveSeamX only implemented for geometries of same size')
-      return
-    }
-    for (let i = nPosition - 1; i < tPosition; i += nPosition) {
-      this.mesh.geometry.attributes.position.setZ(
-        i,
-        neighbor.mesh.geometry.attributes.position.getZ(i - nPosition + 1)
+
+    if (neighbor) {
+      const nPositionN = Math.sqrt(
+        neighbor.mesh.geometry.attributes.position.count
       )
+      if (nPosition !== nPositionN) {
+        console.error(
+          'resolveSeamX only implemented for geometries of same size'
+        )
+        return
+      }
+
+      for (let i = nPosition - 1; i <= tPosition; i += nPosition) {
+        const z = neighbor.mesh.geometry.attributes.position.getZ(
+          i - nPosition + 1
+        )
+        this.mesh.geometry.attributes.position.setZ(i, z)
+      }
+    } else {
+      for (let i = nPosition - 1; i <= tPosition; i += nPosition) {
+        const z = this.mesh.geometry.attributes.position.getZ(i - nPosition - 1)
+        this.mesh.geometry.attributes.position.setZ(i, z)
+      }
     }
   }
+  // https://thecodersblog.com/polyfill-node-core-modules-webpack-5
 
   resolveSeams(cache: { [key: string]: Tile }) {
-    let worked = false
-    const neighY = cache[this.keyNeighY()]
-    const neighX = cache[this.keyNeighX()]
-    if (this.seamY === false && neighY && neighY.mesh) {
-      this.resolveSeamY(neighY)
-      this.seamY = true
-      worked = true
-    }
-    if (this.seamX === false && neighX && neighX.mesh) {
-      this.resolveSeamX(neighX)
-      this.seamX = true
-      worked = true
-    }
-    if (worked) {
-      this.mesh.geometry.attributes.position.needsUpdate = true
-      this.mesh.geometry.computeVertexNormals()
-    }
+    this.resolveSeamY(cache[this.keyNeighY()])
+    this.resolveSeamX(cache[this.keyNeighX()])
+
+    this.seamY = true
+    this.seamX = true
+
+    this.mesh.geometry.attributes.position.needsUpdate = true
+    this.mesh.geometry.computeVertexNormals()
   }
 }
