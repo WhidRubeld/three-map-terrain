@@ -6,7 +6,7 @@
 
 
 A JavaScript library to build 3D maps with [three.js](https://threejs.org).
-
+<img width="1149" alt="Screenshot 2023-02-02 at 23 21 12" src="https://user-images.githubusercontent.com/35730139/216441342-ffaeeaee-6811-476f-95d1-d2119d76b9d4.png">
 
 ## About
 
@@ -113,6 +113,9 @@ These props are passed to [ShaderMaterial](https://threejs.org/docs/#api/en/mate
 ### Map helpers
 
 #### Determine the location of a point by coordinates
+<img width="1149" alt="Screenshot 2023-02-02 at 23 21 22" src="https://user-images.githubusercontent.com/35730139/216441564-18479cb3-7103-42a0-bb33-32b4b7314614.png">
+
+
 ```typescript
 const { x, y, z } = map.getPosition({ lat: 45.916216, lon: 6.860973, alt: 1027 }, { loadTile: true })
 ```
