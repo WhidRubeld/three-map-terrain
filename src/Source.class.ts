@@ -1,15 +1,18 @@
 export type MapSupportedApi = 'osm' | 'mapbox' | 'eox' | 'maptiler'
-
 export class Source {
   api: MapSupportedApi
-  token: string
+  token: string = ''
   //  options
   supportedApis: {
     [name in MapSupportedApi]: (z: number, x: number, y: number) => string
   }
   //  supportedApis:
 
-  constructor(api: MapSupportedApi, token: string) {
+  constructor(
+    props:
+      | { api: 'osm' | 'eox' }
+      | { api: 'mapbox' | 'maptiler'; token: string }
+  ) {
     this.supportedApis = {
       osm: this.mapUrlOSM.bind(this),
       mapbox: this.mapUrlMapbox.bind(this),
@@ -17,11 +20,12 @@ export class Source {
       maptiler: this.mapUrlmapTiler.bind(this)
     }
 
-    if (!(api in this.supportedApis)) throw new Error('Unknown source api')
+    if (!(props.api in this.supportedApis))
+      throw new Error('Unknown source api')
 
-    this.api = api
-    this.token = token
-    // this.options = options
+    this.api = props.api
+    // @ts-ignore
+    if (props.token) this.token = props.token
   }
 
   mapUrlOSM(z: number, x: number, y: number) {

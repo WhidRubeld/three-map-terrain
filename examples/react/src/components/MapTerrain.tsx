@@ -6,10 +6,10 @@ import React, {
   useImperativeHandle
 } from 'react'
 
-import { MapProps, Map, Source, MapSupportedApi } from 'three-geo-terrain'
+import { MapProps, Map, Source } from 'three-geo-terrain'
 
 export type MapTerrainProps = Omit<MapProps, 'source'> & {
-  source: { api: MapSupportedApi; token: string }
+  source: { api: string; token: string }
   onReady?: () => void
 }
 
@@ -23,7 +23,7 @@ export const MapTerrain = forwardRef<Map | undefined, MapTerrainProps>(
     useEffect(() => {
       setMap(
         new Map({
-          source: new Source(source.api, source.token),
+          source: new Source({ api: 'eox' }),
           location: location,
           material: material,
           options: options

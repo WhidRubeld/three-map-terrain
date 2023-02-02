@@ -65,14 +65,14 @@ scene.add(ambientLight)
 scene.add(dirLight)
 scene.add(gridHelper)
 
-scene.background = new Color(0x353535)
-scene.fog = new FogExp2(0x353535, 0.0000001)
+scene.background = new Color(0x222222)
+scene.fog = new FogExp2(0x222222, 0.0000001)
 
-const source = new Source('mapbox', 'your-mapbox-key')
+const source = new Source({ api: 'eox' })
 const map = new Map({
   source: source,
-  location: [27.986065, 86.922623],
-  material: { wireframe: true }
+  // location: [27.986065, 86.922623],
+  location: [45.916216, 6.860973]
 })
 scene.add(map.terrain)
 map.init()
