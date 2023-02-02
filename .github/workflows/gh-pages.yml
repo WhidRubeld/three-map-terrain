@@ -15,22 +15,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install package deps
-        run: yarn
-
       - name: Build package
         run: |
-          yarn build
-      - name: Install project deps
-        run: |
-          cd ./examples/basic
           yarn
+          yarn build
       - name: Build project
         run: |
           cd ./examples/basic
+          yarn
           yarn build
       - name: Deploy to GitHub Pages
         uses: JamesIves/github-pages-deploy-action@v4.4.1
         with:
           branch: gh-pages
-          folder: dist
+          folder: ./examples/basic/dist
