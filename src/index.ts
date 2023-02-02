@@ -1,4 +1,3 @@
-export * from './helpers'
 export * from './quad-texture-material'
 export * from './Utils.class'
 export * from './Source.class'

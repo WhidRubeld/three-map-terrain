@@ -7,56 +7,30 @@ import {
   QuadTextureMaterialOptions
 } from './quad-texture-material'
 import { Utils } from './Utils.class'
-import { MapOptions } from './Map.class'
+import { Map, MapOptions } from './Map.class'
 
 const tileMaterial = new MeshNormalMaterial({ wireframe: true })
 
 export class Tile {
+  map: Map
   x: number
   y: number
   z: number
-  mapCenter: { x: number; y: number } = { x: 0, y: 0 }
-  position: {
-    x: number
-    y: number
-    z: number
-  }
 
-  mapUrl: string
   baseURL = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium'
   shape: number[] | null = null
   elevation: Float32Array | null = null
   seamX = false
   seamY = false
 
-  options: MapOptions
-  materialOptions: QuadTextureMaterialOptions
   mesh: Mesh = new Mesh()
   geometry = new PlaneGeometry()
 
-  constructor(
-    z: number,
-    x: number,
-    y: number,
-    mapCenter: { x: number; y: number },
-    mapUrl: string,
-    options: MapOptions,
-    materialOptions: QuadTextureMaterialOptions
-  ) {
+  constructor(map: Map, z: number, x: number, y: number) {
+    this.map = map
     this.z = z
     this.x = x
     this.y = y
-    this.mapCenter = mapCenter
-    this.mapUrl = mapUrl
-    this.options = options
-    this.materialOptions = materialOptions
-    this.position = Utils.tile2position(
-      this.z,
-      this.x,
-      this.y,
-      this.mapCenter,
-      this.options.tileSize
-    )
   }
 
   key() {
@@ -69,6 +43,10 @@ export class Tile {
 
   keyNeighY() {
     return `${this.z}/${this.x}/${this.y + 1}`
+  }
+
+  mapUrl() {
+    return this.map.source.mapUrl(this.z, this.x, this.y)
   }
 
   url() {
@@ -94,10 +72,10 @@ export class Tile {
 
   buildGeometry() {
     const geometry = new PlaneGeometry(
-      this.options.tileSize,
-      this.options.tileSize,
-      this.options.tileSegments,
-      this.options.tileSegments
+      this.map.options.tileSize,
+      this.map.options.tileSize,
+      this.map.options.tileSegments,
+      this.map.options.tileSegments
     )
     const nPosition = Math.sqrt(geometry.attributes.position.count)
     const nElevation = Math.sqrt(this.elevation?.length || 0)
@@ -112,7 +90,7 @@ export class Tile {
       const elevation =
         this.elevation[
           Math.round(Math.round(x * ratio) * nElevation + y * ratio)
-        ] * this.options.zScale
+        ] * this.map.options.zScale
 
       geometry.attributes.position.setZ(i, elevation)
     }
@@ -122,48 +100,16 @@ export class Tile {
 
   childrens() {
     return [
-      new Tile(
-        this.z + 1,
-        this.x * 2,
-        this.y * 2,
-        this.mapCenter,
-        this.mapUrl,
-        this.options,
-        this.materialOptions
-      ),
-      new Tile(
-        this.z + 1,
-        this.x * 2,
-        this.y * 2 + 1,
-        this.mapCenter,
-        this.mapUrl,
-        this.options,
-        this.materialOptions
-      ),
-      new Tile(
-        this.z + 1,
-        this.x * 2 + 1,
-        this.y * 2,
-        this.mapCenter,
-        this.mapUrl,
-        this.options,
-        this.materialOptions
-      ),
-      new Tile(
-        this.z + 1,
-        this.x * 2 + 1,
-        this.y * 2 + 1,
-        this.mapCenter,
-        this.mapUrl,
-        this.options,
-        this.materialOptions
-      )
+      new Tile(this.map, this.z + 1, this.x * 2, this.y * 2),
+      new Tile(this.map, this.z + 1, this.x * 2, this.y * 2 + 1),
+      new Tile(this.map, this.z + 1, this.x * 2 + 1, this.y * 2),
+      new Tile(this.map, this.z + 1, this.x * 2 + 1, this.y * 2 + 1)
     ]
   }
 
   buildMaterial() {
-    const urls = this.childrens().map((tile) => tile.mapUrl)
-    return QuadTextureMaterial(urls, this.materialOptions)
+    const urls = this.childrens().map((tile) => tile.mapUrl())
+    return QuadTextureMaterial(urls, this.map.materialOptions)
   }
 
   buildmesh() {
@@ -180,14 +126,20 @@ export class Tile {
         this.computeElevation(pixels)
         this.buildGeometry()
         this.buildmesh()
-        this.mesh.position.set(
-          this.position.x,
-          this.position.y,
-          this.position.z
-        )
         resolve(this)
       })
     })
+  }
+
+  setPosition(center: { x: number; y: number }) {
+    const { x, y, z } = Utils.tile2position(
+      this.z,
+      this.x,
+      this.y,
+      center,
+      this.map.options.tileSize
+    )
+    this.mesh.position.set(x, y, z)
   }
 
   resolveSeamY(neighbor?: Tile) {
