@@ -6,7 +6,8 @@
 
 
 A JavaScript library to build 3D maps with [three.js](https://threejs.org).
-<img width="1149" alt="Screenshot 2023-02-02 at 23 21 12" src="https://user-images.githubusercontent.com/35730139/216441342-ffaeeaee-6811-476f-95d1-d2119d76b9d4.png">
+
+<img width="1062" alt="Screenshot 2023-02-04 at 02 40 34" src="https://user-images.githubusercontent.com/35730139/216731690-217bddbb-ca56-4443-a76f-efbc923b095b.png">
 
 [Live demo](https://whidrubeld.github.io/three-geo-map/) / [Source code](https://github.com/WhidRubeld/three-geo-map/tree/master/examples/basic)
 
@@ -148,8 +149,7 @@ These props are passed to [ShaderMaterial](https://threejs.org/docs/#api/en/mate
 ### Map helpers
 
 #### Determine the location of a point by coordinates
-<img width="1149" alt="Screenshot 2023-02-02 at 23 21 22" src="https://user-images.githubusercontent.com/35730139/216441564-18479cb3-7103-42a0-bb33-32b4b7314614.png">
-
+<img width="1062" alt="Screenshot 2023-02-04 at 02 42 28" src="https://user-images.githubusercontent.com/35730139/216731744-24d0e8e3-23b3-4681-bf36-588a1b26be38.png">
 
 ```typescript
 const posInVector3 = map.getPosition(
