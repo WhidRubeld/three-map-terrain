@@ -2,7 +2,7 @@
   "name": "three-geo-map",
   "version": "1.0.0",
   "description": "",
-  "author": "WhidRubeld",
+  "author": "WhidRubeld <whidrubeld@gmail.com>",
   "license": "MIT",
   "types": "dist/index.d.ts",
   "main": "dist/index.js",
@@ -52,5 +52,12 @@
   },
   "peerDependencies": {
     "three": "^0.148.0"
-  }
+  },
+  "packageManager": "yarn@3.2.3",
+  "publishConfig": {
+    "access": "public"
+  },
+  "workspaces": [
+    "."
+  ]
 }
