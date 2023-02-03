@@ -1,7 +1,7 @@
 {
   "name": "three-geo-map",
   "version": "1.0.0",
-  "description": "",
+  "description": "A JavaScript library to build 3D maps with three.js",
   "author": "WhidRubeld <whidrubeld@gmail.com>",
   "license": "MIT",
   "types": "dist/index.d.ts",
@@ -54,7 +54,8 @@
     "three": "^0.148.0"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://npm.pkg.github.com"
   },
   "workspaces": [
     "."
