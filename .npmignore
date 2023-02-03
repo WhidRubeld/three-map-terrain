@@ -1,0 +1,11 @@
+/.github
+/.vscode
+/.yarn
+/.editorconfig
+/.eslintrc
+/.prettierrc
+/tsconfig.json
+/vite.config.ts
+/examples
+/src
+/test
