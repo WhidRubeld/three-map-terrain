@@ -1,10 +1,13 @@
 import path from 'path'
 import { defineConfig } from 'vite'
 import dts from 'vite-plugin-dts'
+import { nodePolyfills } from 'vite-plugin-node-polyfills'
+
+import pkg from './package.json'
 
 export default defineConfig({
   build: {
-    minify: false,
+    minify: true,
     sourcemap: true,
     target: 'esnext',
     lib: {
@@ -13,12 +16,11 @@ export default defineConfig({
       fileName: '[name]'
     },
     rollupOptions: {
-      external: (id) => !id.startsWith('.') && !path.isAbsolute(id),
+      external: Object.keys(pkg.peerDependencies || {}),
       output: {
-        preserveModules: true,
         sourcemapExcludeSources: true
       }
     }
   },
-  plugins: [dts()]
+  plugins: [dts(), nodePolyfills()]
 })
