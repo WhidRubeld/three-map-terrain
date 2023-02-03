@@ -27,8 +27,8 @@ function App() {
     setMap(
       new Map({
         source: new Source({ api: 'eox' }),
-        location: { lat: 45.916216, lon: 6.860973 },
-        material: { wireframe: true }
+        location: { lat: 46.57634, lon: 7.9904 },
+        material: { wireframe: false }
       })
     )
   }, [])
@@ -37,11 +37,14 @@ function App() {
     if (map) {
       map.init(() => console.log('Map is ready'))
       setObjectCoords(
-        map.getPosition({
-          lat: 45.916216,
-          lon: 6.860973,
-          alt: 1027
-        })
+        map.getPosition(
+          {
+            lat: 46.57634,
+            lon: 7.9904,
+            alt: 3e3
+          },
+          { loadTile: true }
+        )
       )
     }
   }, [map])
