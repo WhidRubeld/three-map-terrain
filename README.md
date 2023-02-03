@@ -22,7 +22,7 @@ yarn add three three-geo-map
 ```
 
 
-## Quick start
+## Basic - Quick start
 
 ```typescript
 import { Scene } from 'three'
@@ -41,6 +41,39 @@ map.init(() => {
 ```
 [**See full example**](https://github.com/WhidRubeld/three-geo-map/tree/master/examples/basic)
 
+
+## React - Quick start
+```tsx
+import { useEffect, useState } from 'react'
+import { Canvas } from '@react-three/fiber'
+import { Map, Source } from 'three-geo-map'
+
+export default function App() {
+  const [map, setMap] = useState<Map>()
+
+  useEffect(() => {
+    setMap(
+      new Map({
+        source: new Source({ api: 'eox' }),
+        location: { lat: 45.916216, lon: 6.860973 }
+      })
+    )
+  }, [])
+
+  useEffect(() => {
+    if (map) {
+      map.init(() => console.log('Map is ready'))
+    }
+  }, [map])
+
+  return (
+    <Canvas>
+      {map && <primitive object={map.terrain} position={[0, 0, 0]} />}
+    </Canvas>
+  )
+}
+```
+[**See full example**](https://github.com/WhidRubeld/three-geo-map/tree/master/examples/reat)
 
 ## Documentation
 
@@ -119,7 +152,7 @@ These props are passed to [ShaderMaterial](https://threejs.org/docs/#api/en/mate
 
 
 ```typescript
-const { x, y, z } = map.getPosition({ lat: 45.916216, lon: 6.860973, alt: 1027 }, { loadTile: true })
+const posInVector3 = map.getPosition({ lat: 45.916216, lon: 6.860973, alt: 1027 }, { loadTile: true })
 ```
 
 | Argument | Type | Description | Required | Default Value |
@@ -135,7 +168,7 @@ Parameter `loadTile` determines whether to load the required tile if you have sp
 - [ ] Base Pin component
 - [ ] Base Direction component
 - [ ] Vue example
-- [ ] React example
+- [x] React example
 - [x] Basic example
 
 ## License and attributions

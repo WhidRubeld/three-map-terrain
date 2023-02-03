@@ -17,7 +17,7 @@ export type MapOptions = {
 
 export type MapProps = {
   source: Source
-  location: { lat: number, lon: number }
+  location: { lat: number; lon: number }
   options?: Partial<MapOptions>
   material?: Partial<QuadTextureMaterialOptions>
 }
@@ -33,7 +33,7 @@ export const defaultMapOptions: MapOptions = {
 export class Map {
   materialOptions: QuadTextureMaterialOptions = defaultTextureOptions
   source: Source
-  geoLocation: { lat: number, lon: number }
+  geoLocation: { lat: number; lon: number }
   options: MapOptions
   tileCache: {
     [key: string]: Tile
@@ -44,6 +44,7 @@ export class Map {
     x: number
     y: number
   }
+  ready: boolean
 
   defaultOptions: MapOptions = defaultMapOptions
   constructor({ source, location, options = {}, material = {} }: MapProps) {
@@ -97,7 +98,6 @@ export class Map {
         tile.resolveSeams(this.tileCache)
       })
     })
-    // this.onReady()
   }
 
   addTileSegment(x: number, y: number) {

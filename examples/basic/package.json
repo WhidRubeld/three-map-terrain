@@ -21,6 +21,7 @@
     "webpack-dev-server": "^4.11.1"
   },
   "dependencies": {
+    "@react-three/drei": "^9.56.12",
     "three": "^0.149.0",
     "three-geo-map": "link:../.."
   }
