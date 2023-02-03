@@ -131,11 +131,12 @@ Parameter `loadTile` determines whether to load the required tile if you have sp
 
 ## Future list
 - [ ] Asynchronous analog of the `getPosition` function without passing the altitude parameter
+- [ ] Advanced example
 - [ ] Base Pin component
 - [ ] Base Direction component
 - [ ] Vue example
-- [ ] Polyfill installation tutorial (for Webpack 5)
 - [ ] React example
+- [x] Basic example
 
 ## License and attributions
 
