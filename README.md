@@ -30,7 +30,7 @@ import { Map, Source } from 'three-geo-map'
 
 const scene = new Scene()
 
-const location = { lat: 45.916216, lon: 6.860973 }
+const location = { lat: 46.57634, lon: 7.9904 }
 const source = new Source({ api: 'eox' })
 const map = new Map({ source, location })
 
@@ -55,7 +55,7 @@ export default function App() {
     setMap(
       new Map({
         source: new Source({ api: 'eox' }),
-        location: { lat: 45.916216, lon: 6.860973 }
+        location: { lat: 46.57634, lon: 7.9904 }
       })
     )
   }, [])
@@ -152,7 +152,14 @@ These props are passed to [ShaderMaterial](https://threejs.org/docs/#api/en/mate
 
 
 ```typescript
-const posInVector3 = map.getPosition({ lat: 45.916216, lon: 6.860973, alt: 1027 }, { loadTile: true })
+const posInVector3 = map.getPosition(
+  {
+    lat: 46.57634,
+    lon: 7.9904,
+    alt: 3e3
+  },
+  { loadTile: true }
+)
 ```
 
 | Argument | Type | Description | Required | Default Value |
@@ -161,6 +168,12 @@ const posInVector3 = map.getPosition({ lat: 45.916216, lon: 6.860973, alt: 1027 
 | options | `{ loadTile: number }` | Extra options (override) | `false` | `{ loadTile: true }` |
 
 Parameter `loadTile` determines whether to load the required tile if you have specified coordinates that are outside the already loaded tiles.
+
+#### Reset map cache
+
+```typescript
+map.clean()
+```
 
 ## Future list
 - [ ] Asynchronous analog of the `getPosition` function without passing the altitude parameter
