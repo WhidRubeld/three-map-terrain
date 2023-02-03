@@ -51275,8 +51275,6 @@ void main() {
   });
 });
 class ye {
-  static d2r = Math.PI / 180;
-  static r2d = 180 / Math.PI;
   static long2tile(e, t) {
     return (e + 180) / 360 * Math.pow(2, t);
   }
@@ -51287,7 +51285,7 @@ class ye {
   }
   static tile2lat(e, t) {
     const o = Math.PI - 2 * Math.PI * e / Math.pow(2, t);
-    return this.r2d * Math.atan(0.5 * (Math.exp(o) - Math.exp(-o)));
+    return 180 / Math.PI * Math.atan(0.5 * (Math.exp(o) - Math.exp(-o)));
   }
   static tile2lon(e, t) {
     return e / Math.pow(2, t) * 360 - 180;
