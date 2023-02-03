@@ -2,12 +2,9 @@ export type MapSupportedApi = 'osm' | 'mapbox' | 'eox' | 'maptiler'
 export class Source {
   api: MapSupportedApi
   token: string = ''
-  //  options
   supportedApis: {
     [name in MapSupportedApi]: (z: number, x: number, y: number) => string
   }
-  //  supportedApis:
-
   constructor(
     props:
       | { api: 'osm' | 'eox' }
