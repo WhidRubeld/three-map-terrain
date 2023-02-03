@@ -51121,7 +51121,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   "QuadTextureMaterial": () => (/* binding */ pn),
 /* harmony export */   "Source": () => (/* binding */ $i),
 /* harmony export */   "Tile": () => (/* binding */ Ae),
-/* harmony export */   "Utils": () => (/* binding */ ye),
+/* harmony export */   "Utils": () => (/* binding */ _e),
 /* harmony export */   "defaultMapOptions": () => (/* binding */ Wi),
 /* harmony export */   "defaultTextureOptions": () => (/* binding */ xr)
 /* harmony export */ });
@@ -51274,7 +51274,7 @@ void main() {
     ...Object.assign(xr, e)
   });
 });
-class ye {
+class _e {
   static long2tile(e, t) {
     return (e + 180) / 360 * Math.pow(2, t);
   }
@@ -51294,34 +51294,26 @@ class ye {
     const t = this.tile2lon(e[0] + 1, e[2]), o = this.tile2lon(e[0], e[2]), a = this.tile2lat(e[1] + 1, e[2]), f = this.tile2lat(e[1], e[2]);
     return [o, a, t, f];
   }
-  static geo2tile(e, t) {
-    const o = Math.pow(2, t);
-    return {
-      x: Math.abs(Math.floor(ye.long2tile(e.lon, t)) % o),
-      y: Math.abs(Math.floor(ye.lat2tile(e.lat, t)) % o)
-    };
-  }
-  static offsetAtZ = (e, t) => ({
-    x: t.x / Math.pow(2, 10 - e),
-    y: t.y / Math.pow(2, 10 - e)
-  });
   static tile2position(e, t, o, a, f) {
-    const u = this.offsetAtZ(e, a);
+    const u = {
+      x: a.x / Math.pow(2, 10 - e),
+      y: a.y / Math.pow(2, 10 - e)
+    };
     return {
       x: (t - a.x - u.x % 1 + a.x % 1) * f,
       y: (-o + a.y + u.y % 1 - a.y % 1) * f,
       z: 0
     };
   }
-  static position2tile(e, t, o, a, f) {
-    const u = ye.tile2position(
-      e,
-      a.x,
-      a.y,
-      a,
-      f
-    ), s = Math.round((t - u.x) / f), c = Math.round(-(o - u.y) / f);
-    return { x: s + a.x, y: c + a.y, z: e };
+  static position2tileFraction(e, t, o) {
+    const a = Math.sin(e * (Math.PI / 180)), f = Math.pow(2, o);
+    let u = f * (t / 360 + 0.5);
+    const s = f * (0.5 - 0.25 * Math.log((1 + a) / (1 - a)) / Math.PI);
+    return u = u % f, u < 0 && (u = u + f), { x: u, y: s, z: o };
+  }
+  static position2tile(e, t, o) {
+    const a = this.position2tileFraction(e, t, o);
+    return a.x = Math.floor(a.x), a.y = Math.floor(a.y), a;
   }
   static getTileKey(e, t, o) {
     return `${e}/${t}/${o}`;
@@ -52260,7 +52252,7 @@ var It = Fe(), Y = {}, vn = {
   set exports(r) {
     Y = r;
   }
-}, he = vn.exports = {}, ge, me;
+}, he = vn.exports = {}, ve, ge;
 function Rr() {
   throw new Error("setTimeout has not been defined");
 }
@@ -52269,58 +52261,58 @@ function Tr() {
 }
 (function() {
   try {
-    typeof setTimeout == "function" ? ge = setTimeout : ge = Rr;
+    typeof setTimeout == "function" ? ve = setTimeout : ve = Rr;
   } catch {
-    ge = Rr;
+    ve = Rr;
   }
   try {
-    typeof clearTimeout == "function" ? me = clearTimeout : me = Tr;
+    typeof clearTimeout == "function" ? ge = clearTimeout : ge = Tr;
   } catch {
-    me = Tr;
+    ge = Tr;
   }
 })();
 function Mt(r) {
-  if (ge === setTimeout)
+  if (ve === setTimeout)
     return setTimeout(r, 0);
-  if ((ge === Rr || !ge) && setTimeout)
-    return ge = setTimeout, setTimeout(r, 0);
+  if ((ve === Rr || !ve) && setTimeout)
+    return ve = setTimeout, setTimeout(r, 0);
   try {
-    return ge(r, 0);
+    return ve(r, 0);
   } catch {
     try {
-      return ge.call(null, r, 0);
+      return ve.call(null, r, 0);
     } catch {
-      return ge.call(this, r, 0);
+      return ve.call(this, r, 0);
     }
   }
 }
 function gn(r) {
-  if (me === clearTimeout)
+  if (ge === clearTimeout)
     return clearTimeout(r);
-  if ((me === Tr || !me) && clearTimeout)
-    return me = clearTimeout, clearTimeout(r);
+  if ((ge === Tr || !ge) && clearTimeout)
+    return ge = clearTimeout, clearTimeout(r);
   try {
-    return me(r);
+    return ge(r);
   } catch {
     try {
-      return me.call(null, r);
+      return ge.call(null, r);
     } catch {
-      return me.call(this, r);
+      return ge.call(this, r);
     }
   }
 }
-var we = [], xe = !1, Ee, Pe = -1;
+var me = [], xe = !1, Ee, Pe = -1;
 function mn() {
-  !xe || !Ee || (xe = !1, Ee.length ? we = Ee.concat(we) : Pe = -1, we.length && Ft());
+  !xe || !Ee || (xe = !1, Ee.length ? me = Ee.concat(me) : Pe = -1, me.length && Ft());
 }
 function Ft() {
   if (!xe) {
     var r = Mt(mn);
     xe = !0;
-    for (var e = we.length; e; ) {
-      for (Ee = we, we = []; ++Pe < e; )
+    for (var e = me.length; e; ) {
+      for (Ee = me, me = []; ++Pe < e; )
         Ee && Ee[Pe].run();
-      Pe = -1, e = we.length;
+      Pe = -1, e = me.length;
     }
     Ee = null, xe = !1, gn(r);
   }
@@ -52330,7 +52322,7 @@ he.nextTick = function(r) {
   if (arguments.length > 1)
     for (var t = 1; t < arguments.length; t++)
       e[t - 1] = arguments[t];
-  we.push(new Ct(r, e)), we.length === 1 && !xe && Mt(Ft);
+  me.push(new Ct(r, e)), me.length === 1 && !xe && Mt(Ft);
 };
 function Ct(r, e) {
   this.fun = r, this.array = e;
@@ -52344,17 +52336,17 @@ he.env = {};
 he.argv = [];
 he.version = "";
 he.versions = {};
-function _e() {
+function be() {
 }
-he.on = _e;
-he.addListener = _e;
-he.once = _e;
-he.off = _e;
-he.removeListener = _e;
-he.removeAllListeners = _e;
-he.emit = _e;
-he.prependListener = _e;
-he.prependOnceListener = _e;
+he.on = be;
+he.addListener = be;
+he.once = be;
+he.off = be;
+he.removeListener = be;
+he.removeAllListeners = be;
+he.emit = be;
+he.prependListener = be;
+he.prependOnceListener = be;
 he.listeners = function(r) {
   return [];
 };
@@ -52386,7 +52378,7 @@ he.umask = function() {
   var t = __magic__;
   return t;
 })(Object);
-function ve(r) {
+function ye(r) {
   if (typeof r != "string")
     throw new TypeError("Path must be a string. Received " + JSON.stringify(r));
 }
@@ -52432,30 +52424,30 @@ var Re = {
   resolve: function() {
     for (var e = "", t = !1, o, a = arguments.length - 1; a >= -1 && !t; a--) {
       var f;
-      a >= 0 ? f = arguments[a] : (o === void 0 && (o = Y.cwd()), f = o), ve(f), f.length !== 0 && (e = f + "/" + e, t = f.charCodeAt(0) === 47);
+      a >= 0 ? f = arguments[a] : (o === void 0 && (o = Y.cwd()), f = o), ye(f), f.length !== 0 && (e = f + "/" + e, t = f.charCodeAt(0) === 47);
     }
     return e = qr(e, !t), t ? e.length > 0 ? "/" + e : "/" : e.length > 0 ? e : ".";
   },
   normalize: function(e) {
-    if (ve(e), e.length === 0)
+    if (ye(e), e.length === 0)
       return ".";
     var t = e.charCodeAt(0) === 47, o = e.charCodeAt(e.length - 1) === 47;
     return e = qr(e, !t), e.length === 0 && !t && (e = "."), e.length > 0 && o && (e += "/"), t ? "/" + e : e;
   },
   isAbsolute: function(e) {
-    return ve(e), e.length > 0 && e.charCodeAt(0) === 47;
+    return ye(e), e.length > 0 && e.charCodeAt(0) === 47;
   },
   join: function() {
     if (arguments.length === 0)
       return ".";
     for (var e, t = 0; t < arguments.length; ++t) {
       var o = arguments[t];
-      ve(o), o.length > 0 && (e === void 0 ? e = o : e += "/" + o);
+      ye(o), o.length > 0 && (e === void 0 ? e = o : e += "/" + o);
     }
     return e === void 0 ? "." : Re.normalize(e);
   },
   relative: function(e, t) {
-    if (ve(e), ve(t), e === t || (e = Re.resolve(e), t = Re.resolve(t), e === t))
+    if (ye(e), ye(t), e === t || (e = Re.resolve(e), t = Re.resolve(t), e === t))
       return "";
     for (var o = 1; o < e.length && e.charCodeAt(o) === 47; ++o)
       ;
@@ -52486,7 +52478,7 @@ var Re = {
     return e;
   },
   dirname: function(e) {
-    if (ve(e), e.length === 0)
+    if (ye(e), e.length === 0)
       return ".";
     for (var t = e.charCodeAt(0), o = t === 47, a = -1, f = !0, u = e.length - 1; u >= 1; --u)
       if (t = e.charCodeAt(u), t === 47) {
@@ -52501,7 +52493,7 @@ var Re = {
   basename: function(e, t) {
     if (t !== void 0 && typeof t != "string")
       throw new TypeError('"ext" argument must be a string');
-    ve(e);
+    ye(e);
     var o = 0, a = -1, f = !0, u;
     if (t !== void 0 && t.length > 0 && t.length <= e.length) {
       if (t.length === e.length && t === e)
@@ -52531,7 +52523,7 @@ var Re = {
     }
   },
   extname: function(e) {
-    ve(e);
+    ye(e);
     for (var t = -1, o = 0, a = -1, f = !0, u = 0, s = e.length - 1; s >= 0; --s) {
       var c = e.charCodeAt(s);
       if (c === 47) {
@@ -52553,7 +52545,7 @@ var Re = {
     return wn("/", e);
   },
   parse: function(e) {
-    ve(e);
+    ye(e);
     var t = { root: "", dir: "", base: "", ext: "", name: "" };
     if (e.length === 0)
       return t;
@@ -53548,12 +53540,12 @@ function $t(r, e, t, o) {
   else
     throw new TypeError('The "emitter" argument must be of type EventEmitter. Received type ' + typeof r);
 }
-var be = {}, Hr = {
+var we = {}, Hr = {
   get exports() {
-    return be;
+    return we;
   },
   set exports(r) {
-    be = r;
+    we = r;
   }
 };
 typeof Object.create == "function" ? Hr.exports = function(e, t) {
@@ -54706,7 +54698,7 @@ function Xt() {
     }
     r.log = function() {
       console.log("%s - %s", $(), r.format.apply(r, arguments));
-    }, r.inherits = be, r._extend = function(R, j) {
+    }, r.inherits = we, r._extend = function(R, j) {
       if (!j || !W(j))
         return R;
       for (var F = Object.keys(j), q = F.length; q--; )
@@ -55121,7 +55113,7 @@ function en() {
     return a.isBuffer(S) || S instanceof f;
   }
   var c = Zt(), y = Qt(), g = y.getHighWaterMark, v = je().codes, m = v.ERR_INVALID_ARG_TYPE, E = v.ERR_METHOD_NOT_IMPLEMENTED, w = v.ERR_MULTIPLE_CALLBACK, T = v.ERR_STREAM_CANNOT_PIPE, A = v.ERR_STREAM_DESTROYED, b = v.ERR_STREAM_NULL_VALUES, x = v.ERR_STREAM_WRITE_AFTER_END, B = v.ERR_UNKNOWN_ENCODING, P = c.errorOrDestroy;
-  be(G, o);
+  we(G, o);
   function C() {
   }
   function H(S, _, I) {
@@ -55342,7 +55334,7 @@ function Be() {
   };
   vr = u;
   var e = rn(), t = en();
-  be(u, e);
+  we(u, e);
   for (var o = r(t.prototype), a = 0; a < o.length; a++) {
     var f = o[a];
     u.prototype[f] || (u.prototype[f] = t.prototype[f]);
@@ -55793,7 +55785,7 @@ function rn() {
   s && s.debuglog ? c = s.debuglog("stream") : c = function() {
   };
   var y = _i(), g = Zt(), v = Qt(), m = v.getHighWaterMark, E = je().codes, w = E.ERR_INVALID_ARG_TYPE, T = E.ERR_STREAM_PUSH_AFTER_EOF, A = E.ERR_METHOD_NOT_IMPLEMENTED, b = E.ERR_STREAM_UNSHIFT_AFTER_END_EVENT, x, B, P;
-  be(W, t);
+  we(W, t);
   var C = g.errorOrDestroy, H = ["error", "close", "destroy", "pause", "resume"];
   function K(p, d, M) {
     if (typeof p.prependListener == "function")
@@ -56125,7 +56117,7 @@ function tn() {
     return Er;
   Ot = 1, Er = s;
   var r = je().codes, e = r.ERR_METHOD_NOT_IMPLEMENTED, t = r.ERR_MULTIPLE_CALLBACK, o = r.ERR_TRANSFORM_ALREADY_TRANSFORMING, a = r.ERR_TRANSFORM_WITH_LENGTH_0, f = Be();
-  be(s, f);
+  we(s, f);
   function u(g, v) {
     var m = this._transformState;
     m.transforming = !1;
@@ -56189,7 +56181,7 @@ function Ti() {
     return Ar;
   Bt = 1, Ar = e;
   var r = tn();
-  be(e, r);
+  we(e, r);
   function e(t) {
     if (!(this instanceof e))
       return new e(t);
@@ -56268,7 +56260,7 @@ function Oi() {
   }
   return Sr = v, Sr;
 }
-var Bi = pe, Cr = Oe.EventEmitter, ji = be;
+var Bi = pe, Cr = Oe.EventEmitter, ji = we;
 ji(pe, Cr);
 pe.Readable = rn();
 pe.Writable = en();
@@ -56469,7 +56461,7 @@ class Ae {
     this.map = e, this.z = t, this.x = o, this.y = a, this.shape = null, this.elevation = null, this.seamX = !1, this.seamY = !1;
   }
   key() {
-    return ye.getTileKey(this.z, this.x, this.y);
+    return _e.getTileKey(this.z, this.x, this.y);
   }
   keyNeighX() {
     return `${this.z}/${this.x + 1}/${this.y}`;
@@ -56536,7 +56528,7 @@ class Ae {
     });
   }
   setPosition(e) {
-    const { x: t, y: o, z: a } = ye.tile2position(
+    const { x: t, y: o, z: a } = _e.tile2position(
       this.z,
       this.x,
       this.y,
@@ -56612,28 +56604,33 @@ let zi = class {
     return t.tileSegments = Math.min(256, Math.round(t.tileSegments)), t;
   }
   init(e) {
-    this.center = ye.geo2tile(this.geoLocation, this.options.zoom);
-    const t = Math.floor(this.options.nTiles / 2);
-    for (let a = 0; a < this.options.nTiles; a++)
-      for (let f = 0; f < this.options.nTiles; f++) {
-        const u = new Ae(
+    const { x: t, y: o } = _e.position2tile(
+      this.geoLocation.lat,
+      this.geoLocation.lon,
+      this.options.zoom
+    );
+    this.center = { x: t, y: o };
+    const a = Math.floor(this.options.nTiles / 2);
+    for (let u = 0; u < this.options.nTiles; u++)
+      for (let s = 0; s < this.options.nTiles; s++) {
+        const c = new Ae(
           this,
           this.options.zoom,
-          this.center.x + a - t,
-          this.center.y + f - t
+          this.center.x + u - a,
+          this.center.y + s - a
         );
-        this.tileCache[u.key()] = u, a === this.options.nTiles - 1 && f === this.options.nTiles - 1 && e && e();
+        this.tileCache[c.key()] = c, u === this.options.nTiles - 1 && s === this.options.nTiles - 1 && e && e();
       }
-    const o = Object.values(this.tileCache).map((a) => a.fetch().then((f) => (f.setPosition(this.center), this.terrain.add(f.mesh), f)));
-    Promise.all(o).then((a) => {
-      a.reverse().forEach((f) => {
-        f.resolveSeams(this.tileCache);
+    const f = Object.values(this.tileCache).map((u) => u.fetch().then((s) => (s.setPosition(this.center), this.terrain.add(s.mesh), s)));
+    Promise.all(f).then((u) => {
+      u.reverse().forEach((s) => {
+        s.resolveSeams(this.tileCache);
       });
     });
   }
   addTileSegment(e, t) {
     const o = new Ae(this, this.options.zoom, e, t);
-    o.key() in this.tileCache || (this.tileCache[o.key()] = o, o.fetch().then((a) => {
+    o.key() in this.tileCache || (console.log("test 2"), this.tileCache[o.key()] = o, o.fetch().then((a) => {
       o.setPosition(this.center), this.terrain.add(a.mesh);
     }).then(() => {
       Object.values(this.tileCache).forEach((a) => {
@@ -56652,15 +56649,9 @@ let zi = class {
     }), this.tileCache = {};
   }
   getPosition({ lat: e, lon: t, alt: o }, a = { loadTile: !0 }) {
-    const { options: f, tileCache: u, center: s } = this, { zScale: c } = f, { x: y, y: g, z: v } = ye.position2tile(
-      f.zoom,
-      e,
-      t,
-      s,
-      f.tileSize
-    );
-    !(ye.getTileKey(v, y, g) in u) && a.loadTile && this.addTileSegment(y, g);
-    const [E, w, T, A] = ye.tile2bbox([y, g, v]), b = ye.tile2position(v, y, g, s, f.tileSize), x = b.x - f.tileSize / 2, B = b.y - f.tileSize / 2, P = f.tileSize * (1 - (T - t) / (T - E)), C = f.tileSize * (1 - (A - e) / (A - w));
+    const { options: f, tileCache: u, center: s } = this, { zScale: c } = f, { x: y, y: g, z: v } = _e.position2tile(e, t, f.zoom);
+    !(_e.getTileKey(v, y, g) in u) && a.loadTile && this.addTileSegment(y, g);
+    const [E, w, T, A] = _e.tile2bbox([y, g, v]), b = _e.tile2position(v, y, g, s, f.tileSize), x = b.x - f.tileSize / 2, B = b.y - f.tileSize / 2, P = f.tileSize * (1 - (T - t) / (T - E)), C = f.tileSize * (1 - (A - e) / (A - w));
     return { x: x + P, y: B + C, z: o * c };
   }
 };
@@ -159303,7 +159294,7 @@ scene.add(ambientLight);
 scene.add(dirLight);
 // map
 const source = new three_geo_map_1.Source({ api: 'eox' });
-const location = { lat: 45.916216, lon: 6.860973 };
+const location = { lat: 46.57634, lon: 7.9904 };
 const map = new three_geo_map_1.Map({ source, location });
 scene.add(map.terrain);
 map.init();
@@ -159312,9 +159303,9 @@ const geometry = new three_1.SphereGeometry(8, 24, 12);
 const material = new three_1.MeshBasicMaterial({ color: 0xf04040 });
 const sphere = new three_1.Mesh(geometry, material);
 const spherePosition = map.getPosition({
-    lat: 45.916216,
-    lon: 6.860973,
-    alt: 1027
+    lat: 46.57634,
+    lon: 7.9904,
+    alt: 3e3
 });
 sphere.position.set(spherePosition.x, spherePosition.y, 
 // with sphere radius offset
