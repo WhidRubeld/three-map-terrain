@@ -56602,6 +56602,7 @@ let zi = class {
   tileCache = {};
   terrain = new three__WEBPACK_IMPORTED_MODULE_0__.Group();
   center;
+  ready;
   defaultOptions = Wi;
   constructor({ source: e, location: t, options: o = {}, material: a = {} }) {
     this.source = e, this.geoLocation = t, this.materialOptions = Object.assign(xr, a), this.options = this.getOptions(o), this.terrain = new three__WEBPACK_IMPORTED_MODULE_0__.Group(), this.tileCache = {};
@@ -159315,7 +159316,9 @@ const spherePosition = map.getPosition({
     lon: 6.860973,
     alt: 1027
 });
-sphere.position.set(spherePosition.x, spherePosition.y, spherePosition.z + 8);
+sphere.position.set(spherePosition.x, spherePosition.y, 
+// with sphere radius offset
+spherePosition.z + 8);
 scene.add(sphere);
 //
 document.body.appendChild(renderer.domElement);
