@@ -15,7 +15,12 @@ function App() {
 
   const objectPosition = useMemo(() => {
     if (!objectCoords) return undefined
-    return new Vector3(objectCoords.x, objectCoords.y, objectCoords.z + 8)
+    return new Vector3(
+      objectCoords.x,
+      objectCoords.y,
+      // with sphere radius offset
+      objectCoords.z + 8
+    )
   }, [objectCoords])
 
   useEffect(() => {

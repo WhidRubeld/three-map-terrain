@@ -92,7 +92,12 @@ const spherePosition = map.getPosition({
   lon: 6.860973,
   alt: 1027
 })
-sphere.position.set(spherePosition.x, spherePosition.y, spherePosition.z + 8)
+sphere.position.set(
+  spherePosition.x,
+  spherePosition.y,
+  // with sphere radius offset
+  spherePosition.z + 8
+)
 scene.add(sphere)
 
 //
