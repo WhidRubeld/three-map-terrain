@@ -32,21 +32,6 @@ export class Utils {
     return [w, s, e, n]
   }
 
-  static geo2tile(geoLocation: { lat: number; lon: number }, zoom: number) {
-    const maxTile = Math.pow(2, zoom)
-    return {
-      x: Math.abs(Math.floor(Utils.long2tile(geoLocation.lon, zoom)) % maxTile),
-      y: Math.abs(Math.floor(Utils.lat2tile(geoLocation.lat, zoom)) % maxTile)
-    }
-  }
-
-  static offsetAtZ = (z: number, center: { x: number; y: number }) => {
-    return {
-      x: center.x / Math.pow(2, 10 - z),
-      y: center.y / Math.pow(2, 10 - z)
-    }
-  }
-
   static tile2position(
     z: number,
     x: number,
@@ -54,7 +39,10 @@ export class Utils {
     center: { x: number; y: number },
     tileSize: number
   ) {
-    const offset = this.offsetAtZ(z, center)
+    const offset = {
+      x: center.x / Math.pow(2, 10 - z),
+      y: center.y / Math.pow(2, 10 - z)
+    }
 
     return {
       x: (x - center.x - (offset.x % 1) + (center.x % 1)) * tileSize,
@@ -63,23 +51,25 @@ export class Utils {
     }
   }
 
-  static position2tile(
-    z: number,
-    x: number,
-    y: number,
-    center: { x: number; y: number },
-    tileSize: number
-  ) {
-    const centerPosition = Utils.tile2position(
-      z,
-      center.x,
-      center.y,
-      center,
-      tileSize
-    )
-    const deltaX = Math.round((x - centerPosition.x) / tileSize)
-    const deltaY = Math.round(-(y - centerPosition.y) / tileSize)
-    return { x: deltaX + center.x, y: deltaY + center.y, z }
+  static position2tileFraction(lat: number, lon: number, z: number) {
+    const sin = Math.sin(lat * (Math.PI / 180))
+    const z2 = Math.pow(2, z)
+    let x = z2 * (lon / 360 + 0.5)
+    const y = z2 * (0.5 - (0.25 * Math.log((1 + sin) / (1 - sin))) / Math.PI)
+
+    // Wrap Tile X
+    x = x % z2
+    if (x < 0) x = x + z2
+
+    return { x, y, z }
+  }
+
+  static position2tile(lat: number, lon: number, z: number) {
+    const tile = this.position2tileFraction(lat, lon, z)
+    tile.x = Math.floor(tile.x)
+    tile.y = Math.floor(tile.y)
+
+    return tile
   }
 
   static getTileKey(z: number, x: number, y: number) {

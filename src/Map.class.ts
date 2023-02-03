@@ -65,7 +65,13 @@ export class Map {
   }
 
   init(cb?: () => void) {
-    this.center = Utils.geo2tile(this.geoLocation, this.options.zoom)
+    const { x, y } = Utils.position2tile(
+      this.geoLocation.lat,
+      this.geoLocation.lon,
+      this.options.zoom
+    )
+    this.center = { x, y }
+
     const tileOffset = Math.floor(this.options.nTiles / 2)
 
     for (let i = 0; i < this.options.nTiles; i++) {
@@ -104,6 +110,7 @@ export class Map {
     const tile = new Tile(this, this.options.zoom, x, y)
 
     if (tile.key() in this.tileCache) return
+    console.log('test 2')
     this.tileCache[tile.key()] = tile
 
     tile
@@ -140,16 +147,12 @@ export class Map {
     const { options, tileCache, center } = this
     const { zScale } = options
 
-    const { x, y, z } = Utils.position2tile(
-      options.zoom,
-      lat,
-      lon,
-      center,
-      options.tileSize
-    )
+    const { x, y, z } = Utils.position2tile(lat, lon, options.zoom)
     const tileKey = Utils.getTileKey(z, x, y)
 
-    if (!(tileKey in tileCache) && opts.loadTile) this.addTileSegment(x, y)
+    if (!(tileKey in tileCache) && opts.loadTile) {
+      this.addTileSegment(x, y)
+    }
 
     const [w, s, e, n] = Utils.tile2bbox([x, y, z])
     const position = Utils.tile2position(z, x, y, center, options.tileSize)
