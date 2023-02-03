@@ -51330,9 +51330,7 @@ class ye {
 class $i {
   api;
   token = "";
-  //  options
   supportedApis;
-  //  supportedApis:
   constructor(e) {
     if (this.supportedApis = {
       osm: this.mapUrlOSM.bind(this),
