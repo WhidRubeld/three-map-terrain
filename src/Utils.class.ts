@@ -1,7 +1,4 @@
 export class Utils {
-  static d2r = Math.PI / 180
-  static r2d = 180 / Math.PI
-
   static long2tile(lon: number, zoom: number) {
     return ((lon + 180) / 360) * Math.pow(2, zoom)
   }
@@ -20,7 +17,7 @@ export class Utils {
 
   static tile2lat(y: number, z: number) {
     const n = Math.PI - (2 * Math.PI * y) / Math.pow(2, z)
-    return this.r2d * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)))
+    return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)))
   }
 
   static tile2lon(x: number, z: number) {
@@ -35,7 +32,7 @@ export class Utils {
     return [w, s, e, n]
   }
 
-  static geo2tile(geoLocation: { lat: number, lon: number }, zoom: number) {
+  static geo2tile(geoLocation: { lat: number; lon: number }, zoom: number) {
     const maxTile = Math.pow(2, zoom)
     return {
       x: Math.abs(Math.floor(Utils.long2tile(geoLocation.lon, zoom)) % maxTile),
