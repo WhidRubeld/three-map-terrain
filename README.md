@@ -74,7 +74,7 @@ export default function App() {
   )
 }
 ```
-[**See full example**](https://github.com/WhidRubeld/three-map-terrain/tree/master/examples/reat)
+[**See full example**](https://github.com/WhidRubeld/three-map-terrain/tree/master/examples/react)
 
 ## Documentation
 
