@@ -148,6 +148,17 @@ These props are passed to [ShaderMaterial](https://threejs.org/docs/#api/en/mate
 
 ### Map helpers
 
+
+#### Init map cache
+
+```typescript
+map.init(() => { console.log('Map is ready') })
+```
+
+| Argument | Type | Description | Required | Default Value |
+| -------- | ----------- | ----------- | -------- | ------------- |
+| callback | `() => void` | Ready callback | `false` | - |
+
 #### Determine the location of a point by coordinates
 <img width="1062" alt="Screenshot 2023-02-04 at 02 42 28" src="https://user-images.githubusercontent.com/35730139/216731744-24d0e8e3-23b3-4681-bf36-588a1b26be38.png">
 
