@@ -159249,7 +159249,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 __webpack_require__(/*! ./index.css */ "./src/index.css");
 const three_1 = __webpack_require__(/*! three */ "./node_modules/three/build/three.cjs");
 const OrbitControls_js_1 = __webpack_require__(/*! three/examples/jsm/controls/OrbitControls.js */ "./node_modules/three/examples/jsm/controls/OrbitControls.js");
-const three_geo_map_1 = __webpack_require__(/*! three-geo-map */ "../../dist/index.mjs");
+const three_map_terrain_1 = __webpack_require__(/*! three-map-terrain */ "../../dist/index.mjs");
 // scene
 const scene = new three_1.Scene();
 scene.background = new three_1.Color(0x222222);
@@ -159293,9 +159293,9 @@ dirLight.position.set(1e4, 1e4, 1e4);
 scene.add(ambientLight);
 scene.add(dirLight);
 // map
-const source = new three_geo_map_1.Source({ api: 'eox' });
+const source = new three_map_terrain_1.Source({ api: 'eox' });
 const location = { lat: 46.57634, lon: 7.9904 };
-const map = new three_geo_map_1.Map({ source, location });
+const map = new three_map_terrain_1.Map({ source, location });
 scene.add(map.terrain);
 map.init();
 // object by coords
