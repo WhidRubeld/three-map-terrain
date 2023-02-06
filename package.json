@@ -1,5 +1,5 @@
 {
-  "name": "three-geo-map",
+  "name": "three-map-terrain",
   "version": "1.0.0",
   "description": "A JavaScript library to build 3D maps with three.js",
   "author": "WhidRubeld <whidrubeld@gmail.com>",
@@ -26,13 +26,13 @@
     "react"
   ],
   "bugs": {
-    "url": "https://github.com/WhidRubeld/three-geo-map/issues"
+    "url": "https://github.com/WhidRubeld/three-map-terrain/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/WhidRubeld/three-geo-map.git"
+    "url": "git+https://github.com/WhidRubeld/three-map-terrain.git"
   },
-  "homepage": "https://github.com/WhidRubeld/three-geo-map#readme",
+  "homepage": "https://github.com/WhidRubeld/three-map-terrain#readme",
   "devDependencies": {
     "@types/get-pixels": "^3.3.2",
     "@types/three": "^0.148.0",
