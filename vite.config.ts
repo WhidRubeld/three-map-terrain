@@ -22,5 +22,5 @@ export default defineConfig({
       }
     }
   },
-  plugins: [dts(), nodePolyfills()]
+  plugins: [dts(), nodePolyfills({ protocolImports: false })]
 })
