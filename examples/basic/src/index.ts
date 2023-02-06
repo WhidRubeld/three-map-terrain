@@ -18,7 +18,7 @@ import {
 } from 'three'
 import { MapControls } from 'three/examples/jsm/controls/OrbitControls.js'
 
-import { Map, Source } from 'three-geo-map'
+import { Map, Source } from 'three-map-terrain'
 
 // scene
 const scene = new Scene()

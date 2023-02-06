@@ -1,7 +1,7 @@
-# three-geo-map
+# three-map-terrain
 
 <p>
-  <a href="https://www.npmjs.com/package/three-geo-map"><img alt="npm version" src="https://img.shields.io/npm/v/three-geo-map"></a>
+  <a href="https://www.npmjs.com/package/three-map-terrain"><img alt="npm version" src="https://img.shields.io/npm/v/three-map-terrain"></a>
 </p>
 
 
@@ -9,17 +9,17 @@ A JavaScript library to build 3D maps with [three.js](https://threejs.org).
 
 <img width="1062" alt="Screenshot 2023-02-04 at 02 40 34" src="https://user-images.githubusercontent.com/35730139/216731690-217bddbb-ca56-4443-a76f-efbc923b095b.png">
 
-[Live demo](https://whidrubeld.github.io/three-geo-map/) / [Source code](https://github.com/WhidRubeld/three-geo-map/tree/master/examples/basic)
+[Live demo](https://whidrubeld.github.io/three-map-terrain/) / [Source code](https://github.com/WhidRubeld/three-map-terrain/tree/master/examples/basic)
 
 ## About
 
-[three-geo-map](https://github.com/WhidRubeld/three-geo-map) takes two slippy map tilesets, one to fetch elevation data tiles, the other to texture the meshes built from said elevation data (any XYZ tileserver will do).
+[three-map-terrain](https://github.com/WhidRubeld/three-map-terrain) takes two slippy map tilesets, one to fetch elevation data tiles, the other to texture the meshes built from said elevation data (any XYZ tileserver will do).
 
 
 ## Installation
 
 ```bash
-yarn add three three-geo-map
+yarn add three three-map-terrain
 ```
 
 
@@ -27,7 +27,7 @@ yarn add three three-geo-map
 
 ```typescript
 import { Scene } from 'three'
-import { Map, Source } from 'three-geo-map'
+import { Map, Source } from 'three-map-terrain'
 
 const scene = new Scene()
 
@@ -40,14 +40,14 @@ map.init(() => {
   console.log('Map is ready')
 })
 ```
-[**See full example**](https://github.com/WhidRubeld/three-geo-map/tree/master/examples/basic)
+[**See full example**](https://github.com/WhidRubeld/three-map-terrain/tree/master/examples/basic)
 
 
 ## React - Quick start
 ```tsx
 import { useEffect, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { Map, Source } from 'three-geo-map'
+import { Map, Source } from 'three-map-terrain'
 
 export default function App() {
   const [map, setMap] = useState<Map>()
@@ -74,7 +74,7 @@ export default function App() {
   )
 }
 ```
-[**See full example**](https://github.com/WhidRubeld/three-geo-map/tree/master/examples/reat)
+[**See full example**](https://github.com/WhidRubeld/three-map-terrain/tree/master/examples/reat)
 
 ## Documentation
 
@@ -93,7 +93,7 @@ const source = new Source({ api, token })
 
 ### `Map` class
 
-The main class three-geo-map. Creates a 3D map using a grid of tiles.
+The main class three-map-terrain. Creates a 3D map using a grid of tiles.
 
 ```javascript
 const map = new Map({ source, location, options, material })

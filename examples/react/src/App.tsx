@@ -2,7 +2,7 @@ import './App.css'
 import { useEffect, useMemo, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { MapControls, PerspectiveCamera } from '@react-three/drei'
-import { Map, Source } from 'three-geo-map'
+import { Map, Source } from 'three-map-terrain'
 import { Vector3 } from 'three'
 
 function App() {

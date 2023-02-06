@@ -1,5 +1,5 @@
 {
-  "name": "three-geo-map-example",
+  "name": "three-map-terrain-example",
   "version": "0.1.0",
   "description": "",
   "main": "index.js",
@@ -23,6 +23,6 @@
   "dependencies": {
     "@react-three/drei": "^9.56.12",
     "three": "^0.149.0",
-    "three-geo-map": "link:../.."
+    "three-map-terrain": "link:../.."
   }
 }
