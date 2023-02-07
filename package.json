@@ -1,6 +1,6 @@
 {
   "name": "three-map-terrain",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A JavaScript library to build 3D maps with three.js",
   "author": "WhidRubeld <whidrubeld@gmail.com>",
   "license": "MIT",
