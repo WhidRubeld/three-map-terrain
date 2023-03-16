@@ -56630,7 +56630,7 @@ let zi = class {
   }
   addTileSegment(e, t) {
     const o = new Ae(this, this.options.zoom, e, t);
-    o.key() in this.tileCache || (console.log("test 2"), this.tileCache[o.key()] = o, o.fetch().then((a) => {
+    o.key() in this.tileCache || (this.tileCache[o.key()] = o, o.fetch().then((a) => {
       o.setPosition(this.center), this.terrain.add(a.mesh);
     }).then(() => {
       Object.values(this.tileCache).forEach((a) => {
