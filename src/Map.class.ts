@@ -110,7 +110,6 @@ export class Map {
     const tile = new Tile(this, this.options.zoom, x, y)
 
     if (tile.key() in this.tileCache) return
-    console.log('test 2')
     this.tileCache[tile.key()] = tile
 
     tile
