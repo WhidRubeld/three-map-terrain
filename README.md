@@ -176,7 +176,7 @@ const posInVector3 = map.getPosition(
 | Argument | Type | Description | Required | Default Value |
 | -------- | ----------- | ----------- | -------- | ------------- |
 | location | `{ lat: number, lon: number, alt: number }` | Your geolocation | `true` | - |
-| options | `{ loadTile: number }` | Extra options (override) | `false` | `{ loadTile: true }` |
+| options | `{ loadTile: boolean }` | Extra options (override) | `false` | `{ loadTile: true }` |
 
 Parameter `loadTile` determines whether to load the required tile if you have specified coordinates that are outside the already loaded tiles.
 
