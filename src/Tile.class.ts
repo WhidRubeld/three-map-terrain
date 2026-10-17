@@ -1,41 +1,70 @@
-import getPixels from 'get-pixels'
-import { Mesh, MeshNormalMaterial, PlaneGeometry } from 'three'
-import ndarray from 'ndarray'
+import {
+  type Material,
+  MathUtils,
+  Mesh,
+  MeshNormalMaterial,
+  PlaneGeometry
+} from 'three'
 
-import { QuadTextureMaterial } from './quad-texture-material'
+import { loadImageData } from './image'
+import type { Map } from './Map.class'
+import { disposeMaterial, QuadTextureMaterial } from './quad-texture-material'
 import { Utils } from './Utils.class'
-import { Map } from './Map.class'
 
-const tileMaterial = new MeshNormalMaterial({ wireframe: true })
+/** Shown until the tile texture has been loaded. Shared, never disposed. */
+const placeholderMaterial = new MeshNormalMaterial({ wireframe: true })
+
+/** RGBA pixels of a terrarium-encoded elevation tile (e.g. `ImageData`). */
+export interface ElevationPixels {
+  readonly width: number
+  readonly height: number
+  readonly data: ArrayLike<number>
+}
 
 export class Tile {
-  map: Map
-  x: number
-  y: number
-  z: number
+  readonly map: Map
+  readonly x: number
+  readonly y: number
+  readonly z: number
 
   baseURL = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium'
 
-  shape: number[] | null
-  elevation: Float32Array | null
+  shape: number[] | null = null
+  elevation: Float32Array | null = null
 
-  seamX: boolean
-  seamY: boolean
+  seamX = false
+  seamY = false
 
-  mesh: Mesh
-  geometry: PlaneGeometry
+  private _mesh: Mesh<PlaneGeometry, Material> | undefined
+  private readonly abortController = new AbortController()
+  private disposed = false
 
   constructor(map: Map, z: number, x: number, y: number) {
     this.map = map
     this.z = z
     this.x = x
     this.y = y
+  }
 
-    this.shape = null
-    this.elevation = null
+  /** Created lazily so that throwaway tiles (e.g. `childrens()`) stay cheap. */
+  get mesh(): Mesh<PlaneGeometry, Material> {
+    if (!this._mesh) {
+      const { tileSize, tileSegments } = this.map.options
+      this._mesh = new Mesh(
+        new PlaneGeometry(tileSize, tileSize, tileSegments, tileSegments),
+        placeholderMaterial
+      )
+    }
+    return this._mesh
+  }
 
-    this.seamX = false
-    this.seamY = false
+  get geometry(): PlaneGeometry {
+    return this.mesh.geometry
+  }
+
+  /** `true` once the elevation data has been applied to the geometry. */
+  get loaded(): boolean {
+    return this.elevation !== null && !this.disposed
   }
 
   key() {
@@ -43,11 +72,11 @@ export class Tile {
   }
 
   keyNeighX() {
-    return `${this.z}/${this.x + 1}/${this.y}`
+    return Utils.getTileKey(this.z, this.x + 1, this.y)
   }
 
   keyNeighY() {
-    return `${this.z}/${this.x}/${this.y + 1}`
+    return Utils.getTileKey(this.z, this.x, this.y + 1)
   }
 
   mapUrl() {
@@ -58,49 +87,53 @@ export class Tile {
     return `${this.baseURL}/${this.z}/${this.x}/${this.y}.png`
   }
 
-  computeElevation(pixels: ndarray.NdArray<Uint8Array>) {
-    this.shape = pixels.shape
-    const elevation = new Float32Array(pixels.shape[0] * pixels.shape[1])
-    for (let i = 0; i < pixels.shape[0]; i++) {
-      for (let j = 0; j < pixels.shape[1]; j++) {
-        const ij = i + pixels.shape[0] * j
-        const rgba = ij * 4
-        elevation[ij] =
-          pixels.data[rgba] * 256.0 +
-          pixels.data[rgba + 1] +
-          pixels.data[rgba + 2] / 256.0 -
-          32768.0
-      }
+  /** Decodes terrarium RGB into meters: `R * 256 + G + B / 256 - 32768`. */
+  computeElevation({ width, height, data }: ElevationPixels) {
+    this.shape = [width, height, 4]
+    const elevation = new Float32Array(width * height)
+    for (let i = 0; i < elevation.length; i++) {
+      const rgba = i * 4
+      elevation[i] =
+        data[rgba] * 256 + data[rgba + 1] + data[rgba + 2] / 256 - 32768
     }
     this.elevation = elevation
   }
 
   buildGeometry() {
-    const geometry = new PlaneGeometry(
-      this.map.options.tileSize,
-      this.map.options.tileSize,
-      this.map.options.tileSegments,
-      this.map.options.tileSegments
-    )
-    const nPosition = Math.sqrt(geometry.attributes.position.count)
-    const nElevation = Math.sqrt(this.elevation?.length || 0)
-    const ratio = nElevation / (nPosition - 1)
-    let x, y
-    for (let i = 0; i < geometry.attributes.position.count - nPosition; i++) {
-      if (i % nPosition === nPosition - 1) continue
-      x = Math.floor(i / nPosition)
-      y = i % nPosition
+    const { elevation, shape } = this
+    if (!elevation || !shape) return
 
-      if (!this.elevation) break
-      const elevation =
-        this.elevation[
-          Math.round(Math.round(x * ratio) * nElevation + y * ratio)
-        ] * this.map.options.zScale
+    const [width, height] = shape
+    const { tileSegments, zScale } = this.map.options
+    const position = this.geometry.attributes.position
+    const rowSize = tileSegments + 1
+    const xRatio = width / tileSegments
+    const yRatio = height / tileSegments
 
-      geometry.attributes.position.setZ(i, elevation)
+    // The last row/column lies on the neighbours' first pixels. Until
+    // resolveSeams() copies them, approximate it with this tile's edge pixels
+    // so that a tile never shows a wall down to z = 0 while loading.
+    for (let row = 0; row <= tileSegments; row++) {
+      const offset = Math.min(Math.round(row * yRatio), height - 1) * width
+      for (let col = 0; col <= tileSegments; col++) {
+        const x = Math.min(Math.round(col * xRatio), width - 1)
+        position.setZ(row * rowSize + col, elevation[offset + x] * zScale)
+      }
     }
+
+    this.updateGeometry()
+  }
+
+  /**
+   * Call after changing vertex heights: uploads them and refreshes the normals
+   * and the bounding volumes (used by frustum culling and raycasting).
+   */
+  updateGeometry() {
+    const { geometry } = this
+    geometry.attributes.position.needsUpdate = true
     geometry.computeVertexNormals()
-    this.geometry = geometry
+    geometry.computeBoundingBox()
+    geometry.computeBoundingSphere()
   }
 
   childrens() {
@@ -109,31 +142,36 @@ export class Tile {
       new Tile(this.map, this.z + 1, this.x * 2, this.y * 2 + 1),
       new Tile(this.map, this.z + 1, this.x * 2 + 1, this.y * 2),
       new Tile(this.map, this.z + 1, this.x * 2 + 1, this.y * 2 + 1)
-    ]
+    ] as const
   }
 
   buildMaterial() {
-    const urls = this.childrens().map((tile) => tile.mapUrl())
-    return QuadTextureMaterial(urls, this.map.materialOptions)
+    const [nw, sw, ne, se] = this.childrens().map((tile) => tile.mapUrl())
+    return QuadTextureMaterial(
+      [nw, sw, ne, se],
+      this.map.materialOptions,
+      this.abortController.signal
+    )
   }
 
-  buildmesh() {
-    this.buildMaterial().then((material) => {
-      this.mesh.material = material
-    })
-    this.mesh = new Mesh(this.geometry, tileMaterial)
+  /** Swaps the placeholder material for the textured one once it is loaded. */
+  async buildmesh() {
+    try {
+      const material = await this.buildMaterial()
+      if (this.disposed) disposeMaterial(material)
+      else this.mesh.material = material
+    } catch (error) {
+      if (!this.disposed) console.error(error)
+    }
   }
 
-  fetch() {
-    return new Promise<Tile>((resolve) => {
-      getPixels(this.url(), (err, pixels) => {
-        if (err) console.error(err)
-        this.computeElevation(pixels)
-        this.buildGeometry()
-        this.buildmesh()
-        resolve(this)
-      })
-    })
+  async fetch() {
+    const pixels = await loadImageData(this.url(), this.abortController.signal)
+    if (this.disposed) return this
+    this.computeElevation(pixels)
+    this.buildGeometry()
+    void this.buildmesh()
+    return this
   }
 
   setPosition(center: { x: number; y: number }) {
@@ -147,64 +185,98 @@ export class Tile {
     this.mesh.position.set(x, y, z)
   }
 
+  /**
+   * Height (scene units) of the rendered surface at `u`, `v` ∈ [0, 1] — `u`
+   * from west to east, `v` from north to south — interpolated over the same
+   * triangles as the mesh, so a point placed there sits exactly on it.
+   */
+  heightAt(u: number, v: number): number {
+    const n = this.map.options.tileSegments
+    const position = this.geometry.attributes.position
+    const col = MathUtils.clamp(u, 0, 1) * n
+    const row = MathUtils.clamp(v, 0, 1) * n
+    const ix = Math.min(Math.floor(col), n - 1)
+    const iy = Math.min(Math.floor(row), n - 1)
+    const fc = col - ix
+    const fr = row - iy
+    const z = (r: number, c: number) =>
+      position.getZ((iy + r) * (n + 1) + ix + c)
+
+    // PlaneGeometry splits each cell along its bottom-left → top-right diagonal
+    return fr + fc <= 1
+      ? z(0, 0) + (z(1, 0) - z(0, 0)) * fr + (z(0, 1) - z(0, 0)) * fc
+      : z(1, 1) +
+          (z(0, 1) - z(1, 1)) * (1 - fr) +
+          (z(1, 0) - z(1, 1)) * (1 - fc)
+  }
+
+  /** Copies the first row of the southern neighbour into the last row. */
   resolveSeamY(neighbor?: Tile) {
-    const tPosition = this.mesh.geometry.attributes.position.count
-    const nPosition = Math.sqrt(tPosition)
+    const position = this.geometry.attributes.position
+    const total = position.count
+    const rowSize = Math.sqrt(total)
 
-    if (neighbor) {
-      const nPositionN = Math.sqrt(
-        neighbor.mesh.geometry.attributes.position.count
-      )
-      if (nPosition !== nPositionN) {
-        console.error(
-          'resolveSeamY only implemented for geometries of same size'
-        )
-        return
-      }
+    if (neighbor && neighbor.geometry.attributes.position.count !== total) {
+      console.error('resolveSeamY only implemented for geometries of same size')
+      return
     }
 
-    for (let i = tPosition - nPosition; i < tPosition; i++) {
-      const z = neighbor
-        ? neighbor.mesh.geometry.attributes.position.getZ(
-            i - (tPosition - nPosition)
-          )
-        : this.mesh.geometry.attributes.position.getZ(i - nPosition)
-      this.mesh.geometry.attributes.position.setZ(i, z)
+    const neighborPosition = neighbor?.geometry.attributes.position
+    for (let i = total - rowSize; i < total; i++) {
+      const z = neighborPosition
+        ? neighborPosition.getZ(i - (total - rowSize))
+        : position.getZ(i - rowSize)
+      position.setZ(i, z)
     }
   }
 
+  /** Copies the first column of the eastern neighbour into the last column. */
   resolveSeamX(neighbor?: Tile) {
-    const tPosition = this.mesh.geometry.attributes.position.count
-    const nPosition = Math.sqrt(tPosition)
+    const position = this.geometry.attributes.position
+    const total = position.count
+    const rowSize = Math.sqrt(total)
 
-    if (neighbor) {
-      const nPositionN = Math.sqrt(
-        neighbor.mesh.geometry.attributes.position.count
-      )
-      if (nPosition !== nPositionN) {
-        console.error(
-          'resolveSeamX only implemented for geometries of same size'
-        )
-        return
-      }
+    if (neighbor && neighbor.geometry.attributes.position.count !== total) {
+      console.error('resolveSeamX only implemented for geometries of same size')
+      return
     }
 
-    for (let i = nPosition - 1; i <= tPosition; i += nPosition) {
-      const z = neighbor
-        ? neighbor.mesh.geometry.attributes.position.getZ(i - nPosition + 1)
-        : this.mesh.geometry.attributes.position.getZ(i - 1)
-      this.mesh.geometry.attributes.position.setZ(i, z)
+    const neighborPosition = neighbor?.geometry.attributes.position
+    for (let i = rowSize - 1; i < total; i += rowSize) {
+      const z = neighborPosition
+        ? neighborPosition.getZ(i - rowSize + 1)
+        : position.getZ(i - 1)
+      position.setZ(i, z)
     }
   }
 
-  resolveSeams(cache: { [key: string]: Tile }) {
-    this.resolveSeamY(cache[this.keyNeighY()])
-    this.resolveSeamX(cache[this.keyNeighX()])
+  /**
+   * Stitches the south and east edges to the loaded neighbours in `cache`.
+   * An edge without a loaded neighbour keeps this tile's own edge samples;
+   * `seamY` / `seamX` tell whether the edge is stitched to a neighbour.
+   */
+  resolveSeams(cache: Partial<Record<string, Tile>>) {
+    const south = cache[this.keyNeighY()]
+    const east = cache[this.keyNeighX()]
 
-    this.seamY = true
-    this.seamX = true
+    this.seamY = south?.loaded === true
+    this.seamX = east?.loaded === true
+    if (this.seamY) this.resolveSeamY(south)
+    if (this.seamX) this.resolveSeamX(east)
 
-    this.mesh.geometry.attributes.position.needsUpdate = true
-    this.mesh.geometry.computeVertexNormals()
+    this.updateGeometry()
+  }
+
+  /** Aborts pending requests and releases GPU resources. */
+  dispose() {
+    this.disposed = true
+    this.abortController.abort()
+
+    if (!this._mesh) return
+    this._mesh.removeFromParent()
+    this._mesh.geometry.dispose()
+    if (this._mesh.material !== placeholderMaterial) {
+      disposeMaterial(this._mesh.material)
+    }
   }
 }

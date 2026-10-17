@@ -13,3 +13,7 @@ package-lock.json
 *.njsproj
 *.sln
 *.sw?
+
+# Test artifacts
+playwright-report
+test-results

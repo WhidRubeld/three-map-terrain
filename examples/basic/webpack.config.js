@@ -1,35 +1,36 @@
-const { resolve } = require('path')
+const { resolve } = require('node:path')
 
 const HtmlWebpackPlugin = require('html-webpack-plugin')
-const ProgressBarPlugin = require('progress-bar-webpack-plugin')
+const { ProgressPlugin } = require('webpack')
 
-module.exports = {
-  mode: 'development',
+/** @type {(env: unknown, argv: { mode?: string }) => import('webpack').Configuration} */
+module.exports = (_env, argv) => ({
+  mode: argv.mode ?? 'development',
 
   entry: './src/index.ts',
   output: {
-    filename: 'bundle.js',
-    path: resolve(__dirname, 'dist')
-  },
-
-  resolve: {
-    extensions: ['.ts', '.tsx', '.js', '.jsx']
+    filename: 'bundle.[contenthash].js',
+    path: resolve(__dirname, 'dist'),
+    clean: true
   },
 
   devtool: 'source-map',
 
+  resolve: {
+    extensions: ['.ts', '.js'],
+    alias: {
+      // `three-map-terrain` is linked from the repo root: make it use this
+      // example's copy of three instead of bundling a second one
+      three$: resolve(__dirname, 'node_modules/three')
+    }
+  },
+
   module: {
     rules: [
       {
-        test: /\.tsx?$/,
-        use: ['ts-loader']
-      },
-      {
-        test: /\.(jpe?g|png|gif|svg)$/i,
-        use: [
-          'file-loader?hash=sha512&digest=hex&name=images/[hash].[ext]',
-          'image-webpack-loader?bypassOnDebug&optipng.optimizationLevel=7&gifsicle.interlaced=false'
-        ]
+        test: /\.ts$/,
+        use: 'ts-loader',
+        exclude: /node_modules/
       },
       {
         test: /\.css$/i,
@@ -37,15 +38,14 @@ module.exports = {
       }
     ]
   },
-  resolve: {
-    extensions: ['.ts', '.js']
-  },
+
   plugins: [
-    new ProgressBarPlugin(),
-    new HtmlWebpackPlugin({
-      template: `${__dirname}/src/index.html`,
-      filename: 'index.html',
-      inject: 'body'
-    })
-  ]
-}
+    new ProgressPlugin(),
+    new HtmlWebpackPlugin({ template: resolve(__dirname, 'src/index.html') })
+  ],
+
+  performance: {
+    // three.js alone is above webpack's default 244 KiB budget
+    hints: false
+  }
+})

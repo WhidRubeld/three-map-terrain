@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>three-map-terrain playground</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #222;
+      }
+      #info {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        color: #ddd;
+        font:
+          12px/1.4 ui-monospace,
+          monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      Query params:
+        renderer=webgl|webgpu  forceWebGL=1  lights=0|1  wireframe=1  api=eox|osm  nTiles=N  segments=N  view=orbit|top
+    -->
+    <div id="info"></div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

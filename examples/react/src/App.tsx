@@ -1,83 +1,68 @@
 import './App.css'
-import { useEffect, useMemo, useState } from 'react'
-import { Canvas } from '@react-three/fiber'
+
 import { MapControls, PerspectiveCamera } from '@react-three/drei'
+import { Canvas, type ThreeEvent } from '@react-three/fiber'
+import { useEffect, useMemo } from 'react'
 import { Map, Source } from 'three-map-terrain'
-import { Vector3 } from 'three'
 
-function App() {
-  const [map, setMap] = useState<Map>()
-  const [objectCoords, setObjectCoords] = useState<{
-    x: number
-    y: number
-    z: number
-  }>()
+const location = { lat: 46.57634, lon: 7.9904 }
 
-  const objectPosition = useMemo(() => {
-    if (!objectCoords) return undefined
-    return new Vector3(
-      objectCoords.x,
-      objectCoords.y,
-      // with sphere radius offset
-      objectCoords.z + 8
+export default function App() {
+  const map = useMemo(
+    () => new Map({ source: new Source({ api: 'eox' }), location }),
+    []
+  )
+
+  const marker = useMemo(() => {
+    const { x, y, z } = map.getPosition(
+      { ...location, alt: 3e3 },
+      { loadTile: false }
     )
-  }, [objectCoords])
+    // with sphere radius offset
+    return [x, y, z + 8] as const
+  }, [map])
 
   useEffect(() => {
-    setMap(
-      new Map({
-        source: new Source({ api: 'eox' }),
-        location: { lat: 46.57634, lon: 7.9904 },
-        material: { wireframe: false }
-      })
-    )
-  }, [])
-
-  useEffect(() => {
-    if (map) {
-      map.init(() => console.log('Map is ready'))
-      setObjectCoords(
-        map.getPosition(
-          {
-            lat: 46.57634,
-            lon: 7.9904,
-            alt: 3e3
-          },
-          { loadTile: true }
-        )
-      )
+    void map.init(() => {
+      console.log('Map is ready')
+    })
+    // StrictMode mounts twice in development: clean() aborts pending
+    // requests and frees GPU resources so the second init() starts fresh
+    return () => {
+      map.clean()
     }
   }, [map])
 
   return (
-    <Canvas
-      className='scene'
-      onCreated={(state) => state.gl.setClearColor(0x222222)}
-    >
-      <ambientLight color={0x404040} intensity={2.5} />
-      <directionalLight
-        castShadow
-        color={0xffffff}
-        intensity={0.75}
-        position={[1e4, 1e4, 1e4]}
-      />
+    <Canvas className='scene' flat>
+      <color attach='background' args={[0x222222]} />
+      <ambientLight intensity={1.5} />
+      <directionalLight intensity={2.5} position={[1e4, 1e4, 1e4]} />
       <PerspectiveCamera
         makeDefault
-        position={[0, -1.25e3, 10e2]}
+        position={[0, -1.25e3, 1e3]}
         fov={75}
         far={1e6}
         up={[0, 0, 1]}
       />
       <MapControls />
-      {map && <primitive object={map.terrain} position={[0, 0, 0]} />}
-      {objectPosition && (
-        <mesh position={objectPosition}>
-          <sphereBufferGeometry args={[8, 24, 12]} />
-          <meshStandardMaterial color={0xf04040} />
-        </mesh>
-      )}
+      <primitive
+        object={map.terrain}
+        onClick={(event: ThreeEvent<MouseEvent>) => {
+          event.stopPropagation()
+          // event.point is in world space; getLocation expects terrain space
+          const { lat, lon, alt } = map.getLocation(
+            map.terrain.worldToLocal(event.point.clone())
+          )
+          console.log(
+            `${lat.toFixed(5)}, ${lon.toFixed(5)}, ${Math.round(alt)} m`
+          )
+        }}
+      />
+      <mesh position={marker}>
+        <sphereGeometry args={[8, 24, 12]} />
+        <meshBasicMaterial color={0xf04040} />
+      </mesh>
     </Canvas>
   )
 }
-
-export default App
