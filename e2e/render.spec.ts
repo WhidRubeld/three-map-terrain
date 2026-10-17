@@ -34,6 +34,9 @@ const openPlayground = async (
       window.__playground?.texturedTiles() ===
       Object.keys(window.__playground?.map.tileCache ?? {}).length
   )
+  // everything is loaded: one last frame, so that capturing it does not have
+  // to compete with a render loop (seconds per frame on software renderers)
+  await page.evaluate(() => window.__playground?.freeze())
   const backend = await page.evaluate(() => window.__playground?.backend)
   return { backend, requests }
 }

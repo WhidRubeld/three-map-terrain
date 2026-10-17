@@ -132,10 +132,11 @@ window.addEventListener('resize', () => {
   }
 })
 
-void renderer.setAnimationLoop(() => {
+const frame = () => {
   controls?.update()
   renderer.render(scene, camera)
-})
+}
+void renderer.setAnimationLoop(frame)
 
 const info = document.querySelector('#info')
 const status = `r${REVISION} · ${backend} · ${api} · lights ${lights ? 'on' : 'off'}${wireframe ? ' · wireframe' : ''}`
@@ -177,6 +178,14 @@ const playground: Playground = {
   texturedTiles: () =>
     Object.values(map.tileCache).filter(
       ({ mesh }) => 'map' in mesh.material && mesh.material.map !== null
-    ).length
+    ).length,
+  freeze: async () => {
+    await renderer.setAnimationLoop(null)
+    frame()
+    // two frames: the last render has been presented
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve))
+    )
+  }
 }
 window.__playground = playground

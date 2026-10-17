@@ -1,56 +1,84 @@
+<div align="center">
+
 # three-map-terrain
 
-<p>
-  <a href="https://www.npmjs.com/package/three-map-terrain"><img alt="npm version" src="https://img.shields.io/npm/v/three-map-terrain"></a>
-</p>
+**Real-world 3D terrain for [three.js](https://threejs.org), built from slippy-map tiles.**<br>
+Elevation, satellite or map imagery, and the geolocation math to put your own data on it.
 
-A JavaScript library to build 3D maps with [three.js](https://threejs.org).
+[![npm](https://img.shields.io/npm/v/three-map-terrain?style=flat-square&color=000&labelColor=000)](https://www.npmjs.com/package/three-map-terrain)
+[![CI](https://img.shields.io/github/actions/workflow/status/whidrubeld/three-map-terrain/ci.yml?branch=master&style=flat-square&label=ci&color=000&labelColor=000)](https://github.com/whidrubeld/three-map-terrain/actions/workflows/ci.yml)
+[![three](https://img.shields.io/badge/three-%E2%89%A50.152-000?style=flat-square&labelColor=000)](https://threejs.org)
+[![types](https://img.shields.io/npm/types/three-map-terrain?style=flat-square&color=000&labelColor=000)](src/index.ts)
+[![license](https://img.shields.io/npm/l/three-map-terrain?style=flat-square&color=000&labelColor=000)](LICENSE)
 
-<img width="1062" alt="Screenshot 2023-02-04 at 02 40 34" src="https://user-images.githubusercontent.com/35730139/216731690-217bddbb-ca56-4443-a76f-efbc923b095b.png">
+[**Live demo**](https://whidrubeld.github.io/three-map-terrain/) · [Quick start](#quick-start) · [Examples](#examples) · [API](#api) · [Upgrading from 1.x](#upgrading-from-1x)
 
-[Live demo: GPX viewer](https://whidrubeld.github.io/three-map-terrain/) / [Source code](https://github.com/whidrubeld/three-map-terrain/tree/master/examples/gpx-viewer)
+<a href="https://whidrubeld.github.io/three-map-terrain/"><img src="docs/hero.webp" alt="The live demo: the Stelvio Pass road draped on wireframe terrain, with track details, a legend, a performance monitor, an elevation profile and the card of the track point under the cursor" width="100%"></a>
 
-## About
+<sub>The live demo is a GPX viewer built with this library — drop a track on it. [Source](examples/gpx-viewer)</sub>
 
-[three-map-terrain](https://github.com/whidrubeld/three-map-terrain) takes two slippy map tilesets, one to fetch elevation data tiles, the other to texture the meshes built from said elevation data (any XYZ tileserver will do).
+</div>
 
-## Installation
+## Features
+
+- **Terrain from real elevation** — [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) at any zoom, as an `nTiles × nTiles` grid of meshes around a location.
+- **Any imagery** — Sentinel-2 cloudless (EOX), OpenStreetMap, Mapbox or MapTiler, one zoom level deeper than the terrain and stitched into a single texture per tile.
+- **Seamless while streaming** — tiles are stitched to their neighbours the moment they load: no cracks, no walls.
+- **Geolocation both ways** — place objects at a latitude/longitude (on the surface or at an altitude), and read the geolocation under the pointer.
+- **Plain three.js** — built-in materials, no custom shaders: works with `WebGLRenderer` and `WebGPURenderer`, with lights, fog and wireframe.
+- **Well-behaved** — retries for flaky tile servers, `AbortController` for pending requests, `clean()` frees every GPU resource.
+- **Small** — TypeScript, ESM + CommonJS, no runtime dependencies; `three` is a peer dependency.
+
+## Install
 
 ```bash
-yarn add three three-map-terrain
+npm install three three-map-terrain
+# or: yarn add three three-map-terrain · pnpm add three three-map-terrain
 ```
 
-`three` is a peer dependency (`>=0.152.0`). Works with both `WebGLRenderer` and `WebGPURenderer`.
+Requires `three` ≥ 0.152.
 
-Tiles are fetched with CORS. Transient failures (network errors, HTTP 408/425/429/5xx, truncated images) are retried up to 3 times with backoff.
+## Quick start
 
-## Basic - Quick start
-
-```typescript
-import { Scene } from 'three'
+```ts
+import { PerspectiveCamera, Scene, WebGLRenderer } from 'three'
+import { MapControls } from 'three/addons/controls/MapControls.js'
 import { Map, Source } from 'three-map-terrain'
 
 const scene = new Scene()
+const camera = new PerspectiveCamera(60, innerWidth / innerHeight, 1, 1e6)
+camera.up.set(0, 0, 1) // the terrain lies in the XY plane, Z is up
+camera.position.set(0, -1200, 900)
 
-const location = { lat: 46.57634, lon: 7.9904 }
-const source = new Source({ api: 'eox' })
-const map = new Map({ source, location })
+const renderer = new WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+document.body.append(renderer.domElement)
+const controls = new MapControls(camera, renderer.domElement)
 
+const map = new Map({
+  source: new Source({ api: 'eox' }),
+  location: { lat: 46.57634, lon: 7.9904 } // Bernese Alps
+})
 scene.add(map.terrain)
-await map.init()
-console.log('Map is ready')
+await map.init() // geometry is ready; textures keep streaming in
+
+renderer.setAnimationLoop(() => {
+  controls.update()
+  renderer.render(scene, camera)
+})
 ```
 
-[**See full example**](https://github.com/whidrubeld/three-map-terrain/tree/master/examples/basic)
+Built-in materials react to lights: add an `AmbientLight` and a `DirectionalLight`, or pass `material: { lights: false }`.
 
-## React - Quick start
+### React Three Fiber
 
 ```tsx
-import { useEffect, useMemo } from 'react'
+import { MapControls } from '@react-three/drei'
 import { Canvas } from '@react-three/fiber'
+import { useEffect, useMemo } from 'react'
 import { Map, Source } from 'three-map-terrain'
 
-export default function App() {
+export function Terrain() {
   const map = useMemo(
     () =>
       new Map({
@@ -61,225 +89,179 @@ export default function App() {
   )
 
   useEffect(() => {
-    void map.init(() => console.log('Map is ready'))
-    return () => map.clean() // aborts pending requests, frees GPU memory
+    void map.init()
+    return () => map.clean() // aborts requests, frees GPU memory
   }, [map])
 
+  return <primitive object={map.terrain} />
+}
+
+export default function App() {
   return (
-    <Canvas>
-      <primitive object={map.terrain} />
+    <Canvas camera={{ up: [0, 0, 1], position: [0, -1200, 900], far: 1e6 }}>
+      <ambientLight intensity={1.5} />
+      <directionalLight position={[-1e4, 1e4, 1e4]} intensity={2.5} />
+      <Terrain />
+      <MapControls />
     </Canvas>
   )
 }
 ```
 
-[**See full example**](https://github.com/whidrubeld/three-map-terrain/tree/master/examples/react)
+### Put things on the map
 
-## Documentation
-
-### `Source` class
-
-Defines a tileset source used to fetch textures applied to the 3D terrain mesh.
-
-```typescript
-const source = new Source({ api, token })
-```
-
-| Argument | Description                                   | Required                   | Default Value |
-| -------- | --------------------------------------------- | -------------------------- | ------------- |
-| api      | One of `['osm', 'mapbox', 'eox', 'maptiler']` | `true`                     | -             |
-| token    | Your api key                                  | for `mapbox` or `maptiler` | -             |
-
-### `Map` class
-
-The main class three-map-terrain. Creates a 3D map using a grid of tiles.
-
-```javascript
-const map = new Map({ source, location, options, material })
-```
-
-| Argument | Type                           | Description                                                                   | Required | Default Value           |
-| -------- | ------------------------------ | ----------------------------------------------------------------------------- | -------- | ----------------------- |
-| source   | `Source`                       | A source instance                                                             | `true`   | -                       |
-| location | `{ lat: number, lon: number }` | An object containing the latitude and longitude values used to center the map | `true`   | -                       |
-| options  | `MapOptions`                   | An object to pass some map options (override)                                 | `false`  | `defaultMapOptions`     |
-| material | `QuadTextureMaterialOptions`   | An object to pass some material options (override)                            | `false`  | `defaultTextureOptions` |
-
-#### The `MapOptions` type
-
-| Option       | Type     | Description                                                                                                                                    |
-| ------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| nTiles       | `number` | `Map.init()` will display a grid of `nTiles x nTiles`                                                                                          |
-| zoom         | `number` | Default zoom level                                                                                                                             |
-| tileSize     | `number` | Tile size at the default zoom level                                                                                                            |
-| tileSegments | `number` | Number of segments given to the [PlaneGeometry](https://threejs.org/docs/#api/en/geometries/PlaneGeometry) constructor. Maximum value is `256` |
-| zScale       | `number` | The raw elevation data is multiplied by zScale when building a Tile mesh                                                                       |
-
-#### The `defaultMapOptions` object
-
-```typescript
-{
-  nTiles: 3,
-  zoom: 11,
-  tileSize: 600,
-  tileSegments: 100,
-  zScale: 0.045
-}
-```
-
-#### The `QuadTextureMaterialOptions` type
-
-Each tile is textured with its four child tiles (one zoom level deeper), stitched into a single texture and applied with a built-in three.js material.
-
-| Option    | Type      | Description                                                                                                                                                                                                 |
-| --------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| lights    | `boolean` | `true` uses a lit [MeshLambertMaterial](https://threejs.org/docs/#api/en/materials/MeshLambertMaterial), `false` an unlit [MeshBasicMaterial](https://threejs.org/docs/#api/en/materials/MeshBasicMaterial) |
-| wireframe | `boolean` | Render the textured terrain as a wireframe. The grid density follows `MapOptions.tileSegments`: `100` (default) looks almost solid from afar, `32`–`48` gives a readable grid                               |
-| fog       | `boolean` | Whether the material is affected by the scene fog                                                                                                                                                           |
-
-#### The `defaultTextureOptions` object
-
-```typescript
-{
-  lights: true,
-  wireframe: false,
-  fog: true
-}
-```
-
-### Map helpers
-
-#### Init map cache
-
-```typescript
-await map.init(() => {
-  console.log('Map is ready')
-})
-```
-
-| Argument | Type         | Description    | Required | Default Value |
-| -------- | ------------ | -------------- | -------- | ------------- |
-| callback | `() => void` | Ready callback | `false`  | -             |
-
-Returns a `Promise<void>`. It resolves (and the callback is called, and `map.ready` becomes `true`) once every tile has its elevation and the seams between tiles are stitched; textures keep streaming in afterwards. Calls made while loading share the same load. If `map.clean()` is called meanwhile, the pending call resolves without calling its callback.
-
-#### Determine the location of a point by coordinates
-
-<img width="1062" alt="Screenshot 2023-02-04 at 02 42 28" src="https://user-images.githubusercontent.com/35730139/216731744-24d0e8e3-23b3-4681-bf36-588a1b26be38.png">
-
-```typescript
-const posInVector3 = map.getPosition(
-  {
-    lat: 46.57634,
-    lon: 7.9904,
-    alt: 3e3
-  },
-  { loadTile: true }
-)
-```
-
-| Argument | Type                                        | Description              | Required | Default Value        |
-| -------- | ------------------------------------------- | ------------------------ | -------- | -------------------- |
-| location | `{ lat: number, lon: number, alt: number }` | Your geolocation         | `true`   | -                    |
-| options  | `{ loadTile: boolean }`                     | Extra options (override) | `false`  | `{ loadTile: true }` |
-
-Parameter `loadTile` determines whether to load the required tile if you have specified coordinates that are outside the already loaded tiles.
-
-#### Place a point on the terrain surface
-
-```typescript
-const { x, y, z } = await map.getTerrainPosition({
-  lat: 46.57634,
-  lon: 7.9904
-})
+```ts
+// on the rendered surface, wherever the terrain is
+const { x, y, z } = await map.getTerrainPosition({ lat: 46.6242, lon: 8.0414 })
 marker.position.set(x, y, z)
+
+// every frame, for moving objects (undefined until that tile has loaded)
+const p = map.getTerrainPositionSync({ lat, lon })
+if (p) vehicle.position.set(p.x, p.y, p.z)
+
+// at an altitude in meters, e.g. an aircraft
+const { x, y, z } = map.getPosition({ lat, lon, alt: 3000 })
+
+// the geolocation under the pointer
+raycaster.setFromCamera(pointer, camera)
+const hit = map.pick(raycaster) // { lat, lon, alt, point } | undefined
 ```
 
-| Argument | Type                           | Description      | Required | Default Value |
-| -------- | ------------------------------ | ---------------- | -------- | ------------- |
-| location | `{ lat: number, lon: number }` | Your geolocation | `true`   | -             |
+## Examples
 
-Like `getPosition`, but without the altitude: `z` is read from the terrain itself, interpolated over the same triangles as the rendered mesh, so the point never floats above or sinks into it. Waits for the tile under the location, loading it if needed, and rejects if it cannot be loaded. The altitude in meters is approximately `z / map.options.zScale`.
+| Example                               | Stack                                  | What it shows                                                                                                              |
+| ------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| [**GPX viewer**](examples/gpx-viewer) | React, R3F, TanStack Store, Tailwind 4 | The [live demo](https://whidrubeld.github.io/three-map-terrain/): GPX tracks draped on terrain, profile, playback, picking |
+| [React](examples/react)               | React Three Fiber, drei, Vite          | The minimal R3F setup, with `StrictMode`                                                                                   |
+| [Basic](examples/basic)               | three.js, webpack                      | The minimal plain three.js setup                                                                                           |
 
-For areas that are already loaded there is a synchronous variant, e.g. to move an object along the terrain every frame:
+<table>
+  <tr>
+    <td width="38%"><img src="docs/mono-light.webp" alt="Light theme, grayscale imagery: the Bright Angel Trail descending into the Grand Canyon"></td>
+    <td width="38%"><img src="docs/relief-wireframe.webp" alt="Dark theme, untextured relief as a wireframe: the Eiger Trail below the Eiger north face"></td>
+    <td width="24%"><img src="docs/mobile.webp" alt="The compact layout on a phone: the Bright Angel Trail with playback"></td>
+  </tr>
+  <tr>
+    <td><sub>Grayscale imagery, light theme</sub></td>
+    <td><sub>Untextured relief, <code>wireframe</code></sub></td>
+    <td><sub>Phones</sub></td>
+  </tr>
+</table>
 
-```typescript
-const position = map.getTerrainPositionSync({ lat, lon }, { loadTile: true })
-if (position) vehicle.position.set(position.x, position.y, position.z)
-```
+## API
 
-It returns `undefined` while the tile under the location is not loaded, and starts loading it unless `loadTile` is `false`.
+### `new Source({ api, token? })`
 
-#### Find the geolocation of a point on the map
+Where the textures come from. Elevation always comes from AWS Terrain Tiles.
 
-`getLocation` is the inverse of `getPosition`: it takes a point in `map.terrain` coordinates and returns `{ lat, lon, alt }` (`alt` in meters, `z / zScale`).
+| `api`      | Imagery                                                     | `token` |
+| ---------- | ----------------------------------------------------------- | ------- |
+| `eox`      | [Sentinel-2 cloudless](https://s2maps.eu) satellite mosaic  | —       |
+| `osm`      | [OpenStreetMap](https://www.openstreetmap.org) standard map | —       |
+| `mapbox`   | Mapbox satellite                                            | yes     |
+| `maptiler` | MapTiler satellite                                          | yes     |
 
-```typescript
-const { lat, lon, alt } = map.getLocation({ x, y, z })
-```
+### `new Map({ source, location, options?, material? })`
 
-`pick` finds the terrain under a ray — typically the mouse pointer — and returns its geolocation plus the hit `point` in world coordinates, or `undefined` if the ray misses the loaded tiles. Transforms of `map.terrain` are taken into account.
+| Prop       | Type                                  | Description                                    |
+| ---------- | ------------------------------------- | ---------------------------------------------- |
+| `source`   | `Source`                              | Texture tiles                                  |
+| `location` | `{ lat: number; lon: number }`        | The grid is centered on the tile containing it |
+| `options`  | `Partial<MapOptions>`                 | See below                                      |
+| `material` | `Partial<QuadTextureMaterialOptions>` | See below                                      |
 
-```typescript
-const raycaster = new Raycaster()
+**`MapOptions`** (defaults in `defaultMapOptions`)
 
-renderer.domElement.addEventListener('click', (event) => {
-  const pointer = new Vector2(
-    (event.clientX / window.innerWidth) * 2 - 1,
-    -(event.clientY / window.innerHeight) * 2 + 1
-  )
-  raycaster.setFromCamera(pointer, camera)
+| Option         | Default | Description                                                                                                                       |
+| -------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `nTiles`       | `3`     | The grid is `nTiles × nTiles` tiles                                                                                               |
+| `zoom`         | `11`    | Zoom level of the terrain tiles; textures use `zoom + 1`. Terrain tiles exist up to 15                                            |
+| `tileSize`     | `600`   | Size of a tile in scene units                                                                                                     |
+| `tileSegments` | `100`   | Segments per tile side (`PlaneGeometry`), 1–256                                                                                   |
+| `zScale`       | `0.045` | Scene units per meter of elevation. True scale is `tileSize / tileWidthInMeters`; the default is true scale at zoom 11 around 46° |
 
-  const hit = map.pick(raycaster) // { lat, lon, alt, point } | undefined
-  if (hit) console.log(hit.lat, hit.lon, hit.alt)
-})
-```
+**`QuadTextureMaterialOptions`** (defaults in `defaultTextureOptions`)
 
-With React Three Fiber the pointer events already carry the hit point (in world coordinates):
+| Option      | Default | Description                                                                       |
+| ----------- | ------- | --------------------------------------------------------------------------------- |
+| `lights`    | `true`  | `MeshLambertMaterial` (lit) or `MeshBasicMaterial` (unlit)                        |
+| `wireframe` | `false` | Draw the textured terrain as lines; `tileSegments` of 32–64 gives a readable grid |
+| `fog`       | `true`  | Whether the scene fog applies                                                     |
 
-```tsx
-<primitive
-  object={map.terrain}
-  onClick={(event) => {
-    const { lat, lon, alt } = map.getLocation(
-      map.terrain.worldToLocal(event.point.clone())
-    )
-  }}
-/>
-```
+Until its texture arrives, a tile shows a shared wireframe placeholder.
 
-#### Reset map cache
+### `Map` members
 
-```typescript
-map.clean()
-```
+Positions are in `map.terrain` coordinates: X east, Y north, Z up. Transforms of `map.terrain` (or its parents) are taken into account by `pick`.
 
-Removes every tile from `map.terrain`, aborts pending requests and disposes geometries, materials and textures. Call it when the map is no longer used (e.g. in a React effect cleanup); `map.init()` can be called again afterwards.
+| Member                                               | Returns                                 | Description                                                                                                                                                                               |
+| ---------------------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `terrain`                                            | `Group`                                 | Add it to your scene; one mesh per loaded tile                                                                                                                                            |
+| `init(callback?)`                                    | `Promise<void>`                         | Loads the grid. Resolves (and calls `callback`, sets `ready`) once every tile has its elevation and seams are stitched; textures keep streaming in. Calls before `clean()` share one load |
+| `getPosition({ lat, lon, alt }, { loadTile })`       | `{ x, y, z }`                           | `x`, `y` of a geolocation, `z = alt × zScale`. Loads the tile if it is not in the grid, unless `loadTile: false`                                                                          |
+| `getTerrainPosition({ lat, lon })`                   | `Promise<{ x, y, z }>`                  | A point exactly on the rendered surface, interpolated over the mesh triangles. Waits for (and loads) the tile; rejects if it cannot be loaded                                             |
+| `getTerrainPositionSync({ lat, lon }, { loadTile })` | `{ x, y, z } \| undefined`              | The same, synchronously: `undefined` while the tile is not loaded (starts loading it unless `loadTile: false`)                                                                            |
+| `getLocation({ x, y, z })`                           | `{ lat, lon, alt }`                     | Inverse of `getPosition`; `alt` in meters                                                                                                                                                 |
+| `pick(raycaster)`                                    | `{ lat, lon, alt, point } \| undefined` | The terrain hit by a ray, e.g. after `raycaster.setFromCamera(pointer, camera)`; `point` in world coordinates                                                                             |
+| `addTileSegment(x, y)`                               | `Promise<void>`                         | Loads one more tile of the grid's zoom                                                                                                                                                    |
+| `clean()`                                            | `void`                                  | Removes the tiles, aborts pending requests, disposes geometries, materials and textures. `init()` can be called again                                                                     |
+| `ready`, `options`, `tileCache`                      |                                         | Whether `init()` finished, the resolved options, the loaded `Tile`s by `z/x/y`                                                                                                            |
+
+With React Three Fiber, pointer events already carry the hit: `map.getLocation(map.terrain.worldToLocal(event.point.clone()))`.
+
+<details>
+<summary>Lower-level exports</summary>
+
+- `Utils` — Web Mercator tile math: `position2tile`, `position2tileFraction`, `tile2bbox`, `tile2lat`, `tile2lon`, `tile2position`, `getTileKey`.
+- `Tile` — one terrain tile: elevation decoding, geometry, seams, `heightAt(u, v)`, `dispose()`.
+- `loadQuadTexture`, `createQuadTextureMaterial`, `QuadTextureMaterial`, `disposeMaterial` — the 2 × 2 child-tile texture and the material built from it.
+
+</details>
+
+### Loading
+
+Tiles are fetched with CORS. Network errors, HTTP 408/425/429/5xx and bodies that cannot be decoded (tile servers occasionally send truncated images with status 200) are retried up to three times with backoff, bypassing the HTTP cache. A texture that still cannot be decoded is drawn as far as it arrived; an elevation tile never is, since partial heights would be bogus terrain.
+
+## Upgrading from 1.x
+
+2.0 rewrites the internals on stable three.js API. For most apps nothing changes but the peer range; check these if you went deeper:
+
+- **`three` ≥ 0.152** is required (was ≥ 0.148).
+- **`init()` returns a promise** and calls its callback once the tiles have their elevation and are stitched. 1.x called it synchronously, before anything had loaded.
+- **Tile materials are built-in** `MeshLambertMaterial` / `MeshBasicMaterial` with one stitched texture as `map`. The custom `ShaderMaterial` and its `mapNW`/`mapNE`/`mapSW`/`mapSE` uniforms are gone; `QuadTextureMaterial()` resolves to the new material.
+- **`Tile.computeElevation()`** takes `{ width, height, data }` (e.g. an `ImageData`) instead of an `ndarray`; `get-pixels` and `ndarray` are no longer dependencies.
+- **Only the package root can be imported** (`exports` map): import from `three-map-terrain`, not from its `dist/` files.
+- `clean()` also aborts pending requests; `tileSegments` is clamped to 1–256.
+
+New in 2.0: `getTerrainPosition`, `getTerrainPositionSync`, `getLocation`, `pick`, a working `wireframe` option, `WebGPURenderer` support and retries.
+
+## Data and attribution
+
+Show the attribution of the data you use, and follow its terms:
+
+- Elevation: [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) — [sources and attribution](https://github.com/tilezen/joerd/blob/master/docs/attribution.md).
+- `eox`: [Sentinel-2 cloudless](https://s2maps.eu) by EOX IT Services GmbH (contains modified Copernicus Sentinel data). The 2016 layer used here is CC BY-NC-SA 4.0: non-commercial use.
+- `osm`: © OpenStreetMap contributors — mind the [tile usage policy](https://operations.osmfoundation.org/policies/tiles/); heavy use needs your own tile server.
+- `mapbox`, `maptiler`: their terms of service, with your token.
 
 ## Development
 
 ```bash
 yarn            # install
-yarn dev        # playground (src/ with hot reload) on http://localhost:5173
+yarn dev        # playground with hot reload on http://localhost:5173
 yarn validate   # typecheck, lint, format check, unit tests, build
 yarn test:e2e   # rendering tests in Chromium (WebGL + WebGPU), tile servers mocked
 ```
 
-The playground accepts `?renderer=webgpu` (`&forceWebGL=1` for its WebGL2 backend), `?lights=0`, `?wireframe=1`, `?segments=40` (`tileSegments`), `?api=osm`, `?nTiles=5` and `?view=top`. Click the terrain to see its geolocation.
-See [AGENTS.md](AGENTS.md) for architecture notes and conventions.
+The playground accepts `?renderer=webgpu` (`&forceWebGL=1` for its WebGL2 backend), `?lights=0`, `?wireframe=1`, `?segments=40`, `?api=osm`, `?nTiles=5` and `?view=top`. Architecture notes and conventions are in [AGENTS.md](AGENTS.md).
 
-## Future list
+## Roadmap
 
-- [x] Asynchronous analog of the `getPosition` function without passing the altitude parameter (`getTerrainPosition`)
-- [x] Advanced example ([GPX viewer](https://github.com/whidrubeld/three-map-terrain/tree/master/examples/gpx-viewer))
-- [ ] Base Pin component
-- [ ] Base Direction component
+- [x] Terrain position helpers (`getTerrainPosition`, `getTerrainPositionSync`, `pick`)
+- [x] Basic, React and advanced ([GPX viewer](examples/gpx-viewer)) examples
+- [ ] Pin and direction components
 - [ ] Vue example
-- [x] React example
-- [x] Basic example
 
-## License and attributions
+## License
 
-The map library code is MIT licensed.
-
-<p>This project is an updated and more advanced version of the <a href="https://github.com/blaze33/map33.js">map33.js</a> library.</p>
+[MIT](LICENSE). Started as an updated and extended version of [map33.js](https://github.com/blaze33/map33.js).

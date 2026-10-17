@@ -146,8 +146,9 @@ export function glyphTexture(
 }
 
 /**
- * Point size (drawing-buffer pixels) that draws one glyph cell as a whole
- * number of pixels: 2 CSS px per cell, never less than 1 buffer pixel.
+ * `PointsMaterial.size` (CSS px: three multiplies it by the pixel ratio)
+ * that draws one glyph cell as a whole number of buffer pixels — 2 CSS px
+ * per cell, never less than one buffer pixel in pixel mode.
  */
 export const glyphSize = (name: GlyphName, dpr: number) =>
-  glyphCells(name) * Math.max(1, Math.round(2 * dpr))
+  (glyphCells(name) * Math.max(1, Math.round(2 * dpr))) / dpr

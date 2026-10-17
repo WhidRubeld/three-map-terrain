@@ -23,6 +23,7 @@ examples/basic            plain three.js + webpack
 examples/react            React Three Fiber + drei + Vite
 examples/gpx-viewer       the live demo (GitHub Pages): GPX tracks on terrain;
                           React + R3F + TanStack Store + Tailwind 4, own UI kit
+docs/                     README screenshots (WebP) of the GPX viewer
 .skills/                  agent skills (symlinked as .claude/skills)
 ```
 

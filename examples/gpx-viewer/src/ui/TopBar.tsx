@@ -14,7 +14,7 @@ import {
   setHelp,
   viewerStore
 } from '../state/viewer'
-import { Kbd } from './controls'
+import { Kbd, useCurrentInView } from './controls'
 import { Icon } from './Icon'
 
 export const REPOSITORY = 'https://github.com/whidrubeld/three-map-terrain'
@@ -94,6 +94,7 @@ export function FileButton({ compact = false }: { compact?: boolean }) {
 
 export function TopBar() {
   const source = useSelector(viewerStore, (s) => s.source)
+  const strip = useCurrentInView<HTMLElement>(source)
   const theme = useSelector(settingsStore, (s) => s.theme)
 
   return (
@@ -101,6 +102,7 @@ export function TopBar() {
       <Brand />
 
       <nav
+        ref={strip}
         className='panel pointer-events-auto flex h-11 min-w-0 items-center gap-1 overflow-x-auto px-1.5 [scrollbar-width:none]'
         aria-label='Tracks'
       >

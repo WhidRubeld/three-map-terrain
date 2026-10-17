@@ -13,6 +13,12 @@ export interface Playground {
   texturedTiles: () => number
   /** Result of the last click on the terrain (`map.pick`). */
   lastPick: GeoLocation | undefined
+  /**
+   * Stops the render loop after one last frame. With software rendering
+   * (SwiftShader on GPU-less CI) every frame takes long enough to starve
+   * screenshots and `page.evaluate`; the tests freeze the scene first.
+   */
+  freeze: () => Promise<void>
 }
 
 declare global {

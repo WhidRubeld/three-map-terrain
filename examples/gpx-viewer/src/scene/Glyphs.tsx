@@ -75,11 +75,14 @@ export function Label({
   position,
   visible,
   interactive = false,
+  placement = 'above',
   children
 }: {
   position: readonly [number, number, number]
   visible?: () => boolean
   interactive?: boolean
+  /** `below` for points near the top of the canvas */
+  placement?: 'above' | 'below'
   children: ReactNode
 }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -101,6 +104,7 @@ export function Label({
         className='scene-label'
         data-visible='true'
         data-interactive={interactive}
+        data-placement={placement}
       >
         {children}
       </div>

@@ -11,7 +11,7 @@ import {
   uiStore,
   viewerStore
 } from '../state/viewer'
-import { cx, useMedia } from './controls'
+import { cx, useCurrentInView, useMedia } from './controls'
 import { Icon, type IconName } from './Icon'
 import { LegendBody } from './LegendPanel'
 import { Hint } from './Overlays'
@@ -35,6 +35,7 @@ const SHEETS: {
 
 function CompactTopBar() {
   const source = useSelector(viewerStore, (s) => s.source)
+  const strip = useCurrentInView<HTMLElement>(source)
   const theme = useSelector(settingsStore, (s) => s.theme)
   return (
     <header className='panel ticks pointer-events-auto flex h-11 items-center gap-1 px-1.5'>
@@ -48,6 +49,7 @@ function CompactTopBar() {
         <Icon name='logo' cell={2} />
       </a>
       <nav
+        ref={strip}
         className='flex min-w-0 flex-1 gap-1 overflow-x-auto [scrollbar-width:none]'
         aria-label='Tracks'
       >

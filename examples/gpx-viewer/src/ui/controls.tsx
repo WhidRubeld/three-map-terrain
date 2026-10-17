@@ -1,5 +1,11 @@
 import { useSelector } from '@tanstack/react-store'
-import { type ReactNode, useId, useSyncExternalStore } from 'react'
+import {
+  type ReactNode,
+  useEffect,
+  useId,
+  useRef,
+  useSyncExternalStore
+} from 'react'
 
 import type { Parts } from '../lib/format'
 import { type PanelId, settingsStore, togglePanel } from '../state/settings'
@@ -7,6 +13,30 @@ import { Icon, type IconName } from './Icon'
 
 export const cx = (...classes: (string | false | null | undefined)[]) =>
   classes.filter(Boolean).join(' ')
+
+/**
+ * For a horizontally scrolling strip: keeps the `aria-current` item in view
+ * whenever `key` changes (without scrolling the page).
+ */
+export function useCurrentInView<T extends HTMLElement>(key: unknown) {
+  const ref = useRef<T>(null)
+  useEffect(() => {
+    const strip = ref.current
+    const current = strip?.querySelector<HTMLElement>('[aria-current="true"]')
+    if (!strip || !current) return
+    const left = current.offsetLeft - strip.offsetLeft
+    const right = left + current.offsetWidth
+    if (left < strip.scrollLeft)
+      strip.scrollTo({ left: left - 8, behavior: 'smooth' })
+    else if (right > strip.scrollLeft + strip.clientWidth) {
+      strip.scrollTo({
+        left: right - strip.clientWidth + 8,
+        behavior: 'smooth'
+      })
+    }
+  }, [key])
+  return ref
+}
 
 /** Whether a media query matches, kept up to date. */
 export function useMedia(query: string) {

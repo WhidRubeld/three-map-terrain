@@ -411,6 +411,12 @@
       visibility 0.2s;
   }
 
+  .scene-label[data-placement='below'] {
+    transform: translate(-50%, 0);
+    padding-top: 14px;
+    padding-bottom: 0;
+  }
+
   .scene-label[data-visible='false'] {
     visibility: hidden;
     opacity: 0;

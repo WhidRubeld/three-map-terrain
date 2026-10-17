@@ -27,6 +27,7 @@ import {
   seek,
   setHoverIndex,
   terrainStore,
+  uiStore,
   viewerStore
 } from '../state/viewer'
 import { lineAt } from './drape'
@@ -37,21 +38,39 @@ const ORIGIN = new Float32Array(3)
 
 // ------------------------------------------------------------ hover
 
+/** Room the point card needs above its point, CSS px. */
+const CARD_HEIGHT = 250
+
 export function HoverProbe() {
   const index = useSelector(hoverStore, (s) => s.index)
   const drape = useSelector(terrainStore, (s) => s.drape)
   const fit = useSelector(terrainStore, (s) => s.fit)
   const track = useSelector(viewerStore, (s) => s.track)
+  const camera = useThree((s) => s.camera)
+  const height = useThree((s) => s.size.height)
   const position = useMemo(
     () => (drape && index !== null ? lineAt(drape, index) : null),
     [drape, index]
   )
+  // near the top of the canvas the card opens downwards, clear of the top bar
+  const placement = useMemo(() => {
+    const world = sceneRefs.world
+    if (!position || !world) return 'above'
+    const screen = world
+      .localToWorld(new Vector3(position.x, position.y, position.z))
+      .project(camera)
+    const y = ((1 - screen.y) / 2) * height
+    return y < uiStore.state.insets.top + CARD_HEIGHT ? 'below' : 'above'
+  }, [position, camera, height])
   if (!position || !track || !fit || index === null) return null
 
   return (
     <group position={[position.x, position.y, position.z]}>
       <Glyphs name='hover' positions={ORIGIN} />
-      <Label position={[0, 0, fit.tileSize * 0.04]}>
+      <Label
+        position={[0, 0, placement === 'above' ? fit.tileSize * 0.04 : 0]}
+        placement={placement}
+      >
         <SampleCard track={track} index={index} />
       </Label>
     </group>
