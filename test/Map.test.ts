@@ -1,15 +1,22 @@
-import { MeshBasicMaterial, MeshLambertMaterial, Texture } from 'three'
+import {
+  MeshBasicMaterial,
+  MeshLambertMaterial,
+  Raycaster,
+  Texture,
+  Vector3
+} from 'three'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   defaultMapOptions,
   defaultTextureOptions,
   Map,
+  Utils,
   type MapProps,
   Source,
   type Tile
 } from '../src'
-import { terrariumPixels } from './helpers'
+import { raycastZ, terrariumPixels } from './helpers'
 
 const { loadImageData } = vi.hoisted(() => ({ loadImageData: vi.fn() }))
 
@@ -329,5 +336,212 @@ describe('Map', () => {
 
       expect(Object.keys(map.tileCache)).toHaveLength(9)
     })
+  })
+
+  describe('getTerrainPosition', () => {
+    const east2 = {
+      lat: location.lat,
+      lon: location.lon + (2 * 360) / 2 ** defaultMapOptions.zoom
+    }
+
+    it('puts the point on the rendered surface', async () => {
+      const map = createMap()
+      await map.init()
+
+      const point = await map.getTerrainPosition(location)
+      const { x, y } = map.getPosition({ ...location, alt: 0 })
+
+      expect([point.x, point.y]).toEqual([x, y])
+      expect(point.z).toBeCloseTo(raycastZ(map.terrain, x, y), 6)
+      expect(point.z).toBeGreaterThan(600 * map.options.zScale)
+    })
+
+    it('waits for a tile that is still loading', async () => {
+      const map = createMap()
+      const init = map.init()
+
+      const point = await map.getTerrainPosition(location)
+
+      expect(point.z).toBeCloseTo(raycastZ(map.terrain, point.x, point.y), 6)
+      await init
+    })
+
+    it('loads the tile under the location first', async () => {
+      const map = createMap()
+      await map.init()
+
+      const point = await map.getTerrainPosition(east2)
+
+      expect(findTile(map, 1071, 723)?.loaded).toBe(true)
+      expect(loadImageData).toHaveBeenCalledTimes(10)
+      expect(point.z).toBeCloseTo(raycastZ(map.terrain, point.x, point.y), 6)
+    })
+
+    it('rejects when the tile cannot be loaded', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const map = createMap()
+      await map.init()
+      loadImageData.mockRejectedValueOnce(new Error('404'))
+
+      await expect(map.getTerrainPosition(east2)).rejects.toThrow(
+        'No terrain loaded at'
+      )
+    })
+
+    it('rejects when the map is cleaned meanwhile', async () => {
+      const map = createMap()
+      const pending = map.getTerrainPosition(location)
+      map.clean()
+
+      await expect(pending).rejects.toThrow('No terrain loaded at')
+    })
+  })
+
+  describe('getTerrainPositionSync', () => {
+    const east2 = {
+      lat: location.lat,
+      lon: location.lon + (2 * 360) / 2 ** defaultMapOptions.zoom
+    }
+
+    it('matches getTerrainPosition where the terrain is loaded', async () => {
+      const map = createMap()
+      await map.init()
+
+      for (const dLon of [-0.1, 0, 0.05]) {
+        const where = { lat: location.lat + dLon / 2, lon: location.lon + dLon }
+        expect(map.getTerrainPositionSync(where)).toEqual(
+          await map.getTerrainPosition(where)
+        )
+      }
+    })
+
+    it('returns undefined while the tile loads, then the position', async () => {
+      const map = createMap()
+      await map.init()
+
+      expect(map.getTerrainPositionSync(east2)).toBeUndefined()
+      expect(loadImageData).toHaveBeenCalledTimes(10)
+
+      await vi.waitFor(() => {
+        expect(map.getTerrainPositionSync(east2)).toBeDefined()
+      })
+      const point = map.getTerrainPositionSync(east2)
+      expect(point?.z).toBeCloseTo(
+        raycastZ(map.terrain, point?.x ?? 0, point?.y ?? 0),
+        6
+      )
+    })
+
+    it('does not load anything with loadTile: false', async () => {
+      const map = createMap()
+      await map.init()
+
+      expect(
+        map.getTerrainPositionSync(east2, { loadTile: false })
+      ).toBeUndefined()
+      expect(loadImageData).toHaveBeenCalledTimes(9)
+    })
+  })
+
+  describe('getLocation', () => {
+    // zoom 9 puts the center on an odd tile: tile2position then shifts the
+    // whole grid by half a tile, which the inverse must reproduce
+    it.each([9, 11, 14])('inverts getPosition at zoom %i', (zoom) => {
+      const map = createMap({ options: { zoom } })
+      const span = 360 / 2 ** zoom
+
+      for (let i = -6; i <= 6; i++) {
+        for (let j = -6; j <= 6; j++) {
+          const where = {
+            lat: location.lat + (i * span) / 4.3,
+            lon: location.lon + (j * span) / 3.7,
+            alt: 1000 + i * j
+          }
+          const back = map.getLocation(
+            map.getPosition(where, { loadTile: false })
+          )
+
+          expect(back.lat).toBeCloseTo(where.lat, 9)
+          expect(back.lon).toBeCloseTo(where.lon, 9)
+          expect(back.alt).toBeCloseTo(where.alt, 9)
+        }
+      }
+    })
+
+    it('maps the scene origin into the center tile', () => {
+      const map = createMap()
+      const [w, s, e, n] = Utils.tile2bbox([1069, 723, 11])
+      const { lat, lon } = map.getLocation({ x: 0, y: 0, z: 0 })
+
+      expect(lon).toBeCloseTo((w + e) / 2, 12)
+      expect(lat).toBeCloseTo((s + n) / 2, 12)
+    })
+  })
+
+  describe('pick', () => {
+    const rayDown = (point: Vector3) =>
+      new Raycaster(
+        new Vector3(point.x, point.y, point.z + 1e5),
+        new Vector3(0, 0, -1)
+      )
+
+    it('returns the location under a ray', async () => {
+      const map = createMap()
+      await map.init()
+      const where = { lat: location.lat + 0.02, lon: location.lon - 0.03 }
+      const ground = await map.getTerrainPosition(where)
+
+      const hit = map.pick(rayDown(new Vector3(ground.x, ground.y, ground.z)))
+
+      expect(hit?.lat).toBeCloseTo(where.lat, 9)
+      expect(hit?.lon).toBeCloseTo(where.lon, 9)
+      expect(hit?.alt).toBeCloseTo(ground.z / map.options.zScale, 4)
+      expect(hit?.point.z).toBeCloseTo(ground.z, 6)
+    })
+
+    it('accounts for transforms of map.terrain', async () => {
+      const map = createMap()
+      await map.init()
+      map.terrain.position.set(1000, -500, 20)
+      map.terrain.rotation.z = 0.3
+      map.terrain.scale.setScalar(2)
+      const ground = await map.getTerrainPosition(location)
+
+      map.terrain.updateMatrixWorld()
+      const world = map.terrain.localToWorld(
+        new Vector3(ground.x, ground.y, ground.z)
+      )
+      const hit = map.pick(rayDown(world))
+
+      expect(hit?.lat).toBeCloseTo(location.lat, 9)
+      expect(hit?.lon).toBeCloseTo(location.lon, 9)
+      expect(hit?.point.distanceTo(world)).toBeLessThan(1e-6)
+    })
+
+    it('returns undefined when the ray misses the terrain', async () => {
+      const map = createMap()
+      await map.init()
+
+      expect(map.pick(rayDown(new Vector3(1e4, 1e4, 0)))).toBeUndefined()
+    })
+  })
+
+  it('keeps bounding volumes in sync with the stitched heights', async () => {
+    const map = createMap()
+    await map.init()
+
+    for (const tile of Object.values(map.tileCache)) {
+      const { boundingBox, boundingSphere, attributes } = tile.geometry
+      const vertex = new Vector3()
+      for (let i = 0; i < attributes.position.count; i++) {
+        vertex.fromBufferAttribute(attributes.position, i)
+        expect(boundingBox?.containsPoint(vertex)).toBe(true)
+        // radius² vs distance² may differ by one ulp for the farthest vertex
+        expect(
+          vertex.distanceTo(boundingSphere?.center ?? vertex) -
+            (boundingSphere?.radius ?? -1)
+        ).toBeLessThan(1e-9)
+      }
+    }
   })
 })

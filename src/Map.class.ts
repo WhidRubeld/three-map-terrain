@@ -1,4 +1,4 @@
-import { Group } from 'three'
+import { Group, type Raycaster, type Vector3 } from 'three'
 
 import { isAbortError } from './image'
 import {
@@ -8,6 +8,13 @@ import {
 import type { Source } from './Source.class'
 import { Tile } from './Tile.class'
 import { Utils } from './Utils.class'
+
+/** A geolocation in degrees, with the altitude in meters. */
+export interface GeoLocation {
+  lat: number
+  lon: number
+  alt: number
+}
 
 export interface MapOptions {
   nTiles: number
@@ -47,6 +54,7 @@ export class Map {
   defaultOptions: MapOptions = defaultMapOptions
 
   private loading: Promise<void> | undefined
+  private loads: Record<string, Promise<Tile | undefined>> = {}
 
   constructor({ source, location, options = {}, material = {} }: MapProps) {
     this.source = source
@@ -92,6 +100,7 @@ export class Map {
   clean() {
     for (const tile of Object.values(this.tileCache)) tile.dispose()
     this.tileCache = {}
+    this.loads = {}
     this.loading = undefined
     this.ready = false
   }
@@ -122,6 +131,84 @@ export class Map {
     return { x: xStart + xOffset, y: yStart + yOffset, z: alt * zScale }
   }
 
+  /**
+   * Like `getPosition`, but `z` is read from the terrain at the location: the
+   * point lies exactly on the rendered surface. Waits for the tile under the
+   * location, loading it if needed; rejects if it cannot be loaded.
+   */
+  async getTerrainPosition(location: {
+    lat: number
+    lon: number
+  }): Promise<{ x: number; y: number; z: number }> {
+    const { x, y } = this.getPosition({ ...location, alt: 0 })
+    const index = this.tileIndexAt(location)
+    const tile = await this.loads[Utils.getTileKey(index.z, index.x, index.y)]
+    if (!tile?.loaded) {
+      throw new Error(`No terrain loaded at ${location.lat}, ${location.lon}`)
+    }
+    return { x, y, z: this.surfaceZ(tile, x, y) }
+  }
+
+  /**
+   * Synchronous `getTerrainPosition` for areas that are already loaded, e.g.
+   * to move an object along the terrain every frame. Returns `undefined` while
+   * the tile under the location is not loaded, and starts loading it unless
+   * `loadTile` is `false`.
+   */
+  getTerrainPositionSync(
+    location: { lat: number; lon: number },
+    opts: { loadTile: boolean } = { loadTile: true }
+  ): { x: number; y: number; z: number } | undefined {
+    const { x, y } = this.getPosition({ ...location, alt: 0 }, opts)
+    const index = this.tileIndexAt(location)
+    const tile = this.cachedTile(index.x, index.y)
+    return tile?.loaded ? { x, y, z: this.surfaceZ(tile, x, y) } : undefined
+  }
+
+  /**
+   * Inverse of `getPosition`: the geolocation of a point given in
+   * `map.terrain` coordinates; `alt` is `z / zScale` (meters).
+   */
+  getLocation({ x, y, z }: { x: number; y: number; z: number }): GeoLocation {
+    const { center } = this
+    const { zoom, tileSize, zScale } = this.options
+    // tiles lie on a regular grid around the center tile
+    const origin = Utils.tile2position(
+      zoom,
+      center.x,
+      center.y,
+      center,
+      tileSize
+    )
+    const col = (x - origin.x) / tileSize + 0.5
+    const row = (origin.y - y) / tileSize + 0.5
+    const [w, s, e, n] = Utils.tile2bbox([
+      center.x + Math.floor(col),
+      center.y + Math.floor(row),
+      zoom
+    ])
+
+    return {
+      lat: n - (row - Math.floor(row)) * (n - s),
+      lon: w + (col - Math.floor(col)) * (e - w),
+      alt: z / zScale
+    }
+  }
+
+  /**
+   * The terrain location hit by a ray — e.g. after
+   * `raycaster.setFromCamera(pointer, camera)` — or `undefined` if it misses
+   * the loaded tiles. `point` is the hit in world coordinates.
+   */
+  pick(raycaster: Raycaster): (GeoLocation & { point: Vector3 }) | undefined {
+    this.terrain.updateWorldMatrix(true, true)
+    const hit = raycaster.intersectObjects(this.terrain.children, false).at(0)
+    if (!hit) return undefined
+
+    const local = this.terrain.worldToLocal(hit.point.clone())
+    return { ...this.getLocation(local), point: hit.point }
+  }
+
   private async loadGrid() {
     this.center = this.getCenter()
     const { x, y } = this.center
@@ -137,6 +224,18 @@ export class Map {
     }
 
     await Promise.all(pending)
+  }
+
+  private tileIndexAt({ lat, lon }: { lat: number; lon: number }) {
+    return Utils.position2tile(lat, lon, this.options.zoom)
+  }
+
+  /** Height of the rendered surface of `tile` at terrain coordinates `x`, `y`. */
+  private surfaceZ(tile: Tile, x: number, y: number) {
+    const { tileSize } = this.options
+    const u = (x - tile.mesh.position.x) / tileSize + 0.5
+    const v = 0.5 - (y - tile.mesh.position.y) / tileSize
+    return tile.heightAt(u, v)
   }
 
   private getCenter() {
@@ -156,7 +255,13 @@ export class Map {
     return tile
   }
 
-  private async loadTile(tile: Tile): Promise<Tile | undefined> {
+  private loadTile(tile: Tile): Promise<Tile | undefined> {
+    const loading = this.fetchAndPlace(tile)
+    this.loads[tile.key()] = loading
+    return loading
+  }
+
+  private async fetchAndPlace(tile: Tile): Promise<Tile | undefined> {
     try {
       await tile.fetch()
     } catch (error) {
@@ -199,10 +304,7 @@ export class Map {
     ]) {
       this.syncCorner(cx, cy, touched)
     }
-    for (const tile of touched) {
-      tile.geometry.attributes.position.needsUpdate = true
-      tile.geometry.computeVertexNormals()
-    }
+    for (const tile of touched) tile.updateGeometry()
   }
 
   /**

@@ -51,15 +51,14 @@ const terrarium = (meters: number) => {
   ] as const
 }
 
-/** Rolling hills, continuous across tile borders. */
+/** Rolling hills (meters) at global pixel `gx`, `gy`, continuous across tiles. */
+export const syntheticElevation = (gx: number, gy: number) =>
+  1500 + 1200 * Math.sin(gx / 90) * Math.cos(gy / 110) + 0.01 * gx
+
 const elevationTile = (tx: number, ty: number) =>
-  encodePng(TILE_SIZE, TILE_SIZE, (x, y) => {
-    const gx = tx * TILE_SIZE + x
-    const gy = ty * TILE_SIZE + y
-    return terrarium(
-      1500 + 1200 * Math.sin(gx / 90) * Math.cos(gy / 110) + 0.01 * gx
-    )
-  })
+  encodePng(TILE_SIZE, TILE_SIZE, (x, y) =>
+    terrarium(syntheticElevation(tx * TILE_SIZE + x, ty * TILE_SIZE + y))
+  )
 
 /**
  * Child texture colors by position inside the parent tile. The mid-gray SE

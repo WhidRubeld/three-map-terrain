@@ -1,8 +1,13 @@
 import { type BrowserContext, expect, type Page, test } from '@playwright/test'
 
 import type {} from '../playground/types'
+import { Utils } from '../src'
 import { RETRY_DELAYS } from '../src/image'
-import { mockTileServers, QUADRANT_COLORS } from './fixtures'
+import {
+  mockTileServers,
+  QUADRANT_COLORS,
+  syntheticElevation
+} from './fixtures'
 
 const collectErrors = (page: Page) => {
   const errors: string[] = []
@@ -81,13 +86,34 @@ const expectColor = (
   })
 }
 
+/**
+ * three's WebGPU backend fails on software adapters (SwiftShader on GPU-less
+ * CI runners: GPUValidationError, then device lost). There WebGPURenderer is
+ * tested with its WebGL2 backend instead; the `backend` annotation tells
+ * which one ran.
+ */
+const rendererQuery = async (page: Page, renderer: 'webgl' | 'webgpu') => {
+  if (renderer === 'webgl') return 'renderer=webgl'
+  // navigator.gpu needs a secure context (not about:blank); a plain module
+  // from the dev server is one, without starting the map
+  await page.goto('/types.ts')
+  const architecture = await page.evaluate(async () => {
+    const adapter = await navigator.gpu.requestAdapter()
+    return adapter?.info.architecture
+  })
+  return architecture === 'swiftshader'
+    ? 'renderer=webgpu&forceWebGL=1'
+    : 'renderer=webgpu'
+}
+
 for (const renderer of ['webgl', 'webgpu'] as const) {
   test.describe(`${renderer} renderer`, () => {
     test('renders a textured 3×3 terrain without errors', async ({
       page
     }, testInfo) => {
+      const query = await rendererQuery(page, renderer)
       const errors = collectErrors(page)
-      const { backend } = await openPlayground(page, `renderer=${renderer}`)
+      const { backend } = await openPlayground(page, query)
       const revision = await page.evaluate(() => window.__playground?.revision)
       testInfo.annotations.push(
         { type: 'backend', description: backend },
@@ -117,11 +143,9 @@ for (const renderer of ['webgl', 'webgpu'] as const) {
     })
 
     test('lays out child textures NW | NE / SW | SE', async ({ page }) => {
+      const query = await rendererQuery(page, renderer)
       const errors = collectErrors(page)
-      await openPlayground(
-        page,
-        `renderer=${renderer}&view=top&lights=0&nTiles=1`
-      )
+      await openPlayground(page, `${query}&view=top&lights=0&nTiles=1`)
 
       const png = await page.locator('canvas').screenshot()
       const [nw, ne, sw, se] = await samplePixels(page, png, [
@@ -140,6 +164,35 @@ for (const renderer of ['webgl', 'webgpu'] as const) {
     })
   })
 }
+
+test('click → map.pick returns the geolocation under the pointer', async ({
+  page
+}) => {
+  const errors = collectErrors(page)
+  await openPlayground(page, 'renderer=webgl&view=top&lights=0&nTiles=1')
+  const canvas = page.locator('canvas')
+  const box = await canvas.boundingBox()
+  if (!box) throw new Error('canvas is not visible')
+
+  // a point a quarter from the west and three quarters from the north edge
+  const [u, v] = tilePoint(page, 0.25, 0.75)
+  await canvas.click({ position: { x: u * box.width, y: v * box.height } })
+  const picked = await page.evaluate(() => window.__playground?.lastPick)
+
+  const [w, s, e, n] = Utils.tile2bbox([1069, 723, 11])
+  const pixel = (e - w) / box.height // the tile spans the full height
+  expect(Math.abs((picked?.lon ?? 0) - (w + 0.25 * (e - w)))).toBeLessThan(
+    2 * pixel
+  )
+  expect(Math.abs((picked?.lat ?? 0) - (n - 0.75 * (n - s)))).toBeLessThan(
+    2 * pixel
+  )
+  // the altitude of the synthetic terrain at that pixel of tile 1069/723
+  // (±2 px of click precision, ~13 m/px at most)
+  const expected = syntheticElevation(1069 * 256 + 64, 723 * 256 + 192)
+  expect(Math.abs((picked?.alt ?? 0) - expected)).toBeLessThan(50)
+  expect(errors).toEqual([])
+})
 
 // Tile servers occasionally deliver a cut-off body with status 200, which
 // `createImageBitmap` rejects (EOX does it for some tiles).

@@ -185,6 +185,69 @@ const posInVector3 = map.getPosition(
 
 Parameter `loadTile` determines whether to load the required tile if you have specified coordinates that are outside the already loaded tiles.
 
+#### Place a point on the terrain surface
+
+```typescript
+const { x, y, z } = await map.getTerrainPosition({
+  lat: 46.57634,
+  lon: 7.9904
+})
+marker.position.set(x, y, z)
+```
+
+| Argument | Type                           | Description      | Required | Default Value |
+| -------- | ------------------------------ | ---------------- | -------- | ------------- |
+| location | `{ lat: number, lon: number }` | Your geolocation | `true`   | -             |
+
+Like `getPosition`, but without the altitude: `z` is read from the terrain itself, interpolated over the same triangles as the rendered mesh, so the point never floats above or sinks into it. Waits for the tile under the location, loading it if needed, and rejects if it cannot be loaded. The altitude in meters is approximately `z / map.options.zScale`.
+
+For areas that are already loaded there is a synchronous variant, e.g. to move an object along the terrain every frame:
+
+```typescript
+const position = map.getTerrainPositionSync({ lat, lon }, { loadTile: true })
+if (position) vehicle.position.set(position.x, position.y, position.z)
+```
+
+It returns `undefined` while the tile under the location is not loaded, and starts loading it unless `loadTile` is `false`.
+
+#### Find the geolocation of a point on the map
+
+`getLocation` is the inverse of `getPosition`: it takes a point in `map.terrain` coordinates and returns `{ lat, lon, alt }` (`alt` in meters, `z / zScale`).
+
+```typescript
+const { lat, lon, alt } = map.getLocation({ x, y, z })
+```
+
+`pick` finds the terrain under a ray — typically the mouse pointer — and returns its geolocation plus the hit `point` in world coordinates, or `undefined` if the ray misses the loaded tiles. Transforms of `map.terrain` are taken into account.
+
+```typescript
+const raycaster = new Raycaster()
+
+renderer.domElement.addEventListener('click', (event) => {
+  const pointer = new Vector2(
+    (event.clientX / window.innerWidth) * 2 - 1,
+    -(event.clientY / window.innerHeight) * 2 + 1
+  )
+  raycaster.setFromCamera(pointer, camera)
+
+  const hit = map.pick(raycaster) // { lat, lon, alt, point } | undefined
+  if (hit) console.log(hit.lat, hit.lon, hit.alt)
+})
+```
+
+With React Three Fiber the pointer events already carry the hit point (in world coordinates):
+
+```tsx
+<primitive
+  object={map.terrain}
+  onClick={(event) => {
+    const { lat, lon, alt } = map.getLocation(
+      map.terrain.worldToLocal(event.point.clone())
+    )
+  }}
+/>
+```
+
 #### Reset map cache
 
 ```typescript
@@ -202,12 +265,12 @@ yarn validate   # typecheck, lint, format check, unit tests, build
 yarn test:e2e   # rendering tests in Chromium (WebGL + WebGPU), tile servers mocked
 ```
 
-The playground accepts `?renderer=webgpu`, `?lights=0`, `?api=osm`, `?nTiles=5` and `?view=top`.
+The playground accepts `?renderer=webgpu` (`&forceWebGL=1` for its WebGL2 backend), `?lights=0`, `?api=osm`, `?nTiles=5` and `?view=top`. Click the terrain to see its geolocation.
 See [AGENTS.md](AGENTS.md) for architecture notes and conventions.
 
 ## Future list
 
-- [ ] Asynchronous analog of the `getPosition` function without passing the altitude parameter
+- [x] Asynchronous analog of the `getPosition` function without passing the altitude parameter (`getTerrainPosition`)
 - [ ] Advanced example
 - [ ] Base Pin component
 - [ ] Base Direction component

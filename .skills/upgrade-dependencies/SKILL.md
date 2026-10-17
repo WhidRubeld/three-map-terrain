@@ -81,11 +81,16 @@ Order: root → `yarn build` → `examples/basic` → `examples/react`.
 
 ```bash
 yarn validate             # typecheck, lint, format:check, unit tests, build
-yarn test:e2e             # real rendering in Chromium: WebGL + WebGPU renderers
+yarn test:e2e             # real rendering in Chromium: WebGL + WebGPURenderer
 (cd examples/basic && yarn install && yarn build)
 (cd examples/react && yarn install && yarn build)
 ```
 
+- After a three.js or Playwright bump, check the `backend` annotation of the
+  WebGPU e2e tests: on software adapters (SwiftShader) they run
+  `WebGPURenderer` with its WebGL2 backend because three's WebGPU backend
+  fails there. If a new release fixes that, drop the `forceWebGL` switch in
+  `e2e/render.spec.ts` (`rendererQuery`).
 - The library bundle must not contain three.js: `grep -c "REVISION" dist/index.mjs` → `0`.
 - Then do a visual pass with the `verify-rendering` skill (real tile servers,
   both examples), because e2e uses synthetic tiles.

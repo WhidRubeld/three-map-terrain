@@ -8,9 +8,11 @@ import {
   MeshBasicMaterial,
   OrthographicCamera,
   PerspectiveCamera,
+  Raycaster,
   REVISION,
   Scene,
   SphereGeometry,
+  Vector2,
   WebGLRenderer
 } from 'three'
 import { MapControls } from 'three/addons/controls/MapControls.js'
@@ -25,6 +27,8 @@ const lights = params.get('lights') !== '0'
 const api = params.get('api') === 'osm' ? 'osm' : 'eox'
 const nTiles = Number(params.get('nTiles') ?? 3)
 const topView = params.get('view') === 'top'
+// WebGPURenderer with its WebGL2 backend (for software WebGPU adapters in CI)
+const forceWebGL = params.get('forceWebGL') === '1'
 
 const location = { lat: 46.57634, lon: 7.9904 }
 
@@ -34,12 +38,12 @@ async function createRenderer(): Promise<{
 }> {
   if (rendererType === 'webgpu') {
     const { WebGPURenderer } = await import('three/webgpu')
-    const renderer = new WebGPURenderer({ antialias: true })
+    const renderer = new WebGPURenderer({ antialias: true, forceWebGL })
     await renderer.init()
     const isWebGPU = 'isWebGPUBackend' in renderer.backend
     return {
       renderer,
-      backend: isWebGPU ? 'webgpu' : 'webgpu (webgl2 fallback)'
+      backend: isWebGPU ? 'webgpu' : 'webgpu (webgl2 backend)'
     }
   }
   return { renderer: new WebGLRenderer({ antialias: true }), backend: 'webgl' }
@@ -72,6 +76,19 @@ const ready = map.init(() => {
   console.info('Map is ready')
 })
 
+// yellow marker resting on the terrain surface
+const groundMarker = new Mesh(
+  new SphereGeometry(8, 24, 12),
+  new MeshBasicMaterial({ color: 0xf0c040 })
+)
+groundMarker.visible = false
+scene.add(groundMarker)
+
+const placeOnGround = (ground: { x: number; y: number; z: number }) => {
+  groundMarker.position.set(ground.x, ground.y, ground.z + 8)
+  groundMarker.visible = true
+}
+
 // camera
 const aspect = window.innerWidth / window.innerHeight
 let camera: PerspectiveCamera | OrthographicCamera
@@ -100,6 +117,9 @@ if (topView) {
   const { x, y, z } = map.getPosition({ ...location, alt: 3e3 })
   marker.position.set(x, y, z + 8)
   scene.add(marker)
+
+  // down in the Grindelwald valley until something is clicked
+  void map.getTerrainPosition({ lat: 46.6242, lon: 8.0414 }).then(placeOnGround)
 }
 
 window.addEventListener('resize', () => {
@@ -116,15 +136,42 @@ void renderer.setAnimationLoop(() => {
 })
 
 const info = document.querySelector('#info')
-if (info) {
-  info.textContent = `r${REVISION} · ${backend} · ${api} · lights ${lights ? 'on' : 'off'}`
-}
+const status = `r${REVISION} · ${backend} · ${api} · lights ${lights ? 'on' : 'off'}`
+if (info) info.textContent = `${status} · click the terrain`
+
+// click → geolocation (pick) → marker on the surface (getTerrainPositionSync)
+const raycaster = new Raycaster()
+const pointer = new Vector2()
+const pressed = new Vector2()
+renderer.domElement.addEventListener('pointerdown', (event) => {
+  pressed.set(event.clientX, event.clientY)
+})
+renderer.domElement.addEventListener('click', (event) => {
+  if (pressed.distanceTo(new Vector2(event.clientX, event.clientY)) > 4) return
+  const rect = renderer.domElement.getBoundingClientRect()
+  pointer.set(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1
+  )
+  raycaster.setFromCamera(pointer, camera)
+
+  const hit = map.pick(raycaster)
+  playground.lastPick = hit && { lat: hit.lat, lon: hit.lon, alt: hit.alt }
+  if (!hit) return
+
+  const ground = map.getTerrainPositionSync(hit)
+  if (ground) placeOnGround(ground)
+  if (info) {
+    info.textContent = `${status} · ${hit.lat.toFixed(5)}, ${hit.lon.toFixed(5)} · ${Math.round(hit.alt)} m`
+  }
+})
 
 const playground: Playground = {
   map,
   revision: REVISION,
   backend,
   ready,
+  lastPick: undefined,
   texturedTiles: () =>
     Object.values(map.tileCache).filter(
       ({ mesh }) => 'map' in mesh.material && mesh.material.map !== null

@@ -21,10 +21,21 @@ It runs `e2e/render.spec.ts` against the playground for `renderer=webgl` and
 - 3×3 grid loads, every tile gets its stitched texture, no console/page errors
   (shader compile errors surface as console errors);
 - top-down unlit view checks the child texture layout `NW | NE / SW | SE`
-  pixel-exactly.
+  pixel-exactly (and the sRGB color pipeline via a mid-gray quadrant);
+- a click on a known point returns the right geolocation and altitude
+  (`map.pick`);
+- truncated texture responses are re-requested, and fall back to `<img>`
+  when every attempt is truncated.
 
-The WebGPU project reports its real backend in the test annotations
-(`webgpu` or `webgpu (webgl2 fallback)` on machines without WebGPU).
+Unit tests cover the loading-time invariants that are hard to see in a
+browser: no walls or cracks while tiles stream in, seams and corners after
+every step, `heightAt` against `Raycaster`.
+
+The WebGPU tests report the backend that actually ran in their annotations:
+`webgpu` on a real GPU, `webgpu (webgl2 backend)` where the adapter is
+SwiftShader (Playwright's headless shell, GPU-less CI) — three's WebGPU
+backend fails there, so the tests force the WebGL2 backend. To exercise real
+WebGPU locally, run the tests against Chrome (`channel: 'chrome'`).
 
 ## 2. Playground with real tiles
 
@@ -34,15 +45,20 @@ yarn dev    # vite playground → http://localhost:5173
 
 Query parameters:
 
-| Param      | Values            | Default | Purpose                                             |
-| ---------- | ----------------- | ------- | --------------------------------------------------- |
-| `renderer` | `webgl`, `webgpu` | `webgl` | renderer under test                                 |
-| `lights`   | `1`, `0`          | `1`     | `MeshLambertMaterial` vs unlit basic                |
-| `api`      | `eox`, `osm`      | `eox`   | texture source                                      |
-| `nTiles`   | integer           | `3`     | grid size                                           |
-| `view`     | `orbit`, `top`    | `orbit` | perspective + MapControls, or orthographic top view |
+| Param        | Values            | Default | Purpose                                             |
+| ------------ | ----------------- | ------- | --------------------------------------------------- |
+| `renderer`   | `webgl`, `webgpu` | `webgl` | renderer under test                                 |
+| `forceWebGL` | `1`               | —       | `WebGPURenderer` with its WebGL2 backend            |
+| `lights`     | `1`, `0`          | `1`     | `MeshLambertMaterial` vs unlit basic                |
+| `api`        | `eox`, `osm`      | `eox`   | texture source                                      |
+| `nTiles`     | integer           | `3`     | grid size                                           |
+| `view`       | `orbit`, `top`    | `orbit` | perspective + MapControls, or orthographic top view |
 
-`window.__playground` exposes `{ map, revision, backend, ready, texturedTiles() }`.
+`window.__playground` exposes `{ map, revision, backend, ready, texturedTiles(), lastPick }`.
+
+Clicking the terrain runs `map.pick` (geolocation + altitude shown in the
+overlay, stored in `lastPick`) and moves the yellow marker there with
+`map.getTerrainPositionSync`: it must rest exactly on the surface.
 
 With the **playwright** MCP server:
 
@@ -52,8 +68,14 @@ With the **playwright** MCP server:
    `Multiple instances of Three.js` warnings.
 4. `browser_take_screenshot` and look at it. Expect: satellite imagery of the
    Bernese Alps draped on relief, no black or rainbow (placeholder) tiles, no
-   visible cracks between tiles, red marker sphere above the center.
-5. Repeat with `renderer=webgpu`, and `lights=0`.
+   visible cracks between tiles, red marker sphere above the center (3000 m)
+   and the yellow one resting in the Grindelwald valley (≈1050 m).
+5. `browser_click` the terrain: the overlay shows `lat, lon · N m` and the
+   yellow marker moves there, sitting on the surface.
+6. Repeat with `renderer=webgpu`, and `lights=0`.
+7. To see the loading state, hold some elevation tiles (e.g. a route that
+   delays `**/terrarium/**`): loaded tiles must never show walls down to
+   z = 0 or gaps between each other.
 
 With the **threejs-devtools** MCP server (opens its own proxied tab of the dev
 server on `DEV_PORT=5173`): `scene_tree` should show a `Group` with 9 meshes

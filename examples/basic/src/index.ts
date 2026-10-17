@@ -10,8 +10,10 @@ import {
   Mesh,
   MeshBasicMaterial,
   PerspectiveCamera,
+  Raycaster,
   Scene,
   SphereGeometry,
+  Vector2,
   WebGLRenderer
 } from 'three'
 import { MapControls } from 'three/addons/controls/MapControls.js'
@@ -78,6 +80,22 @@ const spherePosition = map.getPosition({ ...location, alt: 3e3 })
 // with sphere radius offset
 sphere.position.set(spherePosition.x, spherePosition.y, spherePosition.z + 8)
 scene.add(sphere)
+
+// click → geolocation of the terrain under the pointer
+const raycaster = new Raycaster()
+renderer.domElement.addEventListener('click', (event) => {
+  const pointer = new Vector2(
+    (event.clientX / window.innerWidth) * 2 - 1,
+    -(event.clientY / window.innerHeight) * 2 + 1
+  )
+  raycaster.setFromCamera(pointer, camera)
+  const hit = map.pick(raycaster)
+  if (hit) {
+    console.log(
+      `${hit.lat.toFixed(5)}, ${hit.lon.toFixed(5)}, ${Math.round(hit.alt)} m`
+    )
+  }
+})
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight

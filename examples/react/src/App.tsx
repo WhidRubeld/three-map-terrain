@@ -1,7 +1,7 @@
 import './App.css'
 
 import { MapControls, PerspectiveCamera } from '@react-three/drei'
-import { Canvas } from '@react-three/fiber'
+import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { useEffect, useMemo } from 'react'
 import { Map, Source } from 'three-map-terrain'
 
@@ -46,7 +46,19 @@ export default function App() {
         up={[0, 0, 1]}
       />
       <MapControls />
-      <primitive object={map.terrain} />
+      <primitive
+        object={map.terrain}
+        onClick={(event: ThreeEvent<MouseEvent>) => {
+          event.stopPropagation()
+          // event.point is in world space; getLocation expects terrain space
+          const { lat, lon, alt } = map.getLocation(
+            map.terrain.worldToLocal(event.point.clone())
+          )
+          console.log(
+            `${lat.toFixed(5)}, ${lon.toFixed(5)}, ${Math.round(alt)} m`
+          )
+        }}
+      />
       <mesh position={marker}>
         <sphereGeometry args={[8, 24, 12]} />
         <meshBasicMaterial color={0xf04040} />

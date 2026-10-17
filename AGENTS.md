@@ -74,6 +74,22 @@ with `link:../..` — run `yarn build` in the root before installing/building th
   north) → `CanvasTexture` with `SRGBColorSpace` → `MeshLambertMaterial`
   (`lights: true`) or `MeshBasicMaterial`. No custom shaders on purpose: they
   break between three.js releases and don't run on `WebGPURenderer`.
+- **Positions** (all in `map.terrain` coordinates):
+  - `getPosition({ lat, lon, alt })` → `x`/`y` from the tile grid, `z` from
+    `alt * zScale`.
+  - `getTerrainPosition` (async) waits for the tile's load promise
+    (`Map.loads`); `getTerrainPositionSync` returns `undefined` until the tile
+    is loaded. Both take `z` from `Tile.heightAt(u, v)`, which interpolates
+    over the mesh triangles (PlaneGeometry splits each cell along the
+    bottom-left → top-right diagonal). Tests compare it with `Raycaster`.
+  - `getLocation({ x, y, z })` inverts `getPosition`. Tiles sit on a grid
+    around the center tile's `tile2position` — which is shifted by half a tile
+    for odd center tiles at zoom < 10, so never assume the center tile is at
+    the origin (covered by the zoom 9 round-trip test).
+  - `pick(raycaster)` intersects `map.terrain.children` and converts the hit
+    with `worldToLocal` + `getLocation`. `Tile.updateGeometry()` must follow
+    any height change: it refreshes normals and the bounding box/sphere that
+    raycasting and frustum culling rely on.
 - **Lifecycle**: `Tile.dispose()` aborts in-flight requests (`AbortController`)
   and disposes geometry/material/texture; `Map.clean()` disposes every tile.
   Results that arrive after disposal are discarded. The shared placeholder
@@ -102,6 +118,11 @@ with `link:../..` — run `yarn build` in the root before installing/building th
 - `three` and `@types/three` must share the same minor in every package root.
 - React stays `<19.4` — `@react-three/fiber` 9.x peer range.
 - `peerDependencies.three` is `>=0.152.0` (needs `Texture.colorSpace`).
+- three's WebGPU backend fails on software WebGPU adapters (SwiftShader in
+  Playwright's headless shell / GPU-less CI: `GPUValidationError: Invalid
+Texture`, then device lost — even for a plain box). The e2e tests then run
+  `WebGPURenderer` with `forceWebGL` and annotate the backend; real WebGPU is
+  exercised on machines with a GPU (e.g. Playwright with `channel: 'chrome'`).
 
 ## MCP servers (`.mcp.json`)
 

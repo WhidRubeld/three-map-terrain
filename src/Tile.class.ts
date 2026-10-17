@@ -1,4 +1,10 @@
-import { type Material, Mesh, MeshNormalMaterial, PlaneGeometry } from 'three'
+import {
+  type Material,
+  MathUtils,
+  Mesh,
+  MeshNormalMaterial,
+  PlaneGeometry
+} from 'three'
 
 import { loadImageData } from './image'
 import type { Map } from './Map.class'
@@ -115,8 +121,19 @@ export class Tile {
       }
     }
 
-    position.needsUpdate = true
-    this.geometry.computeVertexNormals()
+    this.updateGeometry()
+  }
+
+  /**
+   * Call after changing vertex heights: uploads them and refreshes the normals
+   * and the bounding volumes (used by frustum culling and raycasting).
+   */
+  updateGeometry() {
+    const { geometry } = this
+    geometry.attributes.position.needsUpdate = true
+    geometry.computeVertexNormals()
+    geometry.computeBoundingBox()
+    geometry.computeBoundingSphere()
   }
 
   childrens() {
@@ -166,6 +183,31 @@ export class Tile {
       this.map.options.tileSize
     )
     this.mesh.position.set(x, y, z)
+  }
+
+  /**
+   * Height (scene units) of the rendered surface at `u`, `v` ∈ [0, 1] — `u`
+   * from west to east, `v` from north to south — interpolated over the same
+   * triangles as the mesh, so a point placed there sits exactly on it.
+   */
+  heightAt(u: number, v: number): number {
+    const n = this.map.options.tileSegments
+    const position = this.geometry.attributes.position
+    const col = MathUtils.clamp(u, 0, 1) * n
+    const row = MathUtils.clamp(v, 0, 1) * n
+    const ix = Math.min(Math.floor(col), n - 1)
+    const iy = Math.min(Math.floor(row), n - 1)
+    const fc = col - ix
+    const fr = row - iy
+    const z = (r: number, c: number) =>
+      position.getZ((iy + r) * (n + 1) + ix + c)
+
+    // PlaneGeometry splits each cell along its bottom-left → top-right diagonal
+    return fr + fc <= 1
+      ? z(0, 0) + (z(1, 0) - z(0, 0)) * fr + (z(0, 1) - z(0, 0)) * fc
+      : z(1, 1) +
+          (z(0, 1) - z(1, 1)) * (1 - fr) +
+          (z(1, 0) - z(1, 1)) * (1 - fc)
   }
 
   /** Copies the first row of the southern neighbour into the last row. */
@@ -222,8 +264,7 @@ export class Tile {
     if (this.seamY) this.resolveSeamY(south)
     if (this.seamX) this.resolveSeamX(east)
 
-    this.geometry.attributes.position.needsUpdate = true
-    this.geometry.computeVertexNormals()
+    this.updateGeometry()
   }
 
   /** Aborts pending requests and releases GPU resources. */

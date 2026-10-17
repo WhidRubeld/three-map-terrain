@@ -8,7 +8,7 @@ import {
 import { describe, expect, it, vi } from 'vitest'
 
 import { createQuadTextureMaterial, Map, Source, Tile } from '../src'
-import { terrariumPixels } from './helpers'
+import { raycastZ, terrariumPixels } from './helpers'
 
 const createMap = (tileSegments = 4) =>
   new Map({
@@ -178,5 +178,49 @@ describe('Tile', () => {
     expect(
       (tile.geometry.attributes.position as BufferAttribute).count
     ).toBeGreaterThan(0)
+  })
+
+  describe('heightAt', () => {
+    const bumpyTile = () => {
+      const tile = new Tile(createMap(8), 11, 0, 0)
+      tile.computeElevation(
+        terrariumPixels(
+          16,
+          (x, y) => 500 + 300 * Math.sin(x * 1.7) * Math.cos(y)
+        )
+      )
+      tile.buildGeometry()
+      return tile
+    }
+
+    it('follows the rendered triangles exactly', () => {
+      const tile = bumpyTile()
+      const { tileSize } = tile.map.options
+
+      // a deterministic spread of points, including cell edges and corners
+      const points = Array.from({ length: 200 }, (_, i) => [
+        (i * 0.618034) % 1,
+        (i * 0.414214) % 1
+      ])
+      points.push([0, 0], [1, 1], [0.5, 0.5], [0.125, 0.875], [1, 0.3])
+
+      for (const [u, v] of points) {
+        const x = (u - 0.5) * tileSize
+        const y = (0.5 - v) * tileSize
+        expect(tile.heightAt(u, v), `u=${u} v=${v}`).toBeCloseTo(
+          raycastZ(tile.mesh, x, y),
+          6
+        )
+      }
+    })
+
+    it('returns vertex heights at vertices and clamps outside the tile', () => {
+      const tile = bumpyTile()
+
+      expect(tile.heightAt(0, 0)).toBe(zAt(tile, 0, 0))
+      expect(tile.heightAt(3 / 8, 5 / 8)).toBeCloseTo(zAt(tile, 5, 3), 9)
+      expect(tile.heightAt(1, 1)).toBe(zAt(tile, 8, 8))
+      expect(tile.heightAt(-1, 2)).toBe(zAt(tile, 8, 0))
+    })
   })
 })

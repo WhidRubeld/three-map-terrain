@@ -1,3 +1,5 @@
+import { type Object3D, Raycaster, Vector3 } from 'three'
+
 import type { ElevationPixels } from '../src'
 
 /** Encodes meters into terrarium RGB: `R * 256 + G + B / 256 - 32768`. */
@@ -25,4 +27,13 @@ export function terrariumPixels(
     }
   }
   return { width: size, height: size, data }
+}
+
+/** Height of the first surface hit by a vertical ray through `x`, `y`. */
+export function raycastZ(object: Object3D, x: number, y: number) {
+  object.updateMatrixWorld(true)
+  const raycaster = new Raycaster(new Vector3(x, y, 1e6), new Vector3(0, 0, -1))
+  const hit = raycaster.intersectObject(object, true).at(0)
+  if (!hit) throw new Error(`No surface at ${x}, ${y}`)
+  return hit.point.z
 }
