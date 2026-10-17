@@ -9,6 +9,8 @@ import {
   syntheticElevation
 } from './fixtures'
 
+const BACKGROUND = [34, 34, 34] as const
+
 const collectErrors = (page: Page) => {
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
@@ -70,6 +72,62 @@ const samplePixels = (
 const tilePoint = (page: Page, x: number, y: number) => {
   const { width, height } = page.viewportSize() ?? { width: 1, height: 1 }
   return [0.5 + ((x - 0.5) * height) / width, y] as const
+}
+
+/**
+ * Per quadrant of the single tile (`view=top&nTiles=1`): the share of
+ * background pixels and the mean color of the others.
+ */
+const quadrantStats = (page: Page, png: Buffer) =>
+  page.evaluate(
+    async ({ base64, background }) => {
+      const blob = await (await fetch(`data:image/png;base64,${base64}`)).blob()
+      const bitmap = await createImageBitmap(blob)
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('no 2d context')
+      context.drawImage(bitmap, 0, 0)
+      // the tile spans the full height, centered horizontally
+      const size = bitmap.height
+      const left = Math.round((bitmap.width - size) / 2)
+      const half = Math.floor(size / 2)
+
+      const stats = (x: number, y: number) => {
+        const { data } = context.getImageData(x + 2, y + 2, half - 4, half - 4)
+        const mean = [0, 0, 0]
+        let backgroundPixels = 0
+        for (let i = 0; i < data.length; i += 4) {
+          const pixel = [data[i], data[i + 1], data[i + 2]]
+          if (pixel.every((c, k) => Math.abs(c - background[k]) <= 2)) {
+            backgroundPixels++
+          } else {
+            pixel.forEach((c, k) => (mean[k] += c))
+          }
+        }
+        const total = data.length / 4
+        const lines = Math.max(1, total - backgroundPixels)
+        return {
+          background: backgroundPixels / total,
+          mean: mean.map((c) => c / lines)
+        }
+      }
+
+      return {
+        nw: stats(left, 0),
+        ne: stats(left + half, 0),
+        sw: stats(left, half),
+        se: stats(left + half, half)
+      }
+    },
+    { base64: png.toString('base64'), background: BACKGROUND }
+  )
+
+/** Cosine of the angle between `a - BACKGROUND` and `b - BACKGROUND`. */
+const similarity = (a: readonly number[], b: readonly number[]) => {
+  const u = a.map((c, i) => c - BACKGROUND[i])
+  const v = b.map((c, i) => c - BACKGROUND[i])
+  const dot = u.reduce((sum, c, i) => sum + c * v[i], 0)
+  return dot / (Math.hypot(...u) * Math.hypot(...v))
 }
 
 const expectColor = (
@@ -137,8 +195,34 @@ for (const renderer of ['webgl', 'webgpu'] as const) {
         [0.65, 0.6]
       ])
       // terrain (lit texture) covers the middle of the view, not the background
-      for (const pixel of pixels) expect(pixel).not.toEqual([34, 34, 34])
+      for (const pixel of pixels) expect(pixel).not.toEqual([...BACKGROUND])
 
+      expect(errors).toEqual([])
+    })
+
+    test('renders the wireframe option with the texture on the lines', async ({
+      page
+    }) => {
+      const query = await rendererQuery(page, renderer)
+      const errors = collectErrors(page)
+      await openPlayground(
+        page,
+        `${query}&view=top&lights=0&nTiles=1&wireframe=1&segments=8`
+      )
+
+      const stats = await quadrantStats(
+        page,
+        await page.locator('canvas').screenshot()
+      )
+
+      for (const [quadrant, color] of Object.entries(QUADRANT_COLORS)) {
+        const { background, mean } = stats[quadrant as keyof typeof stats]
+        // 4×4 cells of ~75 px per quadrant: mostly background between lines…
+        expect(background, quadrant).toBeGreaterThan(0.7)
+        // …and the lines carry that quadrant's texture (blended with the
+        // background by antialiasing, hence a direction check)
+        expect(similarity(mean, color), quadrant).toBeGreaterThan(0.95)
+      }
       expect(errors).toEqual([])
     })
 

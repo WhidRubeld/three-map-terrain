@@ -24,8 +24,10 @@ import type { Playground } from './types'
 const params = new URLSearchParams(window.location.search)
 const rendererType = params.get('renderer') === 'webgpu' ? 'webgpu' : 'webgl'
 const lights = params.get('lights') !== '0'
+const wireframe = params.get('wireframe') === '1'
 const api = params.get('api') === 'osm' ? 'osm' : 'eox'
 const nTiles = Number(params.get('nTiles') ?? 3)
+const tileSegments = Number(params.get('segments') ?? 100)
 const topView = params.get('view') === 'top'
 // WebGPURenderer with its WebGL2 backend (for software WebGPU adapters in CI)
 const forceWebGL = params.get('forceWebGL') === '1'
@@ -68,8 +70,8 @@ scene.add(sun)
 const map = new Map({
   source: new Source({ api }),
   location,
-  options: { nTiles },
-  material: { lights }
+  options: { nTiles, tileSegments },
+  material: { lights, wireframe }
 })
 scene.add(map.terrain)
 const ready = map.init(() => {
@@ -136,7 +138,7 @@ void renderer.setAnimationLoop(() => {
 })
 
 const info = document.querySelector('#info')
-const status = `r${REVISION} · ${backend} · ${api} · lights ${lights ? 'on' : 'off'}`
+const status = `r${REVISION} · ${backend} · ${api} · lights ${lights ? 'on' : 'off'}${wireframe ? ' · wireframe' : ''}`
 if (info) info.textContent = `${status} · click the terrain`
 
 // click → geolocation (pick) → marker on the surface (getTerrainPositionSync)

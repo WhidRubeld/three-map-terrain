@@ -22,6 +22,8 @@ It runs `e2e/render.spec.ts` against the playground for `renderer=webgl` and
   (shader compile errors surface as console errors);
 - top-down unlit view checks the child texture layout `NW | NE / SW | SE`
   pixel-exactly (and the sRGB color pipeline via a mid-gray quadrant);
+- `wireframe=1` draws lines carrying each quadrant's texture with the
+  background visible between them;
 - a click on a known point returns the right geolocation and altitude
   (`map.pick`);
 - truncated texture responses are re-requested, and fall back to `<img>`
@@ -50,8 +52,10 @@ Query parameters:
 | `renderer`   | `webgl`, `webgpu` | `webgl` | renderer under test                                 |
 | `forceWebGL` | `1`               | —       | `WebGPURenderer` with its WebGL2 backend            |
 | `lights`     | `1`, `0`          | `1`     | `MeshLambertMaterial` vs unlit basic                |
+| `wireframe`  | `1`               | —       | `wireframe` material option                         |
 | `api`        | `eox`, `osm`      | `eox`   | texture source                                      |
 | `nTiles`     | integer           | `3`     | grid size                                           |
+| `segments`   | integer           | `100`   | `tileSegments` (try `40` with `wireframe=1`)        |
 | `view`       | `orbit`, `top`    | `orbit` | perspective + MapControls, or orthographic top view |
 
 `window.__playground` exposes `{ map, revision, backend, ready, texturedTiles(), lastPick }`.

@@ -134,7 +134,7 @@ Each tile is textured with its four child tiles (one zoom level deeper), stitche
 | Option    | Type      | Description                                                                                                                                                                                                 |
 | --------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | lights    | `boolean` | `true` uses a lit [MeshLambertMaterial](https://threejs.org/docs/#api/en/materials/MeshLambertMaterial), `false` an unlit [MeshBasicMaterial](https://threejs.org/docs/#api/en/materials/MeshBasicMaterial) |
-| wireframe | `boolean` | Render geometry as wireframe                                                                                                                                                                                |
+| wireframe | `boolean` | Render the textured terrain as a wireframe. The grid density follows `MapOptions.tileSegments`: `100` (default) looks almost solid from afar, `32`–`48` gives a readable grid                               |
 | fog       | `boolean` | Whether the material is affected by the scene fog                                                                                                                                                           |
 
 #### The `defaultTextureOptions` object
@@ -265,7 +265,7 @@ yarn validate   # typecheck, lint, format check, unit tests, build
 yarn test:e2e   # rendering tests in Chromium (WebGL + WebGPU), tile servers mocked
 ```
 
-The playground accepts `?renderer=webgpu` (`&forceWebGL=1` for its WebGL2 backend), `?lights=0`, `?api=osm`, `?nTiles=5` and `?view=top`. Click the terrain to see its geolocation.
+The playground accepts `?renderer=webgpu` (`&forceWebGL=1` for its WebGL2 backend), `?lights=0`, `?wireframe=1`, `?segments=40` (`tileSegments`), `?api=osm`, `?nTiles=5` and `?view=top`. Click the terrain to see its geolocation.
 See [AGENTS.md](AGENTS.md) for architecture notes and conventions.
 
 ## Future list
