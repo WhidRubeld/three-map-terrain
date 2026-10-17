@@ -5,9 +5,15 @@ description: Prepare and publish a new three-map-terrain version to npm — choo
 
 # Release
 
-Publishing is automated: creating a **GitHub release** runs
+Publishing is automated: publishing a **GitHub release** runs
 `.github/workflows/publish-package.yml` (`yarn validate` → `npm publish --provenance`).
 Never run `npm publish` locally.
+
+There is no npm token. npm **trusted publishing** authorizes that workflow by
+its filename (npmjs.com → `three-map-terrain` → Settings → Trusted publishing,
+direct `npm publish` allowed) through GitHub's OIDC token, and adds provenance.
+Renaming the workflow file breaks publishing until the trusted publisher is
+updated on npmjs.com.
 
 ## 1. Pick the bump
 
@@ -36,12 +42,21 @@ The public API is everything exported from `src/index.ts`.
 After the PR is merged to `master`:
 
 ```bash
-git checkout master && git pull
-git tag v<version> && git push origin v<version>
-gh release create v<version> --generate-notes
+gh release create v<version> --target master --title "v<version>" --notes-file <notes.md>
 ```
 
+`--target master` creates the tag on GitHub's `master`. For a major, start the
+notes with the breaking changes and link the README's upgrade section;
+`--generate-notes` alone only lists the commits.
+
 Then watch the workflow: `gh run watch` and confirm
-`npm view three-map-terrain version` shows the new version. Pushing to
+`npm view three-map-terrain version` shows the new version.
+
+If the publish fails, nothing reached npm and the version is still free: fix
+the cause and rerun the run (`gh run rerun <id>`) or start the workflow on the
+tag (`gh workflow run publish-package.yml --ref v<version>`). A rerun uses the
+workflow file of the tagged commit; if the fix is in the workflow itself, move
+the tag: `gh release delete v<version> --cleanup-tag --yes`, then create the
+release again. Pushing to
 `master` also redeploys the GitHub Pages demo (`examples/gpx-viewer`, which
 shows the library version from the root `package.json`).

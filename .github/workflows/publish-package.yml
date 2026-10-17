@@ -7,27 +7,28 @@ on:
   # retry a failed publish without recreating the release
   workflow_dispatch:
 
+# No npm token: the package trusts this workflow (npm trusted publishing,
+# configured on npmjs.com → three-map-terrain → Settings). `npm publish`
+# authenticates with GitHub's OIDC token and adds provenance by itself.
 permissions:
   contents: read
-  id-token: write # npm provenance
+  id-token: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     env:
       # setup-node writes an .npmrc that references ${NODE_AUTH_TOKEN}, and
-      # Yarn 1 aborts on an unset variable. Only `npm publish` gets the token.
+      # Yarn 1 aborts on an unset variable; npm uses OIDC before any token
       NODE_AUTH_TOKEN: unused
     steps:
       - uses: actions/checkout@v7
-      # Setup .npmrc file to publish to npm
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: yarn
           registry-url: 'https://registry.npmjs.org'
+          # no dependency cache in release builds (npm's recommendation)
+          package-manager-cache: false
       - run: yarn install --frozen-lockfile
       - run: yarn validate
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
