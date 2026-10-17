@@ -90,20 +90,20 @@ using `MeshLambertMaterial` whose `map` is a 512×512 `CanvasTexture`.
 ```bash
 yarn build                                  # examples use dist/
 (cd examples/basic && yarn start)           # webpack-dev-server, port 8080
-(cd examples/react && yarn dev)             # vite, port 5173
-(cd examples/gpx-viewer && yarn dev)        # vite, port 5173 (the live demo)
+(cd examples/react && yarn dev)             # vite, port 5173 (the live example)
 ```
 
 Same checklist as above. The React example runs in `StrictMode`, so
 `init → clean → init` happens on mount — there must be exactly 9 tiles and no
-errors about aborted requests.
+errors about aborted requests. Both examples show the geolocation of a click
+in their overlay and put the yellow sphere exactly on the surface there
+(`getLocation` / `pick`, then `getTerrainPositionSync`).
 
-The GPX viewer exposes its stores as `window.__viewer` in dev
-(`terrainStore.state.{ready, loaded, textured, total, drape}`,
-`sceneRefs.controls`, `hoverStore`). Wait for `drape`, then check: the route
-lies on the surface, hovering it shows the point card, a right-drag rotates
-around the route (and back to the same pose), panning stops at the grid edge,
-and both layouts work (≥ 900 px wide, and a phone viewport such as 390×844).
+The heaviest user of the library is the GPX Terrain app
+([whidrubeld/gpx-terrain](https://github.com/whidrubeld/gpx-terrain)): for
+changes to positions, picking or materials, also run it against the local
+build (`yarn link` here, `yarn link three-map-terrain` there) with its
+`verify-app` skill.
 
 ## 4. Report
 

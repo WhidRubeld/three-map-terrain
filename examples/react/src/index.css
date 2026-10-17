@@ -4,3 +4,15 @@ body,
   margin: 0;
   height: 100%;
 }
+
+body {
+  background: #161616;
+  color: #eee;
+  font:
+    13px/1.45 system-ui,
+    sans-serif;
+}
+
+a {
+  color: inherit;
+}

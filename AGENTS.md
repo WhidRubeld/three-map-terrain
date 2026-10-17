@@ -20,10 +20,10 @@ test/                     Vitest unit tests (Node, no WebGL)
 e2e/                      Playwright tests against playground/ with mocked tile servers
 playground/               `yarn dev` app; query params documented in .skills/verify-rendering
 examples/basic            plain three.js + webpack
-examples/react            React Three Fiber + drei + Vite
-examples/gpx-viewer       the live demo (GitHub Pages): GPX tracks on terrain;
-                          React + R3F + TanStack Store + Tailwind 4, own UI kit
-docs/                     README screenshots (WebP) of the GPX viewer
+examples/react            React Three Fiber + drei + Vite; the live example
+                          (GitHub Pages, deployed from master)
+docs/                     README images (WebP) of the examples: `yarn screenshots`
+scripts/screenshots.mjs   renders them from the built examples (Chrome + cwebp)
 .skills/                  agent skills (symlinked as .claude/skills)
 ```
 
@@ -45,8 +45,11 @@ Do **not** name a script `check`: `yarn check` is a built-in Yarn 1 command.
 
 The examples have their own `package.json`/`yarn.lock` and link the library
 with `link:../..` — run `yarn build` in the root before installing/building them.
-`examples/gpx-viewer` also has `yarn test` (Vitest) and `yarn presets`, which
-regenerates its demo GPX files from OpenStreetMap (see its README).
+
+The full app built with the library — **GPX Terrain**, a GPX viewer and the
+library's showcase (README hero image) — lives in its own repository,
+[whidrubeld/gpx-terrain](https://github.com/whidrubeld/gpx-terrain), and
+depends on the published package. After a release, bump it there.
 
 ## How it works (read before touching src/)
 

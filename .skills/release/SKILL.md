@@ -30,10 +30,11 @@ The public API is everything exported from `src/index.ts`.
 
 1. `package.json` → `version`.
 2. `README.md` — documentation for any changed API, install/peer notes.
-3. `yarn validate && yarn test:e2e`, then build all three examples and run the
-   GPX viewer's tests (see the `upgrade-dependencies` skill, step 5).
-4. If the UI of the live demo changed visibly, refresh the README screenshots
-   in `docs/` (1280×800 at 2×, phone 390×844 at 3×, WebP via `cwebp`).
+3. `yarn validate && yarn test:e2e`, then build both examples (see the
+   `upgrade-dependencies` skill, step 5).
+4. If the examples look different, refresh the README images:
+   `yarn screenshots` (Google Chrome for GPU rendering, `cwebp`; 1280×800
+   at 2×) and look at `docs/*.webp`.
 5. Check the package contents: `npm pack --dry-run` — only `dist/*`, `src/*`,
    `README.md`, `LICENSE`, `package.json`.
 
@@ -58,5 +59,11 @@ tag (`gh workflow run publish-package.yml --ref v<version>`). A rerun uses the
 workflow file of the tagged commit; if the fix is in the workflow itself, move
 the tag: `gh release delete v<version> --cleanup-tag --yes`, then create the
 release again. Pushing to
-`master` also redeploys the GitHub Pages demo (`examples/gpx-viewer`, which
-shows the library version from the root `package.json`).
+`master` also redeploys the live example on GitHub Pages (`examples/react`).
+
+## 4. After the release
+
+GPX Terrain ([whidrubeld/gpx-terrain](https://github.com/whidrubeld/gpx-terrain))
+uses the published package and appears in the README's Examples section
+(its own `docs/hero.webp`): bump `three-map-terrain` there (its `release`
+skill) and, if the app looks different, refresh its screenshots.
