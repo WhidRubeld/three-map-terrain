@@ -69,6 +69,7 @@ const map = new Map({ source, location })
 scene.add(map.terrain)
 void map.init(() => {
   console.log('Map is ready')
+  if (status) status.textContent = 'Click the terrain for its geolocation.'
 })
 
 // object by coords
@@ -81,7 +82,16 @@ const spherePosition = map.getPosition({ ...location, alt: 3e3 })
 sphere.position.set(spherePosition.x, spherePosition.y, spherePosition.z + 8)
 scene.add(sphere)
 
-// click → geolocation of the terrain under the pointer
+// click → geolocation of the terrain under the pointer, and a marker put
+// back on the rendered surface from that geolocation
+const status = document.querySelector<HTMLElement>('#status')
+const pin = new Mesh(
+  new SphereGeometry(6, 24, 12),
+  new MeshBasicMaterial({ color: 0xf0d040 })
+)
+pin.visible = false
+scene.add(pin)
+
 const raycaster = new Raycaster()
 renderer.domElement.addEventListener('click', (event) => {
   const pointer = new Vector2(
@@ -90,10 +100,13 @@ renderer.domElement.addEventListener('click', (event) => {
   )
   raycaster.setFromCamera(pointer, camera)
   const hit = map.pick(raycaster)
-  if (hit) {
-    console.log(
-      `${hit.lat.toFixed(5)}, ${hit.lon.toFixed(5)}, ${Math.round(hit.alt)} m`
-    )
+  if (!hit) return
+  const text = `${hit.lat.toFixed(5)}, ${hit.lon.toFixed(5)} · ${Math.round(hit.alt)} m`
+  if (status) status.textContent = text
+  const surface = map.getTerrainPositionSync(hit, { loadTile: false })
+  if (surface) {
+    pin.position.set(surface.x, surface.y, surface.z)
+    pin.visible = true
   }
 })
 

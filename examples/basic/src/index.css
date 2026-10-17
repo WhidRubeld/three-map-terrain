@@ -3,3 +3,39 @@ body {
   margin: 0;
   padding: 0;
 }
+
+body {
+  color: #eee;
+  font:
+    13px/1.45 system-ui,
+    sans-serif;
+}
+
+a {
+  color: inherit;
+}
+
+.overlay,
+.attribution {
+  position: fixed;
+  margin: 0;
+  pointer-events: none;
+}
+
+.overlay {
+  top: 16px;
+  left: 16px;
+  padding: 8px 12px;
+  background: rgb(16 16 16 / 0.78);
+  font-variant-numeric: tabular-nums;
+}
+
+.attribution {
+  right: 0;
+  bottom: 0;
+  padding: 3px 8px;
+  background: rgb(16 16 16 / 0.72);
+  color: #b4b4b4;
+  font-size: 11px;
+  pointer-events: auto;
+}

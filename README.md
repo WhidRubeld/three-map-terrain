@@ -11,11 +11,11 @@ Elevation, satellite or map imagery, and the geolocation math to put your own da
 [![types](https://img.shields.io/npm/types/three-map-terrain?style=flat-square&color=000&labelColor=000)](src/index.ts)
 [![license](https://img.shields.io/npm/l/three-map-terrain?style=flat-square&color=000&labelColor=000)](LICENSE)
 
-[**Live demo**](https://whidrubeld.github.io/three-map-terrain/) · [Quick start](#quick-start) · [Examples](#examples) · [API](#api) · [Upgrading from 1.x](#upgrading-from-1x)
+[**Live example**](https://whidrubeld.github.io/three-map-terrain/) · [Quick start](#quick-start) · [Examples](#examples) · [API](#api) · [Upgrading from 1.x](#upgrading-from-1x)
 
-<a href="https://whidrubeld.github.io/three-map-terrain/"><img src="docs/hero.webp" alt="The live demo: the Stelvio Pass road draped on wireframe terrain, with track details, a legend, a performance monitor, an elevation profile and the card of the track point under the cursor" width="100%"></a>
+<a href="https://whidrubeld.github.io/three-map-terrain/"><img src="docs/hero.webp" alt="The live example: the Bernese Alps from Lake Brienz to the Aletsch Glacier as 3D terrain with satellite imagery; the panel shows the geolocation of a click on the terrain" width="100%"></a>
 
-<sub>The live demo is a GPX viewer built with this library — drop a track on it. [Source](examples/gpx-viewer)</sub>
+<sub>The live example: [React Three Fiber in one component](examples/react/src/App.tsx). Click the terrain for its geolocation.</sub>
 
 </div>
 
@@ -129,22 +129,20 @@ const hit = map.pick(raycaster) // { lat, lon, alt, point } | undefined
 
 ## Examples
 
-| Example                               | Stack                                  | What it shows                                                                                                              |
-| ------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| [**GPX viewer**](examples/gpx-viewer) | React, R3F, TanStack Store, Tailwind 4 | The [live demo](https://whidrubeld.github.io/three-map-terrain/): GPX tracks draped on terrain, profile, playback, picking |
-| [React](examples/react)               | React Three Fiber, drei, Vite          | The minimal R3F setup, with `StrictMode`                                                                                   |
-| [Basic](examples/basic)               | three.js, webpack                      | The minimal plain three.js setup                                                                                           |
+| Example                                                      | Stack                         | What it shows                                                                                                                                                      |
+| ------------------------------------------------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [React](examples/react)                                      | React Three Fiber, drei, Vite | The [live example](https://whidrubeld.github.io/three-map-terrain/): the minimal R3F setup with `StrictMode`, a point at an altitude, the geolocation of a click   |
+| [Basic](examples/basic)                                      | three.js, webpack             | The same with plain three.js and `map.pick`                                                                                                                        |
+| [**GPX Terrain**](https://github.com/whidrubeld/gpx-terrain) | React, R3F, TanStack Store    | [A full app](https://whidrubeld.github.io/gpx-terrain/) on the library: GPX tracks draped on terrain, profile, playback, picking, imagery and wireframe at runtime |
 
 <table>
   <tr>
-    <td width="38%"><img src="docs/mono-light.webp" alt="Light theme, grayscale imagery: the Bright Angel Trail descending into the Grand Canyon"></td>
-    <td width="38%"><img src="docs/relief-wireframe.webp" alt="Dark theme, untextured relief as a wireframe: the Eiger Trail below the Eiger north face"></td>
-    <td width="24%"><img src="docs/mobile.webp" alt="The compact layout on a phone: the Bright Angel Trail with playback"></td>
+    <td width="50%"><a href="examples/basic"><img src="docs/basic.webp" alt="The basic example: plain three.js, the terrain with axes and a grid helper, auto-rotating"></a></td>
+    <td width="50%"><a href="https://whidrubeld.github.io/gpx-terrain/"><img src="https://raw.githubusercontent.com/whidrubeld/gpx-terrain/master/docs/hero.webp" alt="GPX Terrain: the Stelvio Pass road draped on wireframe terrain, with track details, a legend, an elevation profile and the card of the point under the cursor"></a></td>
   </tr>
   <tr>
-    <td><sub>Grayscale imagery, light theme</sub></td>
-    <td><sub>Untextured relief, <code>wireframe</code></sub></td>
-    <td><sub>Phones</sub></td>
+    <td><sub>Basic: plain three.js</sub></td>
+    <td><sub>GPX Terrain: a GPX viewer built with the library</sub></td>
   </tr>
 </table>
 
@@ -258,10 +256,10 @@ The playground accepts `?renderer=webgpu` (`&forceWebGL=1` for its WebGL2 backen
 ## Roadmap
 
 - [x] Terrain position helpers (`getTerrainPosition`, `getTerrainPositionSync`, `pick`)
-- [x] Basic, React and advanced ([GPX viewer](examples/gpx-viewer)) examples
+- [x] Basic and React examples, and a full app: [GPX Terrain](https://github.com/whidrubeld/gpx-terrain)
 - [ ] Pin and direction components
 - [ ] Vue example
 
 ## License
 
-[MIT](LICENSE). Started as an updated and extended version of [map33.js](https://github.com/blaze33/map33.js).
+[MIT](LICENSE).

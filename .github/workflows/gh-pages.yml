@@ -24,16 +24,17 @@ jobs:
           cache: yarn
           cache-dependency-path: |
             yarn.lock
-            examples/gpx-viewer/yarn.lock
+            examples/react/yarn.lock
 
       - name: Build package
         run: |
           yarn install --frozen-lockfile
           yarn build
 
-      # the GPX viewer is the live demo; examples/basic is built by CI only
-      - name: Build project
-        working-directory: examples/gpx-viewer
+      # the live example: examples/react. The full app built with the library,
+      # GPX Terrain, lives in its own repository (whidrubeld/gpx-terrain)
+      - name: Build example
+        working-directory: examples/react
         run: |
           yarn install --frozen-lockfile
           yarn build
@@ -42,4 +43,4 @@ jobs:
         uses: JamesIves/github-pages-deploy-action@v4.9.0
         with:
           branch: gh-pages
-          folder: examples/gpx-viewer/dist
+          folder: examples/react/dist
