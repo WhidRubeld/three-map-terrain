@@ -104,12 +104,14 @@ export class Tile {
     const xRatio = width / tileSegments
     const yRatio = height / tileSegments
 
-    // The last row and column are filled from the neighbours by resolveSeams()
-    for (let row = 0; row < tileSegments; row++) {
-      const offset = Math.round(row * yRatio) * width
-      for (let col = 0; col < tileSegments; col++) {
-        const z = elevation[offset + Math.round(col * xRatio)] * zScale
-        position.setZ(row * rowSize + col, z)
+    // The last row/column lies on the neighbours' first pixels. Until
+    // resolveSeams() copies them, approximate it with this tile's edge pixels
+    // so that a tile never shows a wall down to z = 0 while loading.
+    for (let row = 0; row <= tileSegments; row++) {
+      const offset = Math.min(Math.round(row * yRatio), height - 1) * width
+      for (let col = 0; col <= tileSegments; col++) {
+        const x = Math.min(Math.round(col * xRatio), width - 1)
+        position.setZ(row * rowSize + col, elevation[offset + x] * zScale)
       }
     }
 
@@ -207,17 +209,18 @@ export class Tile {
   }
 
   /**
-   * Stitches the south and east edges to the neighbours found in `cache`.
-   * Neighbours that are not loaded yet are ignored (the edge is extrapolated).
+   * Stitches the south and east edges to the loaded neighbours in `cache`.
+   * An edge without a loaded neighbour keeps this tile's own edge samples;
+   * `seamY` / `seamX` tell whether the edge is stitched to a neighbour.
    */
   resolveSeams(cache: Partial<Record<string, Tile>>) {
-    const loaded = (tile: Tile | undefined) => (tile?.loaded ? tile : undefined)
+    const south = cache[this.keyNeighY()]
+    const east = cache[this.keyNeighX()]
 
-    this.resolveSeamY(loaded(cache[this.keyNeighY()]))
-    this.resolveSeamX(loaded(cache[this.keyNeighX()]))
-
-    this.seamY = true
-    this.seamX = true
+    this.seamY = south?.loaded === true
+    this.seamX = east?.loaded === true
+    if (this.seamY) this.resolveSeamY(south)
+    if (this.seamX) this.resolveSeamX(east)
 
     this.geometry.attributes.position.needsUpdate = true
     this.geometry.computeVertexNormals()

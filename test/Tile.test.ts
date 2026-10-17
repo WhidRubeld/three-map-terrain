@@ -66,7 +66,7 @@ describe('Tile', () => {
     expect(tile.elevation?.[8 * 3 + 2]).toBeCloseTo(200 - 31.5, 2)
   })
 
-  it('samples elevation onto the plane, leaving the seam row/column', () => {
+  it('samples elevation onto the whole plane, edges from the edge pixels', () => {
     const tile = new Tile(createMap(4), 11, 0, 0)
     tile.computeElevation(terrariumPixels(8, (x, y) => x + y * 100))
     tile.buildGeometry()
@@ -76,22 +76,24 @@ describe('Tile', () => {
     expect(zAt(tile, 0, 1)).toBe(1)
     expect(zAt(tile, 1, 0)).toBe(100)
     expect(zAt(tile, 3, 3)).toBe(303)
-    expect(row(tile, 4)).toEqual([0, 0, 0, 0, 0])
-    expect(column(tile, 4)).toEqual([0, 0, 0, 0, 0])
+    // the seam row/column would be pixel 8 (the neighbour's first pixel):
+    // until stitched, it uses the tile's last pixel (7) instead of z = 0
+    expect(row(tile, 4)).toEqual([350, 351, 352, 353, 353.5])
+    expect(column(tile, 4)).toEqual([3.5, 103.5, 203.5, 303.5, 353.5])
   })
 
-  it('extrapolates seams when there are no loaded neighbours', () => {
+  it('keeps its own edges when the neighbours are not loaded', () => {
     const map = createMap(4)
     const tile = new Tile(map, 11, 0, 0)
     tile.computeElevation(terrariumPixels(8, (x, y) => x + y * 100))
     tile.buildGeometry()
+    const before = [...tile.geometry.attributes.position.array]
 
     const unloadedNeighbour = new Tile(map, 11, 1, 0)
     tile.resolveSeams({ [unloadedNeighbour.key()]: unloadedNeighbour })
 
-    expect(column(tile, 4).slice(0, 4)).toEqual(column(tile, 3).slice(0, 4))
-    expect(row(tile, 4)).toEqual(row(tile, 3))
-    expect(tile.seamX && tile.seamY).toBe(true)
+    expect([...tile.geometry.attributes.position.array]).toEqual(before)
+    expect(tile.seamX || tile.seamY).toBe(false)
   })
 
   it('copies edges from loaded east and south neighbours', () => {
@@ -118,6 +120,7 @@ describe('Tile', () => {
 
     expect(column(tile, 4)).toEqual(column(east, 0))
     expect(row(tile, 4)).toEqual(row(south, 0))
+    expect(tile.seamX && tile.seamY).toBe(true)
   })
 
   it('swaps the placeholder material once the texture is loaded', async () => {

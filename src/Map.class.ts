@@ -1,5 +1,6 @@
 import { Group } from 'three'
 
+import { isAbortError } from './image'
 import {
   defaultTextureOptions,
   type QuadTextureMaterialOptions
@@ -30,9 +31,6 @@ export const defaultMapOptions: Readonly<MapOptions> = Object.freeze({
   tileSegments: 100,
   zScale: 0.045
 })
-
-const isAbortError = (error: unknown) =>
-  error instanceof DOMException && error.name === 'AbortError'
 
 export class Map {
   materialOptions: QuadTextureMaterialOptions
@@ -87,20 +85,7 @@ export class Map {
   /** Loads one more tile (no-op if it is already cached). */
   async addTileSegment(x: number, y: number): Promise<void> {
     const tile = this.createTile(x, y)
-    if (!tile) return
-
-    const loaded = await this.loadTile(tile)
-    if (!loaded) return
-
-    // The new tile and the neighbours whose south/east edges border it
-    this.stitch(
-      [
-        loaded,
-        this.cachedTile(x - 1, y),
-        this.cachedTile(x, y - 1),
-        this.cachedTile(x - 1, y - 1)
-      ].filter((tile): tile is Tile => tile?.loaded === true)
-    )
+    if (tile) await this.loadTile(tile)
   }
 
   /** Removes all tiles, aborts pending requests and frees GPU resources. */
@@ -151,8 +136,7 @@ export class Map {
       }
     }
 
-    const tiles = await Promise.all(pending)
-    this.stitch(tiles.filter((tile) => tile !== undefined))
+    await Promise.all(pending)
   }
 
   private getCenter() {
@@ -183,16 +167,70 @@ export class Map {
     if (this.tileCache[tile.key()] !== tile) return undefined
 
     tile.setPosition(this.center)
+    this.stitchAround(tile)
     this.terrain.add(tile.mesh)
     return tile
   }
 
   /**
-   * A tile copies its south/east edges from its neighbours, so those must be
-   * stitched first: process tiles in descending `x + y` order.
+   * Stitches a freshly loaded tile into the already loaded ones, so that no
+   * crack is ever visible. The tile shares edges with its east/south
+   * neighbours (its own seams) and with its west, north and north-west
+   * neighbours (their seams). A tile copies its edges from its east/south
+   * neighbours, so those are stitched first: descending `x + y` order.
    */
-  private stitch(tiles: Tile[]) {
-    const sorted = [...tiles].sort((a, b) => b.x + b.y - (a.x + a.y))
-    for (const tile of sorted) tile.resolveSeams(this.tileCache)
+  private stitchAround({ x, y }: Tile) {
+    const tiles = [
+      this.cachedTile(x, y),
+      this.cachedTile(x - 1, y),
+      this.cachedTile(x, y - 1),
+      this.cachedTile(x - 1, y - 1)
+    ].filter((tile): tile is Tile => tile?.loaded === true)
+
+    tiles.sort((a, b) => b.x + b.y - (a.x + a.y))
+    for (const tile of tiles) tile.resolveSeams(this.tileCache)
+
+    const touched = new Set<Tile>()
+    for (const [cx, cy] of [
+      [x, y],
+      [x + 1, y],
+      [x, y + 1],
+      [x + 1, y + 1]
+    ]) {
+      this.syncCorner(cx, cy, touched)
+    }
+    for (const tile of touched) {
+      tile.geometry.attributes.position.needsUpdate = true
+      tile.geometry.computeVertexNormals()
+    }
+  }
+
+  /**
+   * Edges alone cannot agree on a point shared by four tiles while the
+   * diagonal tile is missing: each side holds its own approximation. Give the
+   * point (the top-left corner of tile `x`, `y`) one value from the best
+   * loaded source — the exact pixel of tile `x`, `y` first — in every tile.
+   */
+  private syncCorner(x: number, y: number, touched: Set<Tile>) {
+    const n = this.options.tileSegments
+    const corners = [
+      { tile: this.cachedTile(x, y), index: 0 },
+      { tile: this.cachedTile(x - 1, y), index: n },
+      { tile: this.cachedTile(x, y - 1), index: n * (n + 1) },
+      { tile: this.cachedTile(x - 1, y - 1), index: (n + 1) ** 2 - 1 }
+    ].filter(
+      (corner): corner is { tile: Tile; index: number } =>
+        corner.tile?.loaded === true
+    )
+    if (corners.length < 2) return
+
+    const [source, ...others] = corners
+    const z = source.tile.geometry.attributes.position.getZ(source.index)
+    for (const { tile, index } of others) {
+      const position = tile.geometry.attributes.position
+      if (position.getZ(index) === z) continue
+      position.setZ(index, z)
+      touched.add(tile)
+    }
   }
 }

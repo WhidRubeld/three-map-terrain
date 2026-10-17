@@ -22,6 +22,8 @@ yarn add three three-map-terrain
 
 `three` is a peer dependency (`>=0.152.0`). Works with both `WebGLRenderer` and `WebGPURenderer`.
 
+Tiles are fetched with CORS. Transient failures (network errors, HTTP 408/425/429/5xx, truncated images) are retried up to 3 times with backoff.
+
 ## Basic - Quick start
 
 ```typescript

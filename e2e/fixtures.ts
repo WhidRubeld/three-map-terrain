@@ -79,14 +79,17 @@ const textureTile = (col: number, row: number) => {
   return encodePng(TILE_SIZE, TILE_SIZE, () => color)
 }
 
-/** Serves deterministic elevation/texture tiles instead of the real servers. */
+/**
+ * Serves deterministic elevation/texture tiles instead of the real servers.
+ * Returns the number of requests per texture tile (`col/row`).
+ */
 export async function mockTileServers(
   page: Page,
   {
-    textureOverrides = new Map<string, Buffer>()
+    textureReplies = new Map<string, Buffer[]>()
   }: {
-    /** Response bodies for specific texture tiles, keyed by `col/row`. */
-    textureOverrides?: Map<string, Buffer>
+    /** JPEG bodies served, one per request, before the regular tile. */
+    textureReplies?: Map<string, Buffer[]>
   } = {}
 ) {
   const cache = new Map<string, Buffer>()
@@ -98,6 +101,7 @@ export async function mockTileServers(
     return value
   }
   const headers = { 'access-control-allow-origin': '*' }
+  const requests = new Map<string, number>()
 
   await page.route('**/elevation-tiles-prod/terrarium/**', (route) => {
     const [x, y] = new URL(route.request().url()).pathname
@@ -116,11 +120,16 @@ export async function mockTileServers(
     const query = new URL(route.request().url()).searchParams
     const col = Number(query.get('TileCol'))
     const row = Number(query.get('TileRow'))
-    const override = textureOverrides.get(`${col}/${row}`)
+    const key = `${col}/${row}`
+    requests.set(key, (requests.get(key) ?? 0) + 1)
+
+    const reply = textureReplies.get(key)?.shift()
     return route.fulfill({
-      contentType: override ? 'image/jpeg' : 'image/png',
+      contentType: reply ? 'image/jpeg' : 'image/png',
       headers,
-      body: override ?? memo(`t/${col}/${row}`, () => textureTile(col, row))
+      body: reply ?? memo(`t/${key}`, () => textureTile(col, row))
     })
   })
+
+  return { requests }
 }

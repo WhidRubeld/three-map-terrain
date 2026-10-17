@@ -13,7 +13,10 @@ import { terrariumPixels } from './helpers'
 
 const { loadImageData } = vi.hoisted(() => ({ loadImageData: vi.fn() }))
 
-vi.mock('../src/image', () => ({ loadImageData }))
+vi.mock('../src/image', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/image')>()),
+  loadImageData
+}))
 
 vi.mock('../src/quad-texture-material', async (importOriginal) => {
   const actual =
@@ -134,6 +137,62 @@ describe('Map', () => {
       if (east) expect(edge(tile, 'col', n)).toEqual(edge(east, 'col', 0))
       if (south) expect(edge(tile, 'row', n)).toEqual(edge(south, 'row', 0))
     }
+  })
+
+  it('never shows walls or cracks while tiles are still loading', async () => {
+    const pending = new globalThis.Map<string, () => void>()
+    loadImageData.mockImplementation(
+      (url: string) =>
+        new Promise((resolve) => {
+          const { x, y } = tileFromUrl(url)
+          pending.set(`${x}/${y}`, () => {
+            resolve(terrariumPixels(SIZE, worldHeight(x, y)))
+          })
+        })
+    )
+    const map = createMap()
+    const done = map.init()
+    const n = map.options.tileSegments
+
+    // corners first, then the tiles between them: every edge case of
+    // "neighbour loaded before / after me"
+    const order = [
+      '1070/724',
+      '1068/722',
+      '1069/723',
+      '1068/724',
+      '1070/722',
+      '1069/722',
+      '1068/723',
+      '1070/723',
+      '1069/724'
+    ]
+    for (const [step, key] of order.entries()) {
+      pending.get(key)?.()
+      await vi.waitFor(() => {
+        expect(map.terrain.children).toHaveLength(step + 1)
+      })
+
+      const loaded = Object.values(map.tileCache).filter((t) => t.loaded)
+      for (const tile of loaded) {
+        // terrain is 600–1400 m high: z = 0 would be a wall down to the ground
+        const { array } = tile.geometry.attributes.position
+        for (let i = 2; i < array.length; i += 3) {
+          expect(array[i], `${tile.key()} after ${key}`).toBeGreaterThan(0)
+        }
+        const east = findTile(map, tile.x + 1, tile.y)
+        const south = findTile(map, tile.x, tile.y + 1)
+        if (east?.loaded) {
+          expect(edge(tile, 'col', n)).toEqual(edge(east, 'col', 0))
+        }
+        if (south?.loaded) {
+          expect(edge(tile, 'row', n)).toEqual(edge(south, 'row', 0))
+        }
+      }
+    }
+
+    await done
+    expect(map.ready).toBe(true)
   })
 
   it('applies textured materials honouring the material options', async () => {

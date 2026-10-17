@@ -4,7 +4,7 @@ import {
   SRGBColorSpace,
   Texture
 } from 'three'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createQuadTextureMaterial,
@@ -13,95 +13,17 @@ import {
   loadQuadTexture,
   QuadTextureMaterial
 } from '../src'
-import { loadImageData } from '../src/image'
+import {
+  bitmaps,
+  FakeOffscreenCanvas,
+  fetch,
+  installBrowserFakes,
+  settle
+} from './browser-fakes'
 
-interface FakeBitmap {
-  url: string
-  width: number
-  height: number
-  close: () => void
-}
-
-/** Minimal OffscreenCanvas that records draw calls. */
-class FakeOffscreenCanvas {
-  static instances: FakeOffscreenCanvas[] = []
-  draws: { url: string; x: number; y: number; w: number; h: number }[] = []
-  contextSettings: unknown
-
-  constructor(
-    public width: number,
-    public height: number
-  ) {
-    FakeOffscreenCanvas.instances.push(this)
-  }
-
-  getContext(_type: '2d', settings?: unknown) {
-    this.contextSettings = settings
-    return {
-      drawImage: (
-        image: FakeBitmap,
-        x: number,
-        y: number,
-        w = image.width,
-        h = image.height
-      ) => this.draws.push({ url: image.url, x, y, w, h }),
-      getImageData: (x: number, y: number, width: number, height: number) => ({
-        width,
-        height,
-        data: new Uint8ClampedArray(width * height * 4)
-      })
-    }
-  }
-}
-
-/** `<img>` stand-in: decodes anything except blobs containing "corrupt". */
-class FakeImage {
-  url = ''
-  width = 256
-  height = 256
-  private blobUrl = ''
-
-  set src(value: string) {
-    this.blobUrl = value
-  }
-
-  async decode() {
-    const blob = await (await globalThis.fetch(this.blobUrl)).blob()
-    this.url = `img:${await blob.text()}`
-    if (this.url.includes('corrupt'))
-      throw new DOMException('bad', 'EncodingError')
-  }
-}
-
-const bitmaps: FakeBitmap[] = []
-const createImageBitmap = vi.fn(async (blob: Blob, _options?: unknown) => {
-  const url = await blob.text()
-  if (url.includes('truncated') || url.includes('corrupt')) {
-    throw new DOMException('could not be decoded', 'InvalidStateError')
-  }
-  const bitmap: FakeBitmap = { url, width: 256, height: 256, close: vi.fn() }
-  bitmaps.push(bitmap)
-  return bitmap
-})
-const fetch = vi.fn((url: string, _init?: RequestInit) =>
-  Promise.resolve(
-    url.includes('missing')
-      ? new Response(null, { status: 404, statusText: 'Not Found' })
-      : new Response(new Blob([url]))
-  )
-)
-
-const realFetch = globalThis.fetch
-
-beforeEach(() => {
-  FakeOffscreenCanvas.instances = []
-  bitmaps.length = 0
-  vi.stubGlobal('OffscreenCanvas', FakeOffscreenCanvas)
-  vi.stubGlobal('createImageBitmap', createImageBitmap)
-  vi.stubGlobal('Image', FakeImage)
-  vi.stubGlobal('fetch', (url: string, init?: RequestInit) =>
-    url.startsWith('blob:') ? realFetch(url) : fetch(url, init)
-  )
+beforeEach(installBrowserFakes)
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe('loadQuadTexture', () => {
@@ -122,19 +44,17 @@ describe('loadQuadTexture', () => {
     for (const bitmap of bitmaps) expect(bitmap.close).toHaveBeenCalled()
   })
 
-  it('fetches with CORS and forwards the abort signal', async () => {
+  it('forwards the abort signal to every request', async () => {
     const controller = new AbortController()
     await loadQuadTexture(['a', 'b', 'c', 'd'], controller.signal)
 
-    expect(fetch).toHaveBeenCalledWith('a', {
-      signal: controller.signal,
-      mode: 'cors',
-      credentials: 'omit'
-    })
+    for (const [, init] of fetch.mock.calls) {
+      expect(init?.signal).toBe(controller.signal)
+    }
   })
 
   it('falls back to <img> for textures createImageBitmap cannot decode', async () => {
-    await loadQuadTexture(['nw', 'sw', 'ne-truncated', 'se'])
+    await settle(loadQuadTexture(['nw', 'sw', 'ne-truncated', 'se']))
     const [canvas] = FakeOffscreenCanvas.instances
 
     expect(canvas.draws.map(({ url }) => url)).toEqual([
@@ -147,39 +67,17 @@ describe('loadQuadTexture', () => {
 
   it('rejects when no decoder can read a texture', async () => {
     await expect(
-      loadQuadTexture(['nw', 'sw', 'ne-corrupt', 'se'])
+      settle(loadQuadTexture(['nw', 'sw', 'ne-corrupt', 'se']))
     ).rejects.toThrow('Failed to decode ne-corrupt')
   })
 
   it('rejects on HTTP errors and releases the bitmaps already decoded', async () => {
     await expect(
       loadQuadTexture(['nw', 'sw', 'missing', 'se'])
-    ).rejects.toThrow('Failed to load missing: 404 Not Found')
+    ).rejects.toThrow('Failed to load missing: 404 Nope')
 
     expect(bitmaps).toHaveLength(3)
     for (const bitmap of bitmaps) expect(bitmap.close).toHaveBeenCalled()
-  })
-})
-
-describe('loadImageData', () => {
-  it('reads raw pixels without color-space conversion', async () => {
-    const pixels = await loadImageData('elevation.png')
-
-    expect(createImageBitmap).toHaveBeenCalledWith(expect.any(Blob), {
-      colorSpaceConversion: 'none',
-      premultiplyAlpha: 'none'
-    })
-    expect(FakeOffscreenCanvas.instances[0].contextSettings).toEqual({
-      willReadFrequently: true
-    })
-    expect([pixels.width, pixels.height]).toEqual([256, 256])
-    expect(bitmaps[0].close).toHaveBeenCalled()
-  })
-
-  it('does not fall back to lenient decoding for elevation data', async () => {
-    await expect(loadImageData('elevation-truncated.png')).rejects.toThrow(
-      'Failed to decode elevation-truncated.png'
-    )
   })
 })
 

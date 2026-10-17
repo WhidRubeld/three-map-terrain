@@ -1,6 +1,7 @@
-import { expect, type Page, test } from '@playwright/test'
+import { type BrowserContext, expect, type Page, test } from '@playwright/test'
 
 import type {} from '../playground/types'
+import { RETRY_DELAYS } from '../src/image'
 import { mockTileServers, QUADRANT_COLORS } from './fixtures'
 
 const collectErrors = (page: Page) => {
@@ -15,9 +16,9 @@ const collectErrors = (page: Page) => {
 const openPlayground = async (
   page: Page,
   query: string,
-  textureOverrides?: Map<string, Buffer>
+  textureReplies?: Map<string, Buffer[]>
 ) => {
-  await mockTileServers(page, { textureOverrides })
+  const { requests } = await mockTileServers(page, { textureReplies })
   await page.goto(`/?${query}`)
   await page.waitForFunction(() => window.__playground !== undefined)
   await page.evaluate(() => window.__playground?.ready)
@@ -26,7 +27,8 @@ const openPlayground = async (
       window.__playground?.texturedTiles() ===
       Object.keys(window.__playground?.map.tileCache ?? {}).length
   )
-  return page.evaluate(() => window.__playground?.backend)
+  const backend = await page.evaluate(() => window.__playground?.backend)
+  return { backend, requests }
 }
 
 /** Decodes a PNG screenshot in the page and returns RGB values at `points`. */
@@ -56,13 +58,36 @@ const samplePixels = (
     { base64: png.toString('base64'), points }
   )
 
+/**
+ * Screen position of a point of the single tile in `view=top&nTiles=1`
+ * (`x` east, `y` south, both 0…1): the tile spans the full height, centered.
+ */
+const tilePoint = (page: Page, x: number, y: number) => {
+  const { width, height } = page.viewportSize() ?? { width: 1, height: 1 }
+  return [0.5 + ((x - 0.5) * height) / width, y] as const
+}
+
+const expectColor = (
+  pixel: number[],
+  expected: readonly number[],
+  tolerance = 2,
+  label = ''
+) => {
+  expected.forEach((channel, i) => {
+    expect(
+      Math.abs(pixel[i] - channel),
+      `${label} ${JSON.stringify(pixel)}`
+    ).toBeLessThanOrEqual(tolerance)
+  })
+}
+
 for (const renderer of ['webgl', 'webgpu'] as const) {
   test.describe(`${renderer} renderer`, () => {
     test('renders a textured 3×3 terrain without errors', async ({
       page
     }, testInfo) => {
       const errors = collectErrors(page)
-      const backend = await openPlayground(page, `renderer=${renderer}`)
+      const { backend } = await openPlayground(page, `renderer=${renderer}`)
       const revision = await page.evaluate(() => window.__playground?.revision)
       testInfo.annotations.push(
         { type: 'backend', description: backend },
@@ -99,62 +124,83 @@ for (const renderer of ['webgl', 'webgpu'] as const) {
       )
 
       const png = await page.locator('canvas').screenshot()
-      const viewport = page.viewportSize() ?? { width: 1, height: 1 }
-      // the single tile spans the full height, centered horizontally
-      const quarter = (0.25 * viewport.height) / viewport.width
       const [nw, ne, sw, se] = await samplePixels(page, png, [
-        [0.5 - quarter, 0.25],
-        [0.5 + quarter, 0.25],
-        [0.5 - quarter, 0.75],
-        [0.5 + quarter, 0.75]
+        tilePoint(page, 0.25, 0.25),
+        tilePoint(page, 0.75, 0.25),
+        tilePoint(page, 0.25, 0.75),
+        tilePoint(page, 0.75, 0.75)
       ])
 
       const actual = { nw, ne, sw, se }
       for (const [quadrant, expected] of Object.entries(QUADRANT_COLORS)) {
         const pixel = actual[quadrant as keyof typeof actual]
-        expected.forEach((channel, i) => {
-          expect(
-            Math.abs(pixel[i] - channel),
-            `${quadrant} ${JSON.stringify(pixel)}`
-          ).toBeLessThanOrEqual(2)
-        })
+        expectColor(pixel, expected, 2, quadrant)
       }
       expect(errors).toEqual([])
     })
   })
 }
 
-// Tile servers occasionally deliver a cut-off body with status 200.
-// `createImageBitmap` rejects such files; the loader must fall back to <img>.
-test('textures a tile whose child image is truncated', async ({
-  page,
-  context
-}) => {
-  const helper = await context.newPage()
-  const jpeg = Buffer.from(
-    await helper.evaluate(async () => {
+// Tile servers occasionally deliver a cut-off body with status 200, which
+// `createImageBitmap` rejects (EOX does it for some tiles).
+test.describe('truncated texture responses', () => {
+  const SW_CHILD = '2138/1447' // of the center tile 11/1069/723
+  const JPEG_COLOR = [64, 128, 192] as const
+  const ATTEMPTS = RETRY_DELAYS.length + 1
+
+  const truncatedJpeg = async (context: BrowserContext) => {
+    const helper = await context.newPage()
+    const jpeg = await helper.evaluate(async (color) => {
       const canvas = new OffscreenCanvas(256, 256)
       const context = canvas.getContext('2d')
       if (!context) throw new Error('no 2d context')
-      context.fillStyle = '#4080c0'
+      context.fillStyle = `rgb(${color.join(' ')})`
       context.fillRect(0, 0, 256, 256)
       const blob = await canvas.convertToBlob({ type: 'image/jpeg' })
       return Array.from(new Uint8Array(await blob.arrayBuffer()))
-    })
-  )
-  await helper.close()
-  const truncated = jpeg.subarray(0, jpeg.length - 64)
+    }, JPEG_COLOR)
+    await helper.close()
+    return Buffer.from(jpeg).subarray(0, jpeg.length - 64)
+  }
 
-  const errors = collectErrors(page)
-  // SW child of the center tile 11/1069/723
-  await openPlayground(
+  test('re-requests the texture and shows the complete image', async ({
     page,
-    'renderer=webgl&nTiles=1',
-    new Map([['2138/1447', truncated]])
-  )
+    context
+  }) => {
+    const truncated = await truncatedJpeg(context)
+    const errors = collectErrors(page)
 
-  expect(await page.evaluate(() => window.__playground?.texturedTiles())).toBe(
-    1
-  )
-  expect(errors).toEqual([])
+    const { requests } = await openPlayground(
+      page,
+      'renderer=webgl&view=top&lights=0&nTiles=1',
+      new Map([[SW_CHILD, [truncated]]])
+    )
+
+    expect(requests.get(SW_CHILD)).toBe(2)
+    const png = await page.locator('canvas').screenshot()
+    const [sw] = await samplePixels(page, png, [tilePoint(page, 0.25, 0.75)])
+    expectColor(sw, QUADRANT_COLORS.sw, 2, 'sw')
+    expect(errors).toEqual([])
+  })
+
+  test('falls back to the partial image when every attempt is truncated', async ({
+    page,
+    context
+  }) => {
+    const truncated = await truncatedJpeg(context)
+    const errors = collectErrors(page)
+
+    const { requests } = await openPlayground(
+      page,
+      'renderer=webgl&view=top&lights=0&nTiles=1',
+      new Map([[SW_CHILD, Array<Buffer>(ATTEMPTS).fill(truncated)]])
+    )
+
+    expect(requests.get(SW_CHILD)).toBe(ATTEMPTS)
+    const png = await page.locator('canvas').screenshot()
+    // the first rows of the truncated JPEG are intact
+    const [sw] = await samplePixels(page, png, [tilePoint(page, 0.25, 0.55)])
+    expectColor(sw, JPEG_COLOR, 8, 'sw')
+    expect(errors).toEqual([])
+  })
 })

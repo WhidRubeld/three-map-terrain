@@ -50,12 +50,25 @@ with `link:../..` — run `yarn build` in the root before installing/building th
   It resolves (and calls the optional callback) when geometry is ready;
   textures stream in afterwards (a wireframe `MeshNormalMaterial` placeholder
   is shown meanwhile).
+- **Loading** (`src/image.ts`): transient failures — network errors, HTTP
+  408/425/429/5xx and bodies `createImageBitmap` cannot decode (tile servers,
+  EOX in particular, sometimes send truncated bodies with status 200) — are
+  retried with backoff `RETRY_DELAYS` (250 ms, 1 s, 3 s) and `cache: 'reload'`
+  so the browser cache cannot replay a broken body. Aborts and other 4xx are
+  not retried. If a texture is still undecodable, `<img>` renders the part
+  that arrived; elevation never falls back (partial heights = bogus terrain).
 - **Elevation**: terrarium PNGs (`R*256 + G + B/256 - 32768` m), decoded with
   `createImageBitmap(..., { colorSpaceConversion: 'none' })` + canvas
   `getImageData`. Never let color management touch these pixels.
-- **Geometry**: the last row/column of each `PlaneGeometry` is not sampled;
-  `resolveSeams` copies it from the east/south neighbours. Neighbours must be
-  stitched first → `Map` processes tiles in descending `x + y`.
+- **Geometry**: the last row/column of each `PlaneGeometry` lies on the
+  east/south neighbours' first pixels. It is first approximated from the
+  tile's own edge pixels (never `z = 0`, so no walls while loading), then
+  `resolveSeams` copies it from loaded neighbours. `Map` stitches every tile
+  the moment it loads, before adding it to the scene: the tile plus its
+  W/N/NW neighbours in descending `x + y` (neighbours first), then
+  `syncCorner` gives each 4-tile corner one value (the exact pixel of the
+  tile whose top-left it is, else the best loaded approximation). The
+  "never shows walls or cracks while tiles are still loading" test guards this.
 - **Texture**: each tile is textured with its four children at `zoom + 1`,
   drawn into one 2×2 canvas (`NW | NE / SW | SE`, `flipY` maps canvas top to
   north) → `CanvasTexture` with `SRGBColorSpace` → `MeshLambertMaterial`
