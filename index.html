@@ -2,39 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover"
-    />
-    <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" content="#0a0a0a" />
-    <title>GPX Terrain · three-map-terrain</title>
+    <link rel="icon" href="./favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>three-map-terrain · React example</title>
     <meta
       name="description"
-      content="Load a GPX track and see it on real 3D terrain: elevation profile, playback, waypoints and coordinates. Built with three-map-terrain and three.js."
+      content="Real-world 3D terrain for three.js with React Three Fiber: the minimal example of three-map-terrain. Click the terrain for its geolocation."
     />
-    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <script>
-      // apply the stored theme before the first paint
-      try {
-        const stored = JSON.parse(
-          localStorage.getItem('three-map-terrain/gpx-viewer/settings@1') ||
-            '{}'
-        )
-        const theme =
-          stored.theme === 'dark' || stored.theme === 'light'
-            ? stored.theme
-            : matchMedia('(prefers-color-scheme: light)').matches
-              ? 'light'
-              : 'dark'
-        document.documentElement.dataset.theme = theme
-      } catch {}
-    </script>
-    <script type="module" crossorigin src="./assets/index-Bu-Qbgq6.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-DKzXe-5p.css">
+    <script type="module" crossorigin src="./assets/index-DSkBaIQh.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BYli6nrA.css">
   </head>
   <body>
     <div id="root"></div>
-    <noscript>This demo needs JavaScript and WebGL.</noscript>
   </body>
 </html>
