@@ -2,7 +2,10 @@ name: Publish Package to npmjs
 
 on:
   release:
-    types: [created]
+    # `published` also covers releases that start as a draft (`created` does not)
+    types: [published]
+  # retry a failed publish without recreating the release
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,6 +14,10 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # setup-node writes an .npmrc that references ${NODE_AUTH_TOKEN}, and
+      # Yarn 1 aborts on an unset variable. Only `npm publish` gets the token.
+      NODE_AUTH_TOKEN: unused
     steps:
       - uses: actions/checkout@v7
       # Setup .npmrc file to publish to npm
