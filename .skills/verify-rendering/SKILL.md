@@ -1,0 +1,77 @@
+---
+name: verify-rendering
+description: Check that three-map-terrain actually renders correctly in a browser — run the playground or the examples against real tile servers and inspect them with Playwright (and optionally the three.js devtools MCP). Use after changing src/, the material or texture code, three.js versions, lighting, or the examples, and whenever a task says "make sure the map still works / looks right".
+---
+
+# Verify rendering
+
+Unit tests run in Node without WebGL; `yarn test:e2e` renders in Chromium but
+with synthetic tiles. This skill covers the remaining gap: **real data, real
+look**.
+
+## 1. Automated baseline
+
+```bash
+yarn test:e2e
+```
+
+It runs `e2e/render.spec.ts` against the playground for `renderer=webgl` and
+`renderer=webgpu`:
+
+- 3×3 grid loads, every tile gets its stitched texture, no console/page errors
+  (shader compile errors surface as console errors);
+- top-down unlit view checks the child texture layout `NW | NE / SW | SE`
+  pixel-exactly.
+
+The WebGPU project reports its real backend in the test annotations
+(`webgpu` or `webgpu (webgl2 fallback)` on machines without WebGPU).
+
+## 2. Playground with real tiles
+
+```bash
+yarn dev    # vite playground → http://localhost:5173
+```
+
+Query parameters:
+
+| Param      | Values            | Default | Purpose                                             |
+| ---------- | ----------------- | ------- | --------------------------------------------------- |
+| `renderer` | `webgl`, `webgpu` | `webgl` | renderer under test                                 |
+| `lights`   | `1`, `0`          | `1`     | `MeshLambertMaterial` vs unlit basic                |
+| `api`      | `eox`, `osm`      | `eox`   | texture source                                      |
+| `nTiles`   | integer           | `3`     | grid size                                           |
+| `view`     | `orbit`, `top`    | `orbit` | perspective + MapControls, or orthographic top view |
+
+`window.__playground` exposes `{ map, revision, backend, ready, texturedTiles() }`.
+
+With the **playwright** MCP server:
+
+1. `browser_navigate` to `http://localhost:5173/?renderer=webgl`.
+2. Wait until `window.__playground.texturedTiles() === 9` (`browser_evaluate`).
+3. `browser_console_messages` — must contain `Map is ready` and no errors or
+   `Multiple instances of Three.js` warnings.
+4. `browser_take_screenshot` and look at it. Expect: satellite imagery of the
+   Bernese Alps draped on relief, no black or rainbow (placeholder) tiles, no
+   visible cracks between tiles, red marker sphere above the center.
+5. Repeat with `renderer=webgpu`, and `lights=0`.
+
+With the **threejs-devtools** MCP server (opens its own proxied tab of the dev
+server on `DEV_PORT=5173`): `scene_tree` should show a `Group` with 9 meshes
+using `MeshLambertMaterial` whose `map` is a 512×512 `CanvasTexture`.
+
+## 3. Examples
+
+```bash
+yarn build                                  # examples use dist/
+(cd examples/basic && yarn start)           # webpack-dev-server, port 8080
+(cd examples/react && yarn dev)             # vite, port 5173
+```
+
+Same checklist as above. The React example runs in `StrictMode`, so
+`init → clean → init` happens on mount — there must be exactly 9 tiles and no
+errors about aborted requests.
+
+## 4. Report
+
+Attach or describe the screenshots, list console errors verbatim, and state
+which renderer/backends were actually exercised.

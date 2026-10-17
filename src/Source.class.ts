@@ -1,15 +1,16 @@
 export type MapSupportedApi = 'osm' | 'mapbox' | 'eox' | 'maptiler'
+
+export type SourceProps =
+  { api: 'osm' | 'eox' } | { api: 'mapbox' | 'maptiler'; token: string }
+
+type TileUrlBuilder = (z: number, x: number, y: number) => string
+
 export class Source {
   api: MapSupportedApi
-  token: string = ''
-  supportedApis: {
-    [name in MapSupportedApi]: (z: number, x: number, y: number) => string
-  }
-  constructor(
-    props:
-      | { api: 'osm' | 'eox' }
-      | { api: 'mapbox' | 'maptiler'; token: string }
-  ) {
+  token = ''
+  supportedApis: Record<MapSupportedApi, TileUrlBuilder>
+
+  constructor(props: SourceProps) {
     this.supportedApis = {
       osm: this.mapUrlOSM.bind(this),
       mapbox: this.mapUrlMapbox.bind(this),
@@ -17,16 +18,16 @@ export class Source {
       maptiler: this.mapUrlmapTiler.bind(this)
     }
 
-    if (!(props.api in this.supportedApis))
-      throw new Error('Unknown source api')
+    if (!Object.hasOwn(this.supportedApis, props.api)) {
+      throw new Error(`Unknown source api: ${props.api}`)
+    }
 
     this.api = props.api
-    // @ts-ignore
-    if (props.token) this.token = props.token
+    if ('token' in props) this.token = props.token
   }
 
   mapUrlOSM(z: number, x: number, y: number) {
-    return `https://c.tile.openstreetmap.org/${z}/${x}/${y}.png`
+    return `https://tile.openstreetmap.org/${z}/${x}/${y}.png`
   }
 
   mapUrlMapbox(z: number, x: number, y: number) {

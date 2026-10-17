@@ -5,27 +5,40 @@ on:
     branches:
       - master
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: yarn
+          cache-dependency-path: |
+            yarn.lock
+            examples/basic/yarn.lock
+
       - name: Build package
         run: |
-          yarn
+          yarn install --frozen-lockfile
           yarn build
+
       - name: Build project
+        working-directory: examples/basic
         run: |
-          cd ./examples/basic
-          yarn
+          yarn install --frozen-lockfile
           yarn build
+
       - name: Deploy to GitHub Pages
-        uses: JamesIves/github-pages-deploy-action@v4.4.1
+        uses: JamesIves/github-pages-deploy-action@v4.9.0
         with:
           branch: gh-pages
           folder: examples/basic/dist

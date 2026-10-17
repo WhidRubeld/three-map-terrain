@@ -1,13 +1,14 @@
 import { Group } from 'three'
+
 import {
   defaultTextureOptions,
-  QuadTextureMaterialOptions
+  type QuadTextureMaterialOptions
 } from './quad-texture-material'
-import { Source } from './Source.class'
+import type { Source } from './Source.class'
 import { Tile } from './Tile.class'
 import { Utils } from './Utils.class'
 
-export type MapOptions = {
+export interface MapOptions {
   nTiles: number
   zoom: number
   tileSize: number
@@ -15,128 +16,99 @@ export type MapOptions = {
   zScale: number
 }
 
-export type MapProps = {
+export interface MapProps {
   source: Source
   location: { lat: number; lon: number }
   options?: Partial<MapOptions>
   material?: Partial<QuadTextureMaterialOptions>
 }
 
-export const defaultMapOptions: MapOptions = {
+export const defaultMapOptions: Readonly<MapOptions> = Object.freeze({
   nTiles: 3,
   zoom: 11,
   tileSize: 600,
   tileSegments: 100,
   zScale: 0.045
-}
+})
+
+const isAbortError = (error: unknown) =>
+  error instanceof DOMException && error.name === 'AbortError'
 
 export class Map {
-  materialOptions: QuadTextureMaterialOptions = defaultTextureOptions
+  materialOptions: QuadTextureMaterialOptions
   source: Source
   geoLocation: { lat: number; lon: number }
   options: MapOptions
-  tileCache: {
-    [key: string]: Tile
-  } = {}
+  tileCache: Record<string, Tile> = {}
 
   terrain = new Group()
-  center: {
-    x: number
-    y: number
-  }
-  ready: boolean
+  center: { x: number; y: number }
+  /** `true` once `init()` has loaded the initial grid. */
+  ready = false
 
   defaultOptions: MapOptions = defaultMapOptions
+
+  private loading: Promise<void> | undefined
+
   constructor({ source, location, options = {}, material = {} }: MapProps) {
     this.source = source
     this.geoLocation = location
-
-    this.materialOptions = Object.assign(defaultTextureOptions, material)
+    this.materialOptions = { ...defaultTextureOptions, ...material }
     this.options = this.getOptions(options)
-
-    this.terrain = new Group()
-    this.tileCache = {}
+    this.center = this.getCenter()
   }
 
-  getOptions(providedOptions: MapProps['options'] = {}) {
-    const options = Object.assign({}, this.defaultOptions, providedOptions)
-    options.tileSegments = Math.min(256, Math.round(options.tileSegments))
+  getOptions(providedOptions: Partial<MapOptions> = {}): MapOptions {
+    const options = { ...this.defaultOptions, ...providedOptions }
+    options.tileSegments = Math.max(
+      1,
+      Math.min(256, Math.round(options.tileSegments))
+    )
     return options
   }
 
-  init(cb?: () => void) {
-    const { x, y } = Utils.position2tile(
-      this.geoLocation.lat,
-      this.geoLocation.lon,
-      this.options.zoom
+  /**
+   * Loads an `nTiles × nTiles` grid around `location`.
+   * Resolves (and calls `cb`) once every tile has its elevation and the seams
+   * are stitched; textures keep streaming in afterwards.
+   * Calls made before `clean()` share one load; `clean()` cancels it, and the
+   * cancelled call resolves without becoming ready or calling `cb`.
+   */
+  async init(cb?: () => void): Promise<void> {
+    this.loading ??= this.loadGrid()
+    const loading = this.loading
+    await loading
+    if (this.loading !== loading) return
+
+    this.ready = true
+    cb?.()
+  }
+
+  /** Loads one more tile (no-op if it is already cached). */
+  async addTileSegment(x: number, y: number): Promise<void> {
+    const tile = this.createTile(x, y)
+    if (!tile) return
+
+    const loaded = await this.loadTile(tile)
+    if (!loaded) return
+
+    // The new tile and the neighbours whose south/east edges border it
+    this.stitch(
+      [
+        loaded,
+        this.cachedTile(x - 1, y),
+        this.cachedTile(x, y - 1),
+        this.cachedTile(x - 1, y - 1)
+      ].filter((tile): tile is Tile => tile?.loaded === true)
     )
-    this.center = { x, y }
-
-    const tileOffset = Math.floor(this.options.nTiles / 2)
-
-    for (let i = 0; i < this.options.nTiles; i++) {
-      for (let j = 0; j < this.options.nTiles; j++) {
-        const tile = new Tile(
-          this,
-          this.options.zoom,
-          this.center.x + i - tileOffset,
-          this.center.y + j - tileOffset
-        )
-        this.tileCache[tile.key()] = tile
-
-        if (i === this.options.nTiles - 1 && j === this.options.nTiles - 1) {
-          if (cb) cb()
-        }
-      }
-    }
-
-    const promises = Object.values(this.tileCache).map((tile) => {
-      return tile.fetch().then((tile) => {
-        tile.setPosition(this.center)
-        this.terrain.add(tile.mesh)
-        return tile
-      })
-    })
-
-    Promise.all(promises).then((tiles) => {
-      tiles.reverse().forEach((tile) => {
-        // reverse to avoid seams artifacts
-        tile.resolveSeams(this.tileCache)
-      })
-    })
   }
 
-  addTileSegment(x: number, y: number) {
-    const tile = new Tile(this, this.options.zoom, x, y)
-
-    if (tile.key() in this.tileCache) return
-    this.tileCache[tile.key()] = tile
-
-    tile
-      .fetch()
-      .then((v) => {
-        tile.setPosition(this.center)
-        this.terrain.add(v.mesh)
-      })
-      .then(() => {
-        Object.values(this.tileCache).forEach((v) => {
-          v.resolveSeams(this.tileCache)
-        })
-      })
-  }
-
+  /** Removes all tiles, aborts pending requests and frees GPU resources. */
   clean() {
-    Object.values(this.tileCache).forEach((tile) => {
-      this.terrain.remove(tile.mesh)
-      tile.mesh.geometry.dispose()
-      ;['mapSW', 'mapNW', 'mapSE', 'mapNE'].forEach((key) =>
-        // @ts-ignore
-        tile.mesh.material.uniforms[key].value.dispose()
-      )
-      // @ts-ignore
-      tile.mesh.material.dispose()
-    })
+    for (const tile of Object.values(this.tileCache)) tile.dispose()
     this.tileCache = {}
+    this.loading = undefined
+    this.ready = false
   }
 
   getPosition(
@@ -150,7 +122,7 @@ export class Map {
     const tileKey = Utils.getTileKey(z, x, y)
 
     if (!(tileKey in tileCache) && opts.loadTile) {
-      this.addTileSegment(x, y)
+      void this.addTileSegment(x, y)
     }
 
     const [w, s, e, n] = Utils.tile2bbox([x, y, z])
@@ -163,5 +135,64 @@ export class Map {
     const yOffset = options.tileSize * (1 - (n - lat) / (n - s))
 
     return { x: xStart + xOffset, y: yStart + yOffset, z: alt * zScale }
+  }
+
+  private async loadGrid() {
+    this.center = this.getCenter()
+    const { x, y } = this.center
+    const { nTiles } = this.options
+    const tileOffset = Math.floor(nTiles / 2)
+
+    const pending: Promise<Tile | undefined>[] = []
+    for (let i = 0; i < nTiles; i++) {
+      for (let j = 0; j < nTiles; j++) {
+        const tile = this.createTile(x + i - tileOffset, y + j - tileOffset)
+        if (tile) pending.push(this.loadTile(tile))
+      }
+    }
+
+    const tiles = await Promise.all(pending)
+    this.stitch(tiles.filter((tile) => tile !== undefined))
+  }
+
+  private getCenter() {
+    const { lat, lon } = this.geoLocation
+    const { x, y } = Utils.position2tile(lat, lon, this.options.zoom)
+    return { x, y }
+  }
+
+  private cachedTile(x: number, y: number): Tile | undefined {
+    return this.tileCache[Utils.getTileKey(this.options.zoom, x, y)]
+  }
+
+  private createTile(x: number, y: number): Tile | undefined {
+    const tile = new Tile(this, this.options.zoom, x, y)
+    if (tile.key() in this.tileCache) return undefined
+    this.tileCache[tile.key()] = tile
+    return tile
+  }
+
+  private async loadTile(tile: Tile): Promise<Tile | undefined> {
+    try {
+      await tile.fetch()
+    } catch (error) {
+      if (!isAbortError(error)) console.error(error)
+      return undefined
+    }
+    // The map may have been cleaned while the tile was loading
+    if (this.tileCache[tile.key()] !== tile) return undefined
+
+    tile.setPosition(this.center)
+    this.terrain.add(tile.mesh)
+    return tile
+  }
+
+  /**
+   * A tile copies its south/east edges from its neighbours, so those must be
+   * stitched first: process tiles in descending `x + y` order.
+   */
+  private stitch(tiles: Tile[]) {
+    const sorted = [...tiles].sort((a, b) => b.x + b.y - (a.x + a.y))
+    for (const tile of sorted) tile.resolveSeams(this.tileCache)
   }
 }

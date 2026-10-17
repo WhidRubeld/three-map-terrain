@@ -4,18 +4,34 @@
   "description": "A JavaScript library to build 3D maps with three.js",
   "author": "WhidRubeld <whidrubeld@gmail.com>",
   "license": "MIT",
-  "types": "dist/index.d.ts",
-  "main": "dist/index.js",
-  "module": "dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
   "files": [
     "dist/*",
     "src/*"
   ],
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "lint": "eslint src/**/*.{ts,tsx}",
-    "format": "prettier .  --write"
+    "dev": "vite playground",
+    "build": "vite build && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "validate": "yarn typecheck && yarn lint && yarn format:check && yarn test && yarn build"
   },
   "keywords": [
     "three",
@@ -34,23 +50,23 @@
   },
   "homepage": "https://github.com/WhidRubeld/three-map-terrain#readme",
   "devDependencies": {
-    "@types/get-pixels": "^3.3.2",
-    "@types/three": "^0.148.0",
-    "@typescript-eslint/eslint-plugin": "^5.49.0",
-    "@typescript-eslint/parser": "^5.49.0",
-    "eslint": "^8.33.0",
-    "eslint-config-prettier": "^8.6.0",
-    "eslint-plugin-import": "^2.27.5",
-    "get-pixels": "^3.3.2",
-    "prettier": "^2.8.3",
-    "three": "^0.149.0",
-    "typescript": "^4.9.5",
-    "vite": "^4.0.4",
-    "vite-plugin-dts": "^1.7.2",
-    "vite-plugin-node-polyfills": "^0.7.0"
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^24.19.2",
+    "@types/three": "^0.186.0",
+    "@vitest/coverage-v8": "^5.0.5",
+    "eslint": "^10.13.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "three": "^0.186.1",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5"
   },
   "peerDependencies": {
-    "three": "^0.148.0"
+    "three": ">=0.152.0"
   },
   "publishConfig": {
     "access": "public"

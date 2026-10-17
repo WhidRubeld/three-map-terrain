@@ -1,0 +1,13 @@
+{
+  // Emits dist/*.d.ts. `types: []` keeps Node globals out of the browser library.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": [],
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"]
+}
