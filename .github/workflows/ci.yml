@@ -50,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        example: [basic, react]
+        example: [basic, react, gpx-viewer]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -69,3 +69,7 @@ jobs:
         run: |
           yarn install --frozen-lockfile
           yarn build
+      - name: Test example
+        if: matrix.example == 'gpx-viewer'
+        working-directory: examples/gpx-viewer
+        run: yarn test

@@ -91,11 +91,19 @@ using `MeshLambertMaterial` whose `map` is a 512×512 `CanvasTexture`.
 yarn build                                  # examples use dist/
 (cd examples/basic && yarn start)           # webpack-dev-server, port 8080
 (cd examples/react && yarn dev)             # vite, port 5173
+(cd examples/gpx-viewer && yarn dev)        # vite, port 5173 (the live demo)
 ```
 
 Same checklist as above. The React example runs in `StrictMode`, so
 `init → clean → init` happens on mount — there must be exactly 9 tiles and no
 errors about aborted requests.
+
+The GPX viewer exposes its stores as `window.__viewer` in dev
+(`terrainStore.state.{ready, loaded, textured, total, drape}`,
+`sceneRefs.controls`, `hoverStore`). Wait for `drape`, then check: the route
+lies on the surface, hovering it shows the point card, a right-drag rotates
+around the route (and back to the same pose), panning stops at the grid edge,
+and both layouts work (≥ 900 px wide, and a phone viewport such as 390×844).
 
 ## 4. Report
 

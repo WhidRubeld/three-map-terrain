@@ -19,8 +19,10 @@ src/                      library (the only published code, plus dist/)
 test/                     Vitest unit tests (Node, no WebGL)
 e2e/                      Playwright tests against playground/ with mocked tile servers
 playground/               `yarn dev` app; query params documented in .skills/verify-rendering
-examples/basic            plain three.js + webpack (deployed to GitHub Pages)
+examples/basic            plain three.js + webpack
 examples/react            React Three Fiber + drei + Vite
+examples/gpx-viewer       the live demo (GitHub Pages): GPX tracks on terrain;
+                          React + R3F + TanStack Store + Tailwind 4, own UI kit
 .skills/                  agent skills (symlinked as .claude/skills)
 ```
 
@@ -42,6 +44,8 @@ Do **not** name a script `check`: `yarn check` is a built-in Yarn 1 command.
 
 The examples have their own `package.json`/`yarn.lock` and link the library
 with `link:../..` — run `yarn build` in the root before installing/building them.
+`examples/gpx-viewer` also has `yarn test` (Vitest) and `yarn presets`, which
+regenerates its demo GPX files from OpenStreetMap (see its README).
 
 ## How it works (read before touching src/)
 

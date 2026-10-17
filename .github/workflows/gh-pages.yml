@@ -24,15 +24,16 @@ jobs:
           cache: yarn
           cache-dependency-path: |
             yarn.lock
-            examples/basic/yarn.lock
+            examples/gpx-viewer/yarn.lock
 
       - name: Build package
         run: |
           yarn install --frozen-lockfile
           yarn build
 
+      # the GPX viewer is the live demo; examples/basic is built by CI only
       - name: Build project
-        working-directory: examples/basic
+        working-directory: examples/gpx-viewer
         run: |
           yarn install --frozen-lockfile
           yarn build
@@ -41,4 +42,4 @@ jobs:
         uses: JamesIves/github-pages-deploy-action@v4.9.0
         with:
           branch: gh-pages
-          folder: examples/basic/dist
+          folder: examples/gpx-viewer/dist

@@ -8,7 +8,7 @@ A JavaScript library to build 3D maps with [three.js](https://threejs.org).
 
 <img width="1062" alt="Screenshot 2023-02-04 at 02 40 34" src="https://user-images.githubusercontent.com/35730139/216731690-217bddbb-ca56-4443-a76f-efbc923b095b.png">
 
-[Live demo](https://whidrubeld.github.io/three-map-terrain/) / [Source code](https://github.com/whidrubeld/three-map-terrain/tree/master/examples/basic)
+[Live demo: GPX viewer](https://whidrubeld.github.io/three-map-terrain/) / [Source code](https://github.com/whidrubeld/three-map-terrain/tree/master/examples/gpx-viewer)
 
 ## About
 
@@ -271,7 +271,7 @@ See [AGENTS.md](AGENTS.md) for architecture notes and conventions.
 ## Future list
 
 - [x] Asynchronous analog of the `getPosition` function without passing the altitude parameter (`getTerrainPosition`)
-- [ ] Advanced example
+- [x] Advanced example ([GPX viewer](https://github.com/whidrubeld/three-map-terrain/tree/master/examples/gpx-viewer))
 - [ ] Base Pin component
 - [ ] Base Direction component
 - [ ] Vue example
