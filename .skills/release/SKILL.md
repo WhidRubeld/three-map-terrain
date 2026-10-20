@@ -35,8 +35,8 @@ The public API is everything exported from `src/index.ts`.
 4. If the examples look different, refresh the README images:
    `yarn screenshots` (Google Chrome for GPU rendering, `cwebp`; 1280×800
    at 2×) and look at `docs/*.webp`.
-5. Check the package contents: `npm pack --dry-run` — only `dist/*`, `src/*`,
-   `README.md`, `LICENSE`, `package.json`.
+5. Check the package contents: `npm pack --dry-run` — only `dist/` and
+   `src/` (with their folders), `README.md`, `LICENSE`, `package.json`.
 
 ## 3. Publish (needs the user's go-ahead — it is public and irreversible)
 

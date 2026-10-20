@@ -1,19 +1,29 @@
 # three-map-terrain · React example
 
-The minimal [React Three Fiber](https://r3f.docs.pmnd.rs) +
-[drei](https://drei.docs.pmnd.rs) setup, bundled with [Vite](https://vite.dev).
-It is the [live example](https://whidrubeld.github.io/three-map-terrain/) on
-GitHub Pages; for a full app built with the library see
+[React Three Fiber](https://r3f.docs.pmnd.rs) + [drei](https://drei.docs.pmnd.rs),
+bundled with [Vite](https://vite.dev). It is the
+[live example](https://whidrubeld.github.io/three-map-terrain/) on GitHub
+Pages; for a full app built with the library see
 [GPX Terrain](https://github.com/whidrubeld/gpx-terrain).
 
 What it shows ([src/App.tsx](src/App.tsx)):
 
-- `new Map(...)` in `useMemo`, `map.init()` / `map.clean()` in an effect — safe in `StrictMode`;
-- `map.terrain` as a `<primitive>`, lit by the built-in materials;
-- `map.getPosition({ lat, lon, alt })` — the red sphere, 3000 m above the center;
-- a click: `map.getLocation()` of the hit point, then `map.getTerrainPositionSync()`
-  puts the yellow sphere back exactly on the rendered surface;
-- the attribution the imagery and elevation data require.
+- **Bernese Alps** — the terrain with Sentinel-2 imagery: `new Map(...)` in
+  `useMemo`, `map.init()` / `map.clean()` in an effect (safe in
+  `StrictMode`), a sphere 3000 m up with `map.getPosition`, the geolocation
+  of a click (`map.getLocation`) and a sphere put back exactly on the
+  surface (`map.getTerrainPositionSync`).
+- **Lausanne** — from Lake Geneva up to the cathedral, true to scale
+  (`exaggeration: 1`, `baseAltitude: 372`), Mapterhorn elevation,
+  OpenFreeMap buildings with their edges and a `TerrainBase`, set up once.
+  Three looks switched at runtime with `map.setSource` / `map.setMaterial`
+  — plain (no imagery), aerial (swisstopo from a URL template, in
+  grayscale), wireframe — which the buildings and the base take on.
+  `?place=lausanne&look=aerial` opens one directly.
+- Picking a building (`buildings.pickIntersection(event)`) and highlighting it.
+- **Download GLB / STL** — `map.export()`: the terrain, imagery, buildings
+  and base as a model file.
+- The credits of the sources in use, from `map.attributions`.
 
 `three-map-terrain` is linked from the repository root, so build the library first:
 

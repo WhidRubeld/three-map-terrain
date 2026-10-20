@@ -55,9 +55,18 @@ const terrarium = (meters: number) => {
 export const syntheticElevation = (gx: number, gy: number) =>
   1500 + 1200 * Math.sin(gx / 90) * Math.cos(gy / 110) + 0.01 * gx
 
-const elevationTile = (tx: number, ty: number) =>
+/** Gentle hills for zooms other than 11, where pixel indices are huge. */
+const deepElevation = (gx: number, gy: number) =>
+  1000 + 50 * Math.sin(gx / 40) * Math.cos(gy / 40)
+
+const elevationTile = (tz: number, tx: number, ty: number) =>
   encodePng(TILE_SIZE, TILE_SIZE, (x, y) =>
-    terrarium(syntheticElevation(tx * TILE_SIZE + x, ty * TILE_SIZE + y))
+    terrarium(
+      (tz === 11 ? syntheticElevation : deepElevation)(
+        tx * TILE_SIZE + x,
+        ty * TILE_SIZE + y
+      )
+    )
   )
 
 /**
@@ -78,17 +87,24 @@ const textureTile = (col: number, row: number) => {
   return encodePng(TILE_SIZE, TILE_SIZE, () => color)
 }
 
+/** Where the mocked OpenFreeMap TileJSON points its tiles to. */
+const OPENFREEMAP_TILES = 'https://tiles.openfreemap.org/planet/test'
+
 /**
- * Serves deterministic elevation/texture tiles instead of the real servers.
- * Returns the number of requests per texture tile (`col/row`).
+ * Serves deterministic elevation/texture tiles — and OpenFreeMap vector
+ * tiles — instead of the real servers. Returns the number of requests per
+ * texture tile (`col/row`).
  */
 export async function mockTileServers(
   page: Page,
   {
-    textureReplies = new Map<string, Buffer[]>()
+    textureReplies = new Map<string, Buffer[]>(),
+    vectorTiles = () => undefined
   }: {
     /** JPEG bodies served, one per request, before the regular tile. */
     textureReplies?: Map<string, Buffer[]>
+    /** Vector tile bodies by z/x/y; `undefined` answers 404. */
+    vectorTiles?: (z: number, x: number, y: number) => Uint8Array | undefined
   } = {}
 ) {
   const cache = new Map<string, Buffer>()
@@ -103,16 +119,43 @@ export async function mockTileServers(
   const requests = new Map<string, number>()
 
   await page.route('**/elevation-tiles-prod/terrarium/**', (route) => {
-    const [x, y] = new URL(route.request().url()).pathname
+    const [z, x, y] = new URL(route.request().url()).pathname
       .replace(/\.png$/, '')
       .split('/')
-      .slice(-2)
+      .slice(-3)
       .map(Number)
     return route.fulfill({
       contentType: 'image/png',
       headers,
-      body: memo(`e/${x}/${y}`, () => elevationTile(x, y))
+      body: memo(`e/${z}/${x}/${y}`, () => elevationTile(z, x, y))
     })
+  })
+
+  await page.route('https://tiles.openfreemap.org/**', (route) => {
+    const url = route.request().url()
+    if (new URL(url).pathname === '/planet') {
+      return route.fulfill({
+        contentType: 'application/json',
+        headers,
+        json: {
+          tilejson: '3.0.0',
+          tiles: [`${OPENFREEMAP_TILES}/{z}/{x}/{y}.pbf`]
+        }
+      })
+    }
+    const [z, x, y] = url
+      .slice(OPENFREEMAP_TILES.length + 1)
+      .replace(/\.pbf$/, '')
+      .split('/')
+      .map(Number)
+    const body = vectorTiles(z, x, y)
+    return body
+      ? route.fulfill({
+          contentType: 'application/vnd.mapbox-vector-tile',
+          headers,
+          body: Buffer.from(body)
+        })
+      : route.fulfill({ status: 404, headers })
   })
 
   await page.route('https://tiles.maps.eox.at/**', (route) => {

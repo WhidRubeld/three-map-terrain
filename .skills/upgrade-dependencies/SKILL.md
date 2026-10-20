@@ -11,11 +11,15 @@ The repo has **three independent package roots**, each with its own `yarn.lock`
 | Root             | Bundler        | Notes                                                                    |
 | ---------------- | -------------- | ------------------------------------------------------------------------ |
 | `.`              | Vite (library) | `three` is a peer + dev dependency                                       |
-| `examples/basic` | webpack        | links the library via `link:../..`                                       |
+| `examples/basic` | webpack        | links the library via `link:../..`; `pmtiles` for the Overture source    |
 | `examples/react` | Vite           | React Three Fiber + drei, `link:../..`; the live example on GitHub Pages |
 
 The examples consume the **built** library (`dist/`), so always upgrade and
 build the root first.
+
+`map.export()` drives three's exporters (`three/addons/exporters/*`:
+GLTF, OBJ, STL, USDZ) through `src/export/model.ts`; `test/export` runs them
+— after a three.js upgrade a changed exporter API shows up there.
 
 ## 1. Inventory
 

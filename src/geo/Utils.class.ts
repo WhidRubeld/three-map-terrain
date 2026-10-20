@@ -75,6 +75,15 @@ export class Utils {
     return tile
   }
 
+  /**
+   * Width in meters of a tile at a latitude: `tileSize / tileWidth(lat, zoom)`
+   * is the `zScale` of a true-to-scale terrain.
+   */
+  static tileWidth(lat: number, zoom: number) {
+    // equatorial circumference of the WGS 84 ellipsoid
+    return (40075016.686 * Math.cos((lat * Math.PI) / 180)) / 2 ** zoom
+  }
+
   static getTileKey(z: number, x: number, y: number) {
     return `${z}/${x}/${y}`
   }

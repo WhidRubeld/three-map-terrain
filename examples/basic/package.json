@@ -2,13 +2,14 @@
   "name": "three-map-terrain-example",
   "version": "0.2.0",
   "private": true,
-  "description": "three-map-terrain with plain three.js, bundled by webpack",
+  "description": "three-map-terrain with plain three.js, bundled by webpack: San Francisco with Overture Maps buildings from a custom source",
   "license": "MIT",
   "scripts": {
     "start": "webpack serve",
     "build": "webpack build --mode production"
   },
   "dependencies": {
+    "pmtiles": "^4.5.0",
     "three": "^0.186.1",
     "three-map-terrain": "link:../.."
   },

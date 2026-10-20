@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { Utils } from '../src'
+import { Utils } from '../../src'
 
 const jungfrau = { lat: 46.57634, lon: 7.9904 }
 
@@ -64,6 +64,14 @@ describe('Utils', () => {
       y: -600,
       z: 0
     })
+  })
+
+  it('measures tiles in meters', () => {
+    // the equator at zoom 0: the whole circumference
+    expect(Utils.tileWidth(0, 0)).toBeCloseTo(40075016.686, 3)
+    expect(Utils.tileWidth(60, 1)).toBeCloseTo(40075016.686 / 4, 3)
+    // the default zScale is true scale at zoom 11 around 46°
+    expect(600 / Utils.tileWidth(46.57634, 11)).toBeCloseTo(0.045, 3)
   })
 
   it('builds z/x/y tile keys', () => {

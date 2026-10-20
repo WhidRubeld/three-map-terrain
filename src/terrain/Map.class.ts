@@ -1,13 +1,23 @@
 import { Group, type Raycaster, type Vector3 } from 'three'
 
-import { isAbortError } from './image'
+import {
+  exportModel,
+  type ModelFormat,
+  type ModelOptions
+} from '../export/model'
+
+import {
+  ElevationSource,
+  type ElevationSourceProps
+} from '../sources/ElevationSource.class'
+import { isAbortError } from '../io/fetch'
 import {
   defaultTextureOptions,
   type QuadTextureMaterialOptions
 } from './quad-texture-material'
-import type { Source } from './Source.class'
+import { Source, type SourceProps } from '../sources/Source.class'
 import { Tile } from './Tile.class'
-import { Utils } from './Utils.class'
+import { Utils } from '../geo/Utils.class'
 
 /** A geolocation in degrees, with the altitude in meters. */
 export interface GeoLocation {
@@ -21,14 +31,84 @@ export interface MapOptions {
   zoom: number
   tileSize: number
   tileSegments: number
+  /** Scene units per meter of elevation. */
   zScale: number
+  /**
+   * Vertical exaggeration relative to true scale (1: as wide as high); when
+   * set, it decides `zScale` for the map's latitude, zoom and tile size.
+   */
+  exaggeration?: number
+  /** Altitude in meters drawn at z = 0, e.g. the city's: the scene stays near the origin. */
+  baseAltitude?: number
 }
 
 export interface MapProps {
-  source: Source
+  /**
+   * Texture tiles: a `Source`, or the props to create one. Without it the
+   * terrain has no imagery and is drawn in `material.color`.
+   */
+  source?: Source | SourceProps
+  /** Elevation tiles; AWS Terrain Tiles by default. */
+  elevation?: ElevationSource | ElevationSourceProps
   location: { lat: number; lon: number }
   options?: Partial<MapOptions>
   material?: Partial<QuadTextureMaterialOptions>
+}
+
+/**
+ * Something drawn with the terrain, tile by tile — e.g. `Buildings`. Add it
+ * with `map.addLayer()`; every method is optional.
+ */
+export interface MapLayer {
+  /** Credit for the layer's data, listed in `map.attributions`. */
+  readonly attribution?: string
+  /** Called by `map.addLayer()`, before `tileLoaded` for the loaded tiles. */
+  attach?(map: Map): void
+  /** Called by `map.removeLayer()`: remove and free everything. */
+  detach?(map: Map): void
+  /** A tile has its elevation, its seams are stitched and it is in `map.terrain`. */
+  tileLoaded?(tile: Tile): void
+  /** A loaded tile is about to be disposed (`map.clean()`). */
+  tileRemoved?(tile: Tile): void
+  /** `map.setMaterial()` changed the style, which layers may follow. */
+  materialChanged?(map: Map): void
+  /** Resolves once the layer has everything for the loaded tiles; `map.whenReady()` waits for it. */
+  whenReady?(): Promise<void>
+}
+
+export interface MapExportOptions extends Omit<
+  ModelOptions,
+  'scale' | 'filter'
+> {
+  /**
+   * `meters` (default): true to scale horizontally, heights with the map's
+   * exaggeration; or `scene` units.
+   */
+  units?: 'meters' | 'scene'
+  /** Also the layers — buildings, base; default `true`. */
+  layers?: boolean
+}
+
+/** The `nTiles × nTiles` grid of `init()`, as tile coordinates at `zoom`. */
+export interface TileGrid {
+  zoom: number
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+}
+
+/** Calls a layer hook; a failing layer must not break the terrain. */
+function notify(
+  layer: MapLayer,
+  hook: 'tileLoaded' | 'tileRemoved',
+  tile: Tile
+) {
+  try {
+    layer[hook]?.(tile)
+  } catch (error) {
+    console.error(error)
+  }
 }
 
 export const defaultMapOptions: Readonly<MapOptions> = Object.freeze({
@@ -36,12 +116,14 @@ export const defaultMapOptions: Readonly<MapOptions> = Object.freeze({
   zoom: 11,
   tileSize: 600,
   tileSegments: 100,
-  zScale: 0.045
+  zScale: 0.045,
+  baseAltitude: 0
 })
 
 export class Map {
   materialOptions: QuadTextureMaterialOptions
   source: Source
+  elevation: ElevationSource
   geoLocation: { lat: number; lon: number }
   options: MapOptions
   tileCache: Record<string, Tile> = {}
@@ -55,9 +137,20 @@ export class Map {
 
   private loading: Promise<void> | undefined
   private loads: Record<string, Promise<Tile | undefined>> = {}
+  private readonly mapLayers: MapLayer[] = []
 
-  constructor({ source, location, options = {}, material = {} }: MapProps) {
-    this.source = source
+  constructor({
+    source = { api: 'none' },
+    elevation = new ElevationSource(),
+    location,
+    options = {},
+    material = {}
+  }: MapProps) {
+    this.source = source instanceof Source ? source : new Source(source)
+    this.elevation =
+      elevation instanceof ElevationSource
+        ? elevation
+        : new ElevationSource(elevation)
     this.geoLocation = location
     this.materialOptions = { ...defaultTextureOptions, ...material }
     this.options = this.getOptions(options)
@@ -70,6 +163,12 @@ export class Map {
       1,
       Math.min(256, Math.round(options.tileSegments))
     )
+    if (options.exaggeration !== undefined) {
+      const { lat } = this.geoLocation
+      options.zScale =
+        (options.exaggeration * options.tileSize) /
+        Utils.tileWidth(lat, options.zoom)
+    }
     return options
   }
 
@@ -96,9 +195,150 @@ export class Map {
     if (tile) await this.loadTile(tile)
   }
 
+  /** The layers added with `addLayer()`, in order. */
+  get layers(): readonly MapLayer[] {
+    return this.mapLayers
+  }
+
+  /**
+   * Adds a layer: it is attached, then told about every tile loaded so far
+   * and about every tile from now on. Layers survive `clean()`.
+   */
+  addLayer<T extends MapLayer>(layer: T): T {
+    if (this.mapLayers.includes(layer)) return layer
+    this.mapLayers.push(layer)
+    layer.attach?.(this)
+    for (const tile of this.placedTiles()) notify(layer, 'tileLoaded', tile)
+    return layer
+  }
+
+  /** Removes a layer added with `addLayer()` and lets it free its resources. */
+  removeLayer(layer: MapLayer) {
+    const index = this.mapLayers.indexOf(layer)
+    if (index === -1) return
+    this.mapLayers.splice(index, 1)
+    layer.detach?.(this)
+  }
+
+  /**
+   * Credits for the data shown — imagery, elevation and layers — to display
+   * next to the map, as most data licenses require.
+   */
+  get attributions(): string[] {
+    const credits = [
+      this.source.attribution,
+      this.elevation.attribution,
+      ...this.mapLayers.map((layer) => layer.attribution ?? '')
+    ]
+    return [...new Set(credits.filter((credit) => credit !== ''))]
+  }
+
+  /** The `nTiles × nTiles` grid of `init()`, in tiles of `zoom`. */
+  get grid(): TileGrid {
+    const { zoom, nTiles } = this.options
+    const offset = Math.floor(nTiles / 2)
+    const minX = this.center.x - offset
+    const minY = this.center.y - offset
+    return {
+      zoom,
+      minX,
+      minY,
+      maxX: minX + nTiles - 1,
+      maxY: minY + nTiles - 1
+    }
+  }
+
+  /** Geographic bounds of the grid: `[west, south, east, north]` in degrees. */
+  get bounds(): [west: number, south: number, east: number, north: number] {
+    const { zoom, minX, minY, maxX, maxY } = this.grid
+    const [west, , , north] = Utils.tile2bbox([minX, minY, zoom])
+    const [, south, east] = Utils.tile2bbox([maxX, maxY, zoom])
+    return [west, south, east, north]
+  }
+
+  /**
+   * Replaces the imagery — `{ api: 'none' }` turns it off — and reloads the
+   * textures of the loaded tiles; each keeps its current one until then.
+   */
+  setSource(source: Source | SourceProps) {
+    const previous = this.source
+    this.source = source instanceof Source ? source : new Source(source)
+    // from no imagery to no imagery: nothing to reload
+    if (previous.api === 'none' && this.source.api === 'none') return
+    for (const tile of this.placedTiles()) void tile.buildmesh()
+  }
+
+  /**
+   * Changes the material options of the terrain — color, lights, wireframe,
+   * fog, filter — and of the layers that follow it (buildings, base). Only a
+   * new `filter` reloads the imagery.
+   */
+  setMaterial(options: Partial<QuadTextureMaterialOptions>) {
+    const previous = this.materialOptions
+    this.materialOptions = { ...previous, ...options }
+    const reload =
+      this.materialOptions.filter !== previous.filter &&
+      this.source.api !== 'none'
+    for (const tile of this.placedTiles()) {
+      if (reload) void tile.buildmesh()
+      else tile.restyle()
+    }
+    for (const layer of this.mapLayers) {
+      try {
+        layer.materialChanged?.(this)
+      } catch (error) {
+        console.error(error)
+      }
+    }
+  }
+
+  /**
+   * Resolves once everything is loaded: the grid (as `init()`), tiles loaded
+   * since, their textures and the content of the layers (e.g. buildings).
+   */
+  async whenReady(): Promise<void> {
+    await this.loading
+    await Promise.all(Object.values(this.loads))
+    await Promise.all(
+      Object.values(this.tileCache).map((tile) => tile.whenTextured())
+    )
+    await Promise.all(
+      this.mapLayers.map((layer) => layer.whenReady?.() ?? Promise.resolve())
+    )
+  }
+
+  /**
+   * Exports the terrain with its imagery and layers as a 3D model file —
+   * `glb` (default), `gltf`, `obj`, `stl` (3D printing) or `usdz` (AR) — once
+   * everything is loaded. Save the blob, e.g. with a download link.
+   */
+  async export(
+    format: ModelFormat = 'glb',
+    { units = 'meters', layers = true, ...options }: MapExportOptions = {}
+  ): Promise<Blob> {
+    await this.whenReady()
+    const { zoom, tileSize } = this.options
+    const tiles = new Set<unknown>(this.placedTiles().map((tile) => tile.mesh))
+    return exportModel(this.terrain, format, {
+      ...options,
+      scale:
+        units === 'meters'
+          ? Utils.tileWidth(this.geoLocation.lat, zoom) / tileSize
+          : 1,
+      // the tiles; the rest of map.terrain is the layers'
+      filter: (object) =>
+        object.parent !== this.terrain || tiles.has(object) || layers
+    })
+  }
+
   /** Removes all tiles, aborts pending requests and frees GPU resources. */
   clean() {
-    for (const tile of Object.values(this.tileCache)) tile.dispose()
+    for (const tile of Object.values(this.tileCache)) {
+      if (tile.loaded && tile.mesh.parent === this.terrain) {
+        for (const layer of this.mapLayers) notify(layer, 'tileRemoved', tile)
+      }
+      tile.dispose()
+    }
     this.tileCache = {}
     this.loads = {}
     this.loading = undefined
@@ -110,7 +350,7 @@ export class Map {
     opts: { loadTile: boolean } = { loadTile: true }
   ) {
     const { options, tileCache, center } = this
-    const { zScale } = options
+    const { zScale, baseAltitude = 0 } = options
 
     const { x, y, z } = Utils.position2tile(lat, lon, options.zoom)
     const tileKey = Utils.getTileKey(z, x, y)
@@ -128,7 +368,11 @@ export class Map {
     const xOffset = options.tileSize * (1 - (e - lon) / (e - w))
     const yOffset = options.tileSize * (1 - (n - lat) / (n - s))
 
-    return { x: xStart + xOffset, y: yStart + yOffset, z: alt * zScale }
+    return {
+      x: xStart + xOffset,
+      y: yStart + yOffset,
+      z: (alt - baseAltitude) * zScale
+    }
   }
 
   /**
@@ -167,11 +411,11 @@ export class Map {
 
   /**
    * Inverse of `getPosition`: the geolocation of a point given in
-   * `map.terrain` coordinates; `alt` is `z / zScale` (meters).
+   * `map.terrain` coordinates; `alt` is `z / zScale + baseAltitude` (meters).
    */
   getLocation({ x, y, z }: { x: number; y: number; z: number }): GeoLocation {
     const { center } = this
-    const { zoom, tileSize, zScale } = this.options
+    const { zoom, tileSize, zScale, baseAltitude = 0 } = this.options
     // tiles lie on a regular grid around the center tile
     const origin = Utils.tile2position(
       zoom,
@@ -191,7 +435,7 @@ export class Map {
     return {
       lat: n - (row - Math.floor(row)) * (n - s),
       lon: w + (col - Math.floor(col)) * (e - w),
-      alt: z / zScale
+      alt: z / zScale + baseAltitude
     }
   }
 
@@ -224,6 +468,13 @@ export class Map {
     }
 
     await Promise.all(pending)
+  }
+
+  /** Loaded tiles that are in `terrain` (the ones layers know about). */
+  private placedTiles() {
+    return Object.values(this.tileCache).filter(
+      (tile) => tile.loaded && tile.mesh.parent === this.terrain
+    )
   }
 
   private tileIndexAt({ lat, lon }: { lat: number; lon: number }) {
@@ -274,6 +525,7 @@ export class Map {
     tile.setPosition(this.center)
     this.stitchAround(tile)
     this.terrain.add(tile.mesh)
+    for (const layer of this.mapLayers) notify(layer, 'tileLoaded', tile)
     return tile
   }
 

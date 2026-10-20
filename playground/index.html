@@ -12,23 +12,34 @@
         overflow: hidden;
         background: #222;
       }
-      #info {
+      #info,
+      #credits {
         position: fixed;
-        top: 8px;
         left: 8px;
         color: #ddd;
         font:
           12px/1.4 ui-monospace,
           monospace;
       }
+      #info {
+        top: 8px;
+      }
+      #credits {
+        bottom: 8px;
+        color: #999;
+      }
     </style>
   </head>
   <body>
     <!--
       Query params:
-        renderer=webgl|webgpu  forceWebGL=1  lights=0|1  wireframe=1  api=eox|osm  nTiles=N  segments=N  view=orbit|top
+        renderer=webgl|webgpu  forceWebGL=1  lights=0|1  wireframe=1  nTiles=N  segments=N  view=orbit|top
+        api=eox|osm|swisstopo|none  elevation=aws|mapterhorn|…  buildings=openfreemap|versatiles|overpass|…  edges=1
+        color=e9e4da  filter=grayscale(1)  token=…  (for mapbox, maptiler, protomaps)
+        zoom=N  lat=…  lon=…  exaggeration=1  base=…  (other than the Alps at zoom 11: true scale; base altitude)
     -->
     <div id="info"></div>
+    <div id="credits"></div>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

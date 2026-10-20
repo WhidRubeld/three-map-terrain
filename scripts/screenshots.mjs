@@ -41,10 +41,31 @@ function serve(folder) {
   )
 }
 
+/** Turns the camera to show the terrain's south-west corner, its section. */
+const turn = async (page) => {
+  await page.mouse.move(640, 600)
+  await page.mouse.down({ button: 'right' })
+  await page.mouse.move(760, 560, { steps: 10 })
+  await page.mouse.up({ button: 'right' })
+  await page.mouse.move(640, 450)
+  for (let i = 0; i < 3; i++) {
+    await page.mouse.wheel(0, 200)
+    await page.waitForTimeout(120)
+  }
+}
+
 const SCENES = [
   // the README's hero: the live example
   { name: 'hero', example: 'react', click: [770, 520] },
-  { name: 'basic', example: 'basic', click: [640, 470] }
+  // its Lausanne, one map in three looks
+  ...['plain', 'aerial', 'wireframe'].map((look) => ({
+    name: `lausanne-${look}`,
+    example: 'react',
+    query: `?place=lausanne&look=${look}`,
+    prepare: turn
+  })),
+  // San Francisco, Overture buildings; a click stops the rotation
+  { name: 'basic', example: 'basic', click: [860, 320] }
 ]
 
 const work = await mkdtemp(join(tmpdir(), 'three-map-terrain-screenshots-'))
@@ -58,11 +79,12 @@ for (const scene of SCENES) {
     viewport: { width: 1280, height: 800 },
     deviceScaleFactor: 2
   })
-  await page.goto(`http://localhost:${port}/`)
+  await page.goto(`http://localhost:${port}/${scene.query ?? ''}`)
   // tiles and their textures: wait until the network is quiet
   await page.waitForLoadState('networkidle')
   await page.waitForTimeout(2000)
-  await page.mouse.click(...scene.click)
+  if (scene.prepare) await scene.prepare(page)
+  if (scene.click) await page.mouse.click(...scene.click)
   await page.waitForTimeout(1500)
   const png = join(work, `${scene.name}.png`)
   await page.screenshot({ path: png })

@@ -11,5 +11,5 @@ export default defineConfig({
     dedupe: ['three']
   },
   // three.js alone is above Vite's 500 kB warning
-  build: { chunkSizeWarningLimit: 1200 }
+  build: { chunkSizeWarningLimit: 1300 }
 })

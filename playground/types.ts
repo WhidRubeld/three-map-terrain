@@ -1,8 +1,10 @@
-import type { GeoLocation, Map } from '../src'
+import type { BuildingId, Buildings, GeoLocation, Map } from '../src'
 
 /** Debug handle exposed as `window.__playground` (used by the e2e tests). */
 export interface Playground {
   map: Map
+  /** The buildings layer (`?buildings=…`). */
+  buildings: Buildings | undefined
   /** three.js `REVISION` actually loaded */
   revision: string
   /** `webgl`, `webgpu`, or `webgpu (webgl2 backend)` */
@@ -13,6 +15,9 @@ export interface Playground {
   texturedTiles: () => number
   /** Result of the last click on the terrain (`map.pick`). */
   lastPick: GeoLocation | undefined
+  /** The building of the last click (`buildings.pick`). */
+  lastBuilding:
+    { id?: BuildingId; height?: number; lat: number; lon: number } | undefined
   /**
    * Stops the render loop after one last frame. With software rendering
    * (SwiftShader on GPU-less CI) every frame takes long enough to starve
