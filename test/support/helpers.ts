@@ -1,6 +1,6 @@
 import { type Object3D, Raycaster, Vector3 } from 'three'
 
-import type { ElevationPixels } from '../src'
+import type { ElevationPixels } from '../../src'
 
 /** Encodes meters into terrarium RGB: `R * 256 + G + B / 256 - 32768`. */
 export function encodeTerrarium(meters: number): [number, number, number] {

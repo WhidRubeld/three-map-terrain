@@ -2,7 +2,8 @@ import { type BrowserContext, expect, type Page, test } from '@playwright/test'
 
 import type {} from '../playground/types'
 import { Utils } from '../src'
-import { RETRY_DELAYS } from '../src/image'
+import { RETRY_DELAYS } from '../src/io/fetch'
+import { encodeVectorTile } from '../test/support/mvt-encoder'
 import {
   mockTileServers,
   QUADRANT_COLORS,
@@ -23,9 +24,9 @@ const collectErrors = (page: Page) => {
 const openPlayground = async (
   page: Page,
   query: string,
-  textureReplies?: Map<string, Buffer[]>
+  servers: Parameters<typeof mockTileServers>[1] = {}
 ) => {
-  const { requests } = await mockTileServers(page, { textureReplies })
+  const { requests } = await mockTileServers(page, servers)
   await page.goto(`/?${query}`)
   await page.waitForFunction(() => window.__playground !== undefined)
   await page.evaluate(() => window.__playground?.ready)
@@ -34,6 +35,7 @@ const openPlayground = async (
       window.__playground?.texturedTiles() ===
       Object.keys(window.__playground?.map.tileCache ?? {}).length
   )
+  await page.evaluate(() => window.__playground?.buildings?.whenReady())
   // everything is loaded: one last frame, so that capturing it does not have
   // to compete with a render loop (seconds per frame on software renderers)
   await page.evaluate(() => window.__playground?.freeze())
@@ -281,6 +283,157 @@ test('click → map.pick returns the geolocation under the pointer', async ({
   expect(errors).toEqual([])
 })
 
+test('draws buildings from vector tiles on the terrain and picks them', async ({
+  page
+}) => {
+  const errors = collectErrors(page)
+  const zoom = 14
+  const center = Utils.position2tile(46.57634, 7.9904, zoom)
+  // a 60 m building over the NW quadrant: from 0.1 to 0.4 of the tile
+  const [a, b] = [410, 1638] // of the 4096 extent
+  const tile = encodeVectorTile([
+    {
+      name: 'building',
+      features: [
+        {
+          id: 99,
+          type: 3,
+          properties: { render_height: 60, render_min_height: 0 },
+          geometry: [[a, a, b, a, b, b, a, b]]
+        }
+      ]
+    }
+  ])
+
+  await openPlayground(
+    page,
+    `renderer=webgl&view=top&lights=0&nTiles=1&zoom=${zoom}&buildings=openfreemap`,
+    {
+      vectorTiles: (z, x, y) =>
+        z === zoom && x === center.x && y === center.y ? tile : undefined
+    }
+  )
+  expect(await page.evaluate(() => window.__playground?.buildings?.count)).toBe(
+    1
+  )
+
+  const canvas = page.locator('canvas')
+  const [roof, terrain] = await samplePixels(page, await canvas.screenshot(), [
+    tilePoint(page, 0.25, 0.25),
+    tilePoint(page, 0.75, 0.75)
+  ])
+  // the buildings take on the map's color (white by default), unlit — over
+  // the red NW texture
+  expectColor(roof, [255, 255, 255], 2, 'roof')
+  expectColor(terrain, QUADRANT_COLORS.se, 2, 'terrain')
+
+  const box = await canvas.boundingBox()
+  if (!box) throw new Error('canvas is not visible')
+  const [u, v] = tilePoint(page, 0.25, 0.25)
+  await canvas.click({ position: { x: u * box.width, y: v * box.height } })
+  const picked = await page.evaluate(() => window.__playground?.lastBuilding)
+  expect(picked).toMatchObject({ id: 99, height: 60 })
+  expect(errors).toEqual([])
+})
+
+test('draws terrain without imagery in its color, buildings in tone', async ({
+  page
+}) => {
+  const errors = collectErrors(page)
+  const zoom = 14
+  const center = Utils.position2tile(46.57634, 7.9904, zoom)
+  const [a, b] = [410, 1638]
+  const tile = encodeVectorTile([
+    {
+      name: 'building',
+      features: [
+        {
+          type: 3,
+          properties: { render_height: 60 },
+          geometry: [[a, a, b, a, b, b, a, b]]
+        }
+      ]
+    }
+  ])
+
+  const { requests } = await openPlayground(
+    page,
+    `renderer=webgl&view=top&lights=0&nTiles=1&zoom=${zoom}&api=none&color=4080c0&buildings=openfreemap`,
+    {
+      vectorTiles: (z, x, y) =>
+        z === zoom && x === center.x && y === center.y ? tile : undefined
+    }
+  )
+
+  // no imagery: not a single texture request
+  expect(requests.size).toBe(0)
+  const [roof, terrain] = await samplePixels(
+    page,
+    await page.locator('canvas').screenshot(),
+    [tilePoint(page, 0.25, 0.25), tilePoint(page, 0.75, 0.75)]
+  )
+  expectColor(terrain, [64, 128, 192], 2, 'terrain')
+  expectColor(roof, [64, 128, 192], 2, 'roof')
+  expect(errors).toEqual([])
+})
+
+test('switches imagery and style at runtime, in one go', async ({ page }) => {
+  const errors = collectErrors(page)
+  await openPlayground(
+    page,
+    'renderer=webgl&view=top&lights=0&nTiles=1&segments=8'
+  )
+
+  // a look switch: imagery off, wireframe in a color — the order of the
+  // calls must not matter
+  await page.evaluate(async () => {
+    const map = window.__playground?.map
+    map?.setSource({ api: 'none' })
+    map?.setMaterial({ wireframe: true, color: '#4080c0' })
+    await map?.whenReady()
+    await window.__playground?.freeze()
+  })
+
+  const stats = await quadrantStats(
+    page,
+    await page.locator('canvas').screenshot()
+  )
+  for (const { background, mean } of Object.values(stats)) {
+    expect(background).toBeGreaterThan(0.7) // lines, not a filled surface
+    expect(similarity(mean, [64, 128, 192])).toBeGreaterThan(0.95)
+  }
+  expect(errors).toEqual([])
+})
+
+test('exports the textured terrain as GLB', async ({ page }) => {
+  const errors = collectErrors(page)
+  await openPlayground(page, 'renderer=webgl&view=top&nTiles=1')
+
+  const glb = await page.evaluate(async () => {
+    const blob = await window.__playground?.map.export('glb')
+    if (!blob) throw new Error('no map')
+    const view = new DataView(await blob.arrayBuffer())
+    const length = view.getUint32(12, true)
+    const json = JSON.parse(
+      new TextDecoder().decode(new Uint8Array(view.buffer, 20, length))
+    ) as { meshes: unknown[]; images?: { mimeType: string }[] }
+    return {
+      type: blob.type,
+      magic: view.getUint32(0, true),
+      meshes: json.meshes.length,
+      images: json.images?.map(({ mimeType }) => mimeType)
+    }
+  })
+
+  expect(glb).toEqual({
+    type: 'model/gltf-binary',
+    magic: 0x46546c67, // 'glTF'
+    meshes: 1,
+    images: ['image/png']
+  })
+  expect(errors).toEqual([])
+})
+
 // Tile servers occasionally deliver a cut-off body with status 200, which
 // `createImageBitmap` rejects (EOX does it for some tiles).
 test.describe('truncated texture responses', () => {
@@ -313,7 +466,7 @@ test.describe('truncated texture responses', () => {
     const { requests } = await openPlayground(
       page,
       'renderer=webgl&view=top&lights=0&nTiles=1',
-      new Map([[SW_CHILD, [truncated]]])
+      { textureReplies: new Map([[SW_CHILD, [truncated]]]) }
     )
 
     expect(requests.get(SW_CHILD)).toBe(2)
@@ -333,7 +486,11 @@ test.describe('truncated texture responses', () => {
     const { requests } = await openPlayground(
       page,
       'renderer=webgl&view=top&lights=0&nTiles=1',
-      new Map([[SW_CHILD, Array<Buffer>(ATTEMPTS).fill(truncated)]])
+      {
+        textureReplies: new Map([
+          [SW_CHILD, Array<Buffer>(ATTEMPTS).fill(truncated)]
+        ])
+      }
     )
 
     expect(requests.get(SW_CHILD)).toBe(ATTEMPTS)

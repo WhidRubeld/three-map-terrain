@@ -39,3 +39,25 @@ a {
   font-size: 11px;
   pointer-events: auto;
 }
+
+.actions {
+  position: fixed;
+  top: 64px;
+  left: 16px;
+  display: flex;
+  gap: 6px;
+}
+
+.actions button {
+  padding: 4px 10px;
+  border: 1px solid rgb(255 255 255 / 0.18);
+  background: rgb(16 16 16 / 0.78);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.actions button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}

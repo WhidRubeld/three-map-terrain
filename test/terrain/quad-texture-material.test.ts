@@ -1,4 +1,5 @@
 import {
+  Color,
   MeshBasicMaterial,
   MeshLambertMaterial,
   SRGBColorSpace,
@@ -12,19 +13,31 @@ import {
   disposeMaterial,
   loadQuadTexture,
   QuadTextureMaterial
-} from '../src'
+} from '../../src'
 import {
   bitmaps,
   FakeOffscreenCanvas,
   fetch,
   installBrowserFakes,
   settle
-} from './browser-fakes'
+} from '../support/browser-fakes'
 
 beforeEach(installBrowserFakes)
 afterEach(() => {
   vi.useRealTimers()
 })
+
+/** A fake decoded image (browser-fakes records draws by `url`) and its `close`. */
+const fakeImage = (url: string) => {
+  const close = vi.fn()
+  const image = {
+    url,
+    width: 256,
+    height: 256,
+    close
+  } as unknown as ImageBitmap
+  return { image, close }
+}
 
 describe('loadQuadTexture', () => {
   it('stitches NW/SW/NE/SE children into one 2×2 sRGB texture', async () => {
@@ -42,6 +55,13 @@ describe('loadQuadTexture', () => {
       { url: 'se', x: 256, y: 256, w: 256, h: 256 }
     ])
     for (const bitmap of bitmaps) expect(bitmap.close).toHaveBeenCalled()
+  })
+
+  it('draws the imagery through a CSS filter', async () => {
+    await loadQuadTexture(['nw', 'sw', 'ne', 'se'], undefined, 'grayscale(1)')
+    const [canvas] = FakeOffscreenCanvas.instances
+
+    for (const draw of canvas.draws) expect(draw.filter).toBe('grayscale(1)')
   })
 
   it('forwards the abort signal to every request', async () => {
@@ -71,6 +91,57 @@ describe('loadQuadTexture', () => {
     ).rejects.toThrow('Failed to decode ne-corrupt')
   })
 
+  it('takes loaders, cutting children out of an ancestor', async () => {
+    const parent = fakeImage('parent')
+    const child = (left: number, top: number) => () =>
+      Promise.resolve({
+        image: parent.image,
+        region: { left, top, size: 0.25 }
+      })
+    const own = fakeImage('own')
+
+    await loadQuadTexture([
+      child(0.5, 0.25),
+      child(0.5, 0.5),
+      () => Promise.resolve({ image: own.image }),
+      'se'
+    ])
+    const [canvas] = FakeOffscreenCanvas.instances
+
+    // cells take the largest child: 256 px
+    expect([canvas.width, canvas.height]).toEqual([512, 512])
+    expect(canvas.draws).toEqual([
+      { url: 'parent', x: 0, y: 0, w: 256, h: 256, crop: [128, 64, 64, 64] },
+      { url: 'own', x: 256, y: 0, w: 256, h: 256 },
+      { url: 'parent', x: 0, y: 256, w: 256, h: 256, crop: [128, 128, 64, 64] },
+      { url: 'se', x: 256, y: 256, w: 256, h: 256 }
+    ])
+    // the shared ancestor is closed once
+    expect(parent.close).toHaveBeenCalledOnce()
+    expect(own.close).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the resolution of children cut out of an ancestor', async () => {
+    const { image } = fakeImage('parent')
+    const quarter = () =>
+      Promise.resolve({ image, region: { left: 0, top: 0, size: 0.5 } })
+
+    await loadQuadTexture([quarter, quarter, quarter, quarter])
+
+    const [canvas] = FakeOffscreenCanvas.instances
+    expect([canvas.width, canvas.height]).toEqual([256, 256])
+  })
+
+  it('rejects when a loader fails and releases the other images', async () => {
+    const { image, close } = fakeImage('a')
+    const ok = () => Promise.resolve({ image })
+
+    await expect(
+      loadQuadTexture([ok, ok, () => Promise.reject(new Error('no tile')), ok])
+    ).rejects.toThrow('no tile')
+    expect(close).toHaveBeenCalledOnce()
+  })
+
   it('rejects on HTTP errors and releases the bitmaps already decoded', async () => {
     await expect(
       loadQuadTexture(['nw', 'sw', 'missing', 'se'])
@@ -92,6 +163,21 @@ describe('createQuadTextureMaterial', () => {
     expect(material.wireframe).toBe(false)
   })
 
+  it('creates a plain material in a color, without imagery', () => {
+    const material = createQuadTextureMaterial(null, { color: '#e8e2d6' })
+
+    expect(material.map).toBeNull()
+    expect(material.color.equals(new Color('#e8e2d6'))).toBe(true)
+  })
+
+  it('tints the imagery with the color', () => {
+    const map = new Texture()
+    const material = createQuadTextureMaterial(map, { color: 0x808080 })
+
+    expect(material.map).toBe(map)
+    expect(material.color.equals(new Color(0x808080))).toBe(true)
+  })
+
   it('creates an unlit material when lights are disabled', () => {
     const material = createQuadTextureMaterial(new Texture(), {
       lights: false,
@@ -110,7 +196,9 @@ describe('createQuadTextureMaterial', () => {
     expect(defaultTextureOptions).toEqual({
       lights: true,
       wireframe: false,
-      fog: true
+      fog: true,
+      color: 0xffffff,
+      filter: 'none'
     })
     expect(Object.isFrozen(defaultTextureOptions)).toBe(true)
   })
@@ -119,11 +207,14 @@ describe('createQuadTextureMaterial', () => {
 describe('QuadTextureMaterial', () => {
   it('loads the stitched texture into a material', async () => {
     const material = await QuadTextureMaterial(['a', 'b', 'c', 'd'], {
-      lights: false
+      lights: false,
+      filter: 'sepia(1)'
     })
 
     expect(material).toBeInstanceOf(MeshBasicMaterial)
-    expect(material.map?.image).toBe(FakeOffscreenCanvas.instances[0])
+    const [canvas] = FakeOffscreenCanvas.instances
+    expect(material.map?.image).toBe(canvas)
+    expect(canvas.draws[0].filter).toBe('sepia(1)')
   })
 })
 

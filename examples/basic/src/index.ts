@@ -2,11 +2,9 @@ import './index.css'
 
 import {
   AmbientLight,
-  AxesHelper,
   Color,
   DirectionalLight,
   FogExp2,
-  GridHelper,
   Mesh,
   MeshBasicMaterial,
   PerspectiveCamera,
@@ -17,103 +15,141 @@ import {
   WebGLRenderer
 } from 'three'
 import { MapControls } from 'three/addons/controls/MapControls.js'
-import { Map, Source } from 'three-map-terrain'
+import {
+  Buildings,
+  Map,
+  type ModelFormat,
+  TerrainBase
+} from 'three-map-terrain'
+
+import { overture } from './overture'
 
 // scene
 const scene = new Scene()
-scene.background = new Color(0x222222)
-scene.fog = new FogExp2(0x222222, 0.0000001)
+scene.background = new Color(0x1c1d1f)
+scene.fog = new FogExp2(0x1c1d1f, 0.00012)
 
-// camera
-const camera = new PerspectiveCamera(
-  75,
-  window.innerWidth / window.innerHeight,
-  1,
-  1e6
-)
+const camera = new PerspectiveCamera(60, innerWidth / innerHeight, 1, 1e6)
 camera.up.set(0, 0, 1)
-camera.position.set(0, -1e3, 7e2)
+camera.position.set(-700, -1100, 700)
 
-// WebGL
-const renderer = new WebGLRenderer({ antialias: true, alpha: true })
-renderer.shadowMap.enabled = true
-renderer.setPixelRatio(window.devicePixelRatio)
-renderer.setSize(window.innerWidth, window.innerHeight)
+const renderer = new WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
 document.body.appendChild(renderer.domElement)
 
-// controls
 const controls = new MapControls(camera, renderer.domElement)
 controls.autoRotate = true
-controls.maxPolarAngle = Math.PI * 0.3
+controls.autoRotateSpeed = 0.6
+controls.maxPolarAngle = Math.PI * 0.42
 
-// axis
-scene.add(new AxesHelper(2e3))
+scene.add(new AmbientLight(0xffffff, 1.2))
+const sun = new DirectionalLight(0xffffff, 2.8)
+sun.position.set(-1e4, -6e3, 1e4)
+scene.add(sun)
 
-// grid
-const gridHelper = new GridHelper(3e3, 20, 'white')
-gridHelper.rotateX(Math.PI / 2)
-scene.add(gridHelper)
-
-// light
-const ambientLight = new AmbientLight(0xffffff, 1.5)
-const dirLight = new DirectionalLight(0xffffff, 2.5)
-dirLight.castShadow = true
-dirLight.position.set(1e4, 1e4, 1e4)
-scene.add(ambientLight, dirLight)
-
-// map
-const source = new Source({ api: 'eox' })
-const location = { lat: 46.57634, lon: 7.9904 }
-const map = new Map({ source, location })
-
+// San Francisco at zoom 15, true to scale: the OpenStreetMap map in the
+// buildings' tone, AWS elevation (the default), Overture buildings from a
+// custom source, and a base that makes the terrain a solid block
+const location = { lat: 37.7955, lon: -122.403 }
+const map = new Map({
+  source: { api: 'osm' },
+  location,
+  options: { zoom: 15, exaggeration: 1 },
+  material: {
+    color: '#f4f4f4',
+    filter: 'grayscale(1) contrast(0.8) brightness(1.12)'
+  }
+})
+const buildings = map.addLayer(new Buildings({ source: overture, edges: true }))
+map.addLayer(new TerrainBase())
 scene.add(map.terrain)
+
+const status = document.querySelector<HTMLElement>('#status')
+const show = (text: string) => {
+  if (status) status.textContent = text
+}
+const credits = document.querySelector<HTMLElement>('#credits')
+if (credits) credits.textContent = map.attributions.join(' · ')
+
 void map.init(() => {
-  console.log('Map is ready')
-  if (status) status.textContent = 'Click the terrain for its geolocation.'
+  show('Click a building or the terrain.')
 })
 
-// object by coords
-const sphere = new Mesh(
-  new SphereGeometry(8, 24, 12),
+// a geolocation at an altitude: a drone at 300 m above the center
+const drone = new Mesh(
+  new SphereGeometry(6, 24, 12),
   new MeshBasicMaterial({ color: 0xf04040 })
 )
-const spherePosition = map.getPosition({ ...location, alt: 3e3 })
-// with sphere radius offset
-sphere.position.set(spherePosition.x, spherePosition.y, spherePosition.z + 8)
-scene.add(sphere)
-
-// click → geolocation of the terrain under the pointer, and a marker put
-// back on the rendered surface from that geolocation
-const status = document.querySelector<HTMLElement>('#status')
-const pin = new Mesh(
-  new SphereGeometry(6, 24, 12),
-  new MeshBasicMaterial({ color: 0xf0d040 })
+const { x, y, z } = map.getPosition(
+  { ...location, alt: 300 },
+  { loadTile: false }
 )
-pin.visible = false
-scene.add(pin)
+drone.position.set(x, y, z)
+scene.add(drone)
 
+// click → the building under the pointer, highlighted; or the geolocation
+// of the terrain
 const raycaster = new Raycaster()
+const pressed = new Vector2()
+renderer.domElement.addEventListener('pointerdown', (event) => {
+  pressed.set(event.clientX, event.clientY)
+})
 renderer.domElement.addEventListener('click', (event) => {
+  // a drag of the map is not a click
+  if (pressed.distanceTo(new Vector2(event.clientX, event.clientY)) > 4) return
+  controls.autoRotate = false
   const pointer = new Vector2(
-    (event.clientX / window.innerWidth) * 2 - 1,
-    -(event.clientY / window.innerHeight) * 2 + 1
+    (event.clientX / innerWidth) * 2 - 1,
+    -(event.clientY / innerHeight) * 2 + 1
   )
   raycaster.setFromCamera(pointer, camera)
+
+  const building = buildings.pick(raycaster)
+  buildings.highlight(building?.feature)
+  if (building) {
+    const { height, properties } = building.feature
+    const name =
+      typeof properties['@name'] === 'string' ? properties['@name'] : 'Building'
+    show(
+      `${name}${height === undefined ? '' : `, ${Math.round(height)} m high`}`
+    )
+    return
+  }
   const hit = map.pick(raycaster)
-  if (!hit) return
-  const text = `${hit.lat.toFixed(5)}, ${hit.lon.toFixed(5)} · ${Math.round(hit.alt)} m`
-  if (status) status.textContent = text
-  const surface = map.getTerrainPositionSync(hit, { loadTile: false })
-  if (surface) {
-    pin.position.set(surface.x, surface.y, surface.z)
-    pin.visible = true
+  if (hit) {
+    show(
+      `${hit.lat.toFixed(5)}, ${hit.lon.toFixed(5)} · ${Math.round(hit.alt)} m`
+    )
   }
 })
 
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight
+// the terrain with its imagery, buildings and base as a 3D model file
+for (const button of document.querySelectorAll<HTMLButtonElement>(
+  '[data-format]'
+)) {
+  button.addEventListener('click', () => {
+    const format = button.dataset.format as ModelFormat
+    button.disabled = true
+    void map
+      .export(format)
+      .then((blob) => {
+        const link = document.createElement('a')
+        link.href = URL.createObjectURL(blob)
+        link.download = `san-francisco.${format}`
+        link.click()
+        URL.revokeObjectURL(link.href)
+      })
+      .finally(() => {
+        button.disabled = false
+      })
+  })
+}
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
   camera.updateProjectionMatrix()
-  renderer.setSize(window.innerWidth, window.innerHeight)
+  renderer.setSize(innerWidth, innerHeight)
 })
 
 renderer.setAnimationLoop(() => {

@@ -1,4 +1,6 @@
 import {
+  BoxGeometry,
+  Mesh,
   MeshBasicMaterial,
   MeshLambertMaterial,
   Raycaster,
@@ -10,37 +12,44 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   defaultMapOptions,
   defaultTextureOptions,
+  ElevationSource,
   Map,
+  type MapLayer,
   Utils,
   type MapProps,
   Source,
   type Tile
-} from '../src'
-import { raycastZ, terrariumPixels } from './helpers'
+} from '../../src'
+import { loadQuadTexture } from '../../src/terrain/quad-texture-material'
+import { FakeFileReader } from '../support/browser-fakes'
+import { raycastZ, terrariumPixels } from '../support/helpers'
+
+/** The JSON chunk of a GLB. */
+const glbJson = (bytes: Uint8Array) => {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const length = view.getUint32(12, true)
+  return JSON.parse(
+    new TextDecoder().decode(bytes.subarray(20, 20 + length))
+  ) as {
+    meshes: unknown[]
+    nodes: { matrix?: number[] }[]
+  }
+}
 
 const { loadImageData } = vi.hoisted(() => ({ loadImageData: vi.fn() }))
 
-vi.mock('../src/image', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/image')>()),
+vi.mock('../../src/io/image', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/io/image')>()),
   loadImageData
 }))
 
-vi.mock('../src/quad-texture-material', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('../src/quad-texture-material')>()
-  return {
-    ...actual,
-    QuadTextureMaterial: vi.fn(
-      (
-        _urls: unknown,
-        options: Parameters<typeof actual.QuadTextureMaterial>[1]
-      ) =>
-        Promise.resolve(
-          actual.createQuadTextureMaterial(new Texture(), options)
-        )
-    )
-  }
-})
+vi.mock('../../src/terrain/quad-texture-material', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('../../src/terrain/quad-texture-material')
+  >()),
+  // no canvas in Node: a texture stands in for the stitched imagery
+  loadQuadTexture: vi.fn(() => Promise.resolve(new Texture()))
+}))
 
 const SIZE = 16
 const location = { lat: 46.57634, lon: 7.9904 }
@@ -295,6 +304,227 @@ describe('Map', () => {
     expect(map.ready).toBe(false)
   })
 
+  describe('runtime style', () => {
+    const materialOf = (map: Map) =>
+      tileAt(map, 1069, 723).mesh.material as MeshLambertMaterial
+
+    it('switches the imagery off and on with setSource()', async () => {
+      const map = createMap()
+      await map.init()
+      await map.whenReady()
+      const textured = materialOf(map)
+      expect(textured.map).toBeInstanceOf(Texture)
+
+      map.setSource({ api: 'none' })
+      await map.whenReady()
+      expect(materialOf(map).map).toBeNull()
+      expect(map.source.api).toBe('none')
+
+      map.setSource(new Source({ api: 'osm' }))
+      await map.whenReady()
+      expect(materialOf(map).map).toBeInstanceOf(Texture)
+      expect(map.attributions[0]).toContain('OpenStreetMap')
+    })
+
+    it('restyles with setMaterial(), keeping the textures', async () => {
+      const map = createMap()
+      await map.init()
+      await map.whenReady()
+      const { map: texture } = materialOf(map)
+      const layer = { materialChanged: vi.fn() }
+      map.addLayer(layer)
+      vi.mocked(loadQuadTexture).mockClear()
+
+      map.setMaterial({ color: 0x808080, wireframe: true })
+
+      const material = materialOf(map)
+      expect(material.map).toBe(texture)
+      expect(material.color.getHex()).toBe(0x808080)
+      expect(material.wireframe).toBe(true)
+      expect(loadQuadTexture).not.toHaveBeenCalled()
+      expect(layer.materialChanged).toHaveBeenCalledWith(map)
+
+      map.setMaterial({ lights: false })
+      expect(materialOf(map)).toBeInstanceOf(MeshBasicMaterial)
+    })
+
+    it('applies a setMaterial() made right after setSource()', async () => {
+      const map = createMap({ source: { api: 'none' } })
+      await map.init()
+      await map.whenReady()
+
+      // a look switch: both in one go, the imagery staying off
+      map.setSource({ api: 'none' })
+      map.setMaterial({ wireframe: true, color: 0x123456 })
+      await map.whenReady()
+
+      const material = materialOf(map)
+      expect(material.wireframe).toBe(true)
+      expect(material.color.getHex()).toBe(0x123456)
+      expect(material.map).toBeNull()
+    })
+
+    it('restyles a texture still loading when it arrives', async () => {
+      const map = createMap()
+      await map.init()
+      await map.whenReady()
+
+      map.setSource({ api: 'osm' })
+      map.setMaterial({ color: 0x00ff00 })
+      await map.whenReady()
+
+      const material = materialOf(map)
+      expect(material.map).toBeInstanceOf(Texture)
+      expect(material.color.getHex()).toBe(0x00ff00)
+    })
+
+    it('reloads the imagery for a new filter', async () => {
+      const map = createMap()
+      await map.init()
+      await map.whenReady()
+      vi.mocked(loadQuadTexture).mockClear()
+
+      map.setMaterial({ filter: 'grayscale(1)' })
+      await map.whenReady()
+
+      expect(loadQuadTexture).toHaveBeenCalledTimes(9)
+      expect(vi.mocked(loadQuadTexture).mock.calls[0][2]).toBe('grayscale(1)')
+    })
+  })
+
+  describe('whenReady', () => {
+    it('waits for the textures and the layers', async () => {
+      let release: (() => void) | undefined
+      vi.mocked(loadQuadTexture).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            release = () => {
+              resolve(
+                new Texture() as Awaited<ReturnType<typeof loadQuadTexture>>
+              )
+            }
+          })
+      )
+      const map = createMap()
+      const layerReady = vi.fn(() => Promise.resolve())
+      map.addLayer({ whenReady: layerReady })
+      void map.init()
+      let ready = false
+      void map.whenReady().then(() => (ready = true))
+
+      await map.init()
+      await vi.waitFor(() => {
+        expect(loadQuadTexture).toHaveBeenCalledTimes(9)
+      })
+      expect(ready).toBe(false)
+      release?.()
+      await vi.waitFor(() => {
+        expect(ready).toBe(true)
+      })
+      expect(layerReady).toHaveBeenCalled()
+    })
+  })
+
+  describe('grid and bounds', () => {
+    it('gives the init() grid in tiles and degrees', () => {
+      const map = createMap({ options: { nTiles: 3 } })
+
+      expect(map.grid).toEqual({
+        zoom: 11,
+        minX: 1068,
+        minY: 722,
+        maxX: 1070,
+        maxY: 724
+      })
+      const [west, south, east, north] = map.bounds
+      expect([west, north]).toEqual(
+        Utils.tile2bbox([1068, 722, 11]).filter((_, i) => i === 0 || i === 3)
+      )
+      expect([south, east]).toEqual(
+        Utils.tile2bbox([1070, 724, 11]).filter((_, i) => i === 1 || i === 2)
+      )
+      expect(west).toBeLessThan(location.lon)
+      expect(north).toBeGreaterThan(location.lat)
+    })
+  })
+
+  describe('export', () => {
+    beforeEach(() => {
+      vi.stubGlobal('FileReader', FakeFileReader)
+    })
+
+    it('exports the tiles and layers as GLB, in meters', async () => {
+      const map = createMap({ source: { api: 'none' } })
+      const marker = new Mesh(new BoxGeometry(), new MeshBasicMaterial())
+      map.terrain.add(marker)
+      await map.init()
+
+      const blob = await map.export('glb')
+      const json = glbJson(new Uint8Array(await blob.arrayBuffer()))
+
+      expect(blob.type).toBe('model/gltf-binary')
+      // 9 tiles and the marker
+      expect(json.meshes).toHaveLength(10)
+      const scale = Utils.tileWidth(location.lat, 11) / 600
+      expect(json.nodes[0].matrix?.[0]).toBeCloseTo(scale, 6)
+    })
+
+    it('leaves out the layers and keeps scene units when asked to', async () => {
+      const map = createMap({ source: { api: 'none' } })
+      map.terrain.add(new Mesh(new BoxGeometry(), new MeshBasicMaterial()))
+      await map.init()
+
+      const blob = await map.export('glb', { layers: false, units: 'scene' })
+      const json = glbJson(new Uint8Array(await blob.arrayBuffer()))
+
+      expect(json.meshes).toHaveLength(9)
+      expect(json.nodes[0].matrix?.[0]).toBeCloseTo(1, 9)
+    })
+
+    it('exports STL for 3D printing', async () => {
+      const map = createMap({
+        source: { api: 'none' },
+        options: { nTiles: 1, tileSegments: 2 }
+      })
+      await map.init()
+
+      const view = new DataView(await (await map.export('stl')).arrayBuffer())
+
+      expect(view.getUint32(80, true)).toBe(2 * 2 * 2)
+    })
+  })
+
+  describe('vertical scale', () => {
+    it('sets zScale from an exaggeration of true scale', () => {
+      const map = createMap({ options: { zoom: 15, exaggeration: 2 } })
+      const trueScale = 600 / Utils.tileWidth(location.lat, 15)
+
+      expect(map.options.zScale).toBeCloseTo(2 * trueScale, 12)
+    })
+
+    it('draws baseAltitude at z = 0, in the mesh and in positions', async () => {
+      const lifted = createMap()
+      const based = createMap({
+        options: { tileSegments: 8, baseAltitude: 1000 }
+      })
+      await Promise.all([lifted.init(), based.init()])
+      const { zScale } = lifted.options
+      const ground = (map: Map) =>
+        tileAt(map, 1069, 723).geometry.attributes.position.getZ(10)
+
+      expect(ground(based)).toBeCloseTo(ground(lifted) - 1000 * zScale, 6)
+      expect(based.getPosition({ ...location, alt: 1500 }).z).toBeCloseTo(
+        500 * zScale,
+        9
+      )
+      const surface = await based.getTerrainPosition(location)
+      expect(based.getLocation(surface).alt).toBeCloseTo(
+        (await lifted.getTerrainPosition(location)).z / zScale,
+        3 // float32 vertices
+      )
+    })
+  })
+
   describe('getPosition', () => {
     it('projects a location onto the terrain plane', async () => {
       const map = createMap()
@@ -523,6 +753,160 @@ describe('Map', () => {
       await map.init()
 
       expect(map.pick(rayDown(new Vector3(1e4, 1e4, 0)))).toBeUndefined()
+    })
+  })
+
+  describe('sources', () => {
+    it('accepts props instead of instances', () => {
+      const map = createMap({
+        source: { url: 'https://img/{z}/{x}/{y}.jpg', attribution: '© Img' },
+        elevation: { api: 'mapterhorn' }
+      })
+
+      expect(map.source).toBeInstanceOf(Source)
+      expect(map.source.mapUrl(1, 0, 1)).toBe('https://img/1/0/1.jpg')
+      expect(map.elevation).toBeInstanceOf(ElevationSource)
+      expect(map.elevation.api).toBe('mapterhorn')
+    })
+
+    it('uses AWS terrain tiles by default', () => {
+      expect(createMap().elevation.api).toBe('aws')
+    })
+
+    it('has no imagery without a source: a plain material in its color', async () => {
+      const map = new Map({
+        location,
+        options: { tileSegments: 8 },
+        material: { color: '#d8d2c6' }
+      })
+      await map.init()
+
+      expect(map.source.api).toBe('none')
+      await vi.waitFor(() => {
+        for (const tile of Object.values(map.tileCache)) {
+          const { material } = tile.mesh
+          expect(material).toBeInstanceOf(MeshLambertMaterial)
+          expect(material).toMatchObject({ map: null })
+        }
+      })
+      const { material } = tileAt(map, 1069, 723).mesh
+      expect((material as MeshLambertMaterial).color.getHexString()).toBe(
+        'd8d2c6'
+      )
+    })
+
+    it('lists the attributions of every source and layer once', () => {
+      const map = createMap({
+        source: { api: 'osm' },
+        elevation: { url: 'u', attribution: '© OpenStreetMap contributors' }
+      })
+      map.addLayer({ attribution: '© Buildings' })
+      map.addLayer({})
+
+      expect(map.attributions).toEqual([
+        '© OpenStreetMap contributors',
+        '© Buildings'
+      ])
+    })
+  })
+
+  describe('layers', () => {
+    const recordingLayer = () => {
+      const events: string[] = []
+      const attach = vi.fn(() => events.push('attach'))
+      const detach = vi.fn(() => events.push('detach'))
+      const tileRemoved = vi.fn((tile: Tile) =>
+        events.push(`removed ${tile.key()}`)
+      )
+      const layer: MapLayer = {
+        attach,
+        detach,
+        tileRemoved,
+        tileLoaded: (tile: Tile) => {
+          events.push(`loaded ${tile.key()}`)
+          // the tile is already stitched and in the scene
+          expect(tile.loaded).toBe(true)
+          expect(tile.mesh.parent).not.toBeNull()
+        }
+      }
+      return { layer, events, attach, detach, tileRemoved }
+    }
+
+    it('tells a layer about every tile, loaded before or after it was added', async () => {
+      const map = createMap()
+      const early = recordingLayer()
+      map.addLayer(early.layer)
+      await map.init()
+      const late = recordingLayer()
+      expect(map.addLayer(late.layer)).toBe(late.layer)
+
+      for (const { events } of [early, late]) {
+        expect(events[0]).toBe('attach')
+        expect(events.filter((e) => e.startsWith('loaded'))).toHaveLength(9)
+      }
+      expect(map.layers).toEqual([early.layer, late.layer])
+    })
+
+    it('also for tiles loaded on demand', async () => {
+      const map = createMap()
+      const { layer, events } = recordingLayer()
+      map.addLayer(layer)
+      await map.init()
+
+      await map.getTerrainPosition({
+        lat: location.lat,
+        lon: location.lon + (2 * 360) / 2 ** defaultMapOptions.zoom
+      })
+
+      expect(events).toContain('loaded 11/1071/723')
+    })
+
+    it('removes tiles from layers on clean() and keeps the layers', async () => {
+      const map = createMap()
+      const { layer, events } = recordingLayer()
+      map.addLayer(layer)
+      await map.init()
+
+      map.clean()
+      expect(events.filter((e) => e.startsWith('removed'))).toHaveLength(9)
+      expect(map.layers).toEqual([layer])
+
+      await map.init()
+      expect(events.filter((e) => e.startsWith('loaded'))).toHaveLength(18)
+    })
+
+    it('detaches removed layers, once', async () => {
+      const map = createMap()
+      const { layer, attach, detach, tileRemoved } = recordingLayer()
+      map.addLayer(layer)
+      map.addLayer(layer)
+      await map.init()
+
+      map.removeLayer(layer)
+      map.removeLayer(layer)
+
+      expect(attach).toHaveBeenCalledOnce()
+      expect(detach).toHaveBeenCalledOnce()
+      expect(map.layers).toEqual([])
+      map.clean()
+      expect(tileRemoved).not.toHaveBeenCalled()
+    })
+
+    it('keeps loading when a layer throws', async () => {
+      const error = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => undefined)
+      const map = createMap()
+      map.addLayer({
+        tileLoaded: () => {
+          throw new Error('layer bug')
+        }
+      })
+
+      await map.init()
+
+      expect(map.terrain.children).toHaveLength(9)
+      expect(error).toHaveBeenCalledWith(new Error('layer bug'))
     })
   })
 

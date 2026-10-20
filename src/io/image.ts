@@ -1,23 +1,16 @@
 // Browser-native image helpers (replace get-pixels + Node polyfills).
 
-export type Canvas2D = CanvasDrawImage & CanvasImageData
+import { fetchResponse, readBody, retry, TransientError } from './fetch'
+import type { TileImageSource } from '../sources/Source.class'
+
+export type Canvas2D = CanvasDrawImage &
+  CanvasImageData &
+  Partial<CanvasFilters>
 
 export type DecodedImage = ImageBitmap | HTMLImageElement
 
-/** Backoff before each retry of a transient failure, in ms. */
-export const RETRY_DELAYS = [250, 1000, 3000] as const
-
-/** HTTP statuses worth another attempt (timeouts, rate limits, server errors). */
-const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504])
-
-/** A failure that may succeed on another attempt. */
-class TransientError extends Error {}
-
 /** The body arrived but could not be decoded (e.g. truncated by the server). */
 class DecodeError extends TransientError {}
-
-export const isAbortError = (error: unknown) =>
-  error instanceof DOMException && error.name === 'AbortError'
 
 export function createCanvas2D(
   width: number,
@@ -38,61 +31,13 @@ export function createCanvas2D(
   return { canvas, context }
 }
 
-const delay = (ms: number, signal?: AbortSignal) =>
-  new Promise<void>((resolve, reject) => {
-    const abort = () => {
-      clearTimeout(timer)
-      reject(signal?.reason as Error)
-    }
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', abort)
-      resolve()
-    }, ms)
-    if (signal?.aborted) abort()
-    else signal?.addEventListener('abort', abort, { once: true })
-  })
-
-/** Runs `attempt` again after `TransientError`s, up to `RETRY_DELAYS.length` times. */
-async function retry<T>(
-  signal: AbortSignal | undefined,
-  attempt: (index: number) => Promise<T>
-): Promise<T> {
-  for (let index = 0; ; index++) {
-    try {
-      return await attempt(index)
-    } catch (error) {
-      if (!(error instanceof TransientError)) throw error
-      if (index >= RETRY_DELAYS.length) throw error
-      await delay(RETRY_DELAYS[index], signal)
-    }
-  }
-}
-
 async function fetchBlob(
   url: string,
   signal: AbortSignal | undefined,
-  // a retry must not get the same broken response from the HTTP cache
   cache: RequestCache
 ): Promise<Blob> {
-  try {
-    const response = await fetch(url, {
-      signal,
-      mode: 'cors',
-      credentials: 'omit',
-      cache
-    })
-    if (!response.ok) {
-      const message = `Failed to load ${url}: ${response.status} ${response.statusText}`
-      throw RETRYABLE_STATUS.has(response.status)
-        ? new TransientError(message)
-        : new Error(message)
-    }
-    return await response.blob()
-  } catch (error) {
-    // fetch() and body reads reject with TypeError on network failures
-    if (!(error instanceof TypeError)) throw error
-    throw new TransientError(`Failed to load ${url}`, { cause: error })
-  }
+  const response = await fetchResponse(url, signal, cache)
+  return readBody(url, () => response.blob())
 }
 
 type FetchedImage =
@@ -151,7 +96,8 @@ export async function loadImage(
   })
 }
 
-export function releaseImage(image: DecodedImage) {
+/** Closes `ImageBitmap`s; other images are left to the garbage collector. */
+export function releaseImage(image: TileImageSource) {
   if ('close' in image) image.close()
 }
 

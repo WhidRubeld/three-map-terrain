@@ -11,7 +11,17 @@ export interface FakeBitmap {
 /** Minimal OffscreenCanvas that records draw calls. */
 export class FakeOffscreenCanvas {
   static instances: FakeOffscreenCanvas[] = []
-  draws: { url: string; x: number; y: number; w: number; h: number }[] = []
+  draws: {
+    url: string
+    x: number
+    y: number
+    w: number
+    h: number
+    /** source rectangle `[sx, sy, sw, sh]` of a 9-argument draw */
+    crop?: number[]
+    /** the context's `filter`, if not `'none'` */
+    filter?: string
+  }[] = []
   contextSettings: unknown
 
   constructor(
@@ -23,14 +33,26 @@ export class FakeOffscreenCanvas {
 
   getContext(_type: '2d', settings?: unknown) {
     this.contextSettings = settings
+    const draws = this.draws
     return {
-      drawImage: (
-        image: FakeBitmap,
-        x: number,
-        y: number,
-        w = image.width,
-        h = image.height
-      ) => this.draws.push({ url: image.url, x, y, w, h }),
+      filter: 'none',
+      drawImage(image: FakeBitmap, ...args: number[]) {
+        const filter = this.filter === 'none' ? {} : { filter: this.filter }
+        if (args.length === 8) {
+          const [sx, sy, sw, sh, x, y, w, h] = args
+          return draws.push({
+            url: image.url,
+            x,
+            y,
+            w,
+            h,
+            crop: [sx, sy, sw, sh],
+            ...filter
+          })
+        }
+        const [x, y, w = image.width, h = image.height] = args
+        return draws.push({ url: image.url, x, y, w, h, ...filter })
+      },
       getImageData: (x: number, y: number, width: number, height: number) => ({
         width,
         height,
@@ -128,4 +150,25 @@ export async function settle<T>(promise: Promise<T>): Promise<T> {
     await vi.advanceTimersByTimeAsync(50)
   }
   return promise
+}
+
+/** `FileReader` for GLTFExporter (Node has none). */
+export class FakeFileReader {
+  result: ArrayBuffer | string | null = null
+  onloadend: (() => void) | null = null
+
+  readAsArrayBuffer(blob: Blob) {
+    void blob.arrayBuffer().then((buffer) => {
+      this.result = buffer
+      this.onloadend?.()
+    })
+  }
+
+  readAsDataURL(blob: Blob) {
+    void blob.arrayBuffer().then((buffer) => {
+      const base64 = Buffer.from(buffer).toString('base64')
+      this.result = `data:${blob.type || 'application/octet-stream'};base64,${base64}`
+      this.onloadend?.()
+    })
+  }
 }

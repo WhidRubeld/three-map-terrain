@@ -18,21 +18,57 @@ import {
 import { MapControls } from 'three/addons/controls/MapControls.js'
 import type { WebGPURenderer } from 'three/webgpu'
 
-import { Map, Source } from '../src'
+import {
+  type BuildingSourceApi,
+  type BuildingSourceProps,
+  Buildings,
+  type ElevationApi,
+  type ElevationSourceProps,
+  Map,
+  type SourceProps
+} from '../src'
 import type { Playground } from './types'
 
 const params = new URLSearchParams(window.location.search)
 const rendererType = params.get('renderer') === 'webgpu' ? 'webgpu' : 'webgl'
 const lights = params.get('lights') !== '0'
 const wireframe = params.get('wireframe') === '1'
-const api = params.get('api') === 'osm' ? 'osm' : 'eox'
+const api = params.get('api') ?? 'eox'
+const elevationApi = (params.get('elevation') ?? 'aws') as ElevationApi
+const buildingsApi = params.get('buildings') as BuildingSourceApi | null
+// for the presets that need one (mapbox, maptiler, protomaps)
+const token = params.get('token') ?? ''
 const nTiles = Number(params.get('nTiles') ?? 3)
 const tileSegments = Number(params.get('segments') ?? 100)
 const topView = params.get('view') === 'top'
 // WebGPURenderer with its WebGL2 backend (for software WebGPU adapters in CI)
 const forceWebGL = params.get('forceWebGL') === '1'
 
-const location = { lat: 46.57634, lon: 7.9904 }
+// the Bernese Alps at zoom 11 by default; any other place or zoom is drawn
+// true to scale
+const location = {
+  lat: Number(params.get('lat') ?? 46.57634),
+  lon: Number(params.get('lon') ?? 7.9904)
+}
+const zoom = Number(params.get('zoom') ?? 11)
+const alps = !params.has('lat') && !params.has('lon') && zoom === 11
+const tileSize = 600
+
+// a hex color without '#' (e.g. color=e9e4da), and a CSS filter for imagery
+const color = params.has('color') ? `#${params.get('color') ?? ''}` : undefined
+const filter = params.get('filter') ?? undefined
+const edges = params.get('edges') === '1'
+
+const imagery: SourceProps =
+  api === 'none' || api === 'osm'
+    ? { api }
+    : api === 'swisstopo'
+      ? {
+          url: 'https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/default/current/3857/{z}/{x}/{y}.jpeg',
+          maxZoom: 20,
+          attribution: '© swisstopo'
+        }
+      : { api: 'eox' }
 
 async function createRenderer(): Promise<{
   renderer: WebGLRenderer | WebGPURenderer
@@ -68,11 +104,32 @@ scene.add(sun)
 
 // map
 const map = new Map({
-  source: new Source({ api }),
+  source: imagery,
+  elevation: { api: elevationApi, token } as ElevationSourceProps,
   location,
-  options: { nTiles, tileSegments },
-  material: { lights, wireframe }
+  options: {
+    nTiles,
+    tileSegments,
+    zoom,
+    tileSize,
+    ...(alps ? {} : { exaggeration: Number(params.get('exaggeration') ?? 1) }),
+    baseAltitude: Number(params.get('base') ?? 0)
+  },
+  material: {
+    lights,
+    wireframe,
+    ...(color ? { color } : {}),
+    ...(filter ? { filter } : {})
+  }
 })
+const buildings = buildingsApi
+  ? map.addLayer(
+      new Buildings({
+        source: { api: buildingsApi, token } as BuildingSourceProps,
+        edges
+      })
+    )
+  : undefined
 scene.add(map.terrain)
 const ready = map.init(() => {
   console.info('Map is ready')
@@ -112,16 +169,28 @@ if (topView) {
 
   scene.add(new AxesHelper(1e3))
 
-  const marker = new Mesh(
-    new SphereGeometry(8, 24, 12),
-    new MeshBasicMaterial({ color: 0xf04040 })
-  )
-  const { x, y, z } = map.getPosition({ ...location, alt: 3e3 })
-  marker.position.set(x, y, z + 8)
-  scene.add(marker)
+  // look at the ground: true to scale, it is far above z = 0
+  if (!alps) {
+    void map.getTerrainPosition(location).then(({ z }) => {
+      controls?.target.setZ(z)
+      camera.position.z += z
+    })
+  }
 
-  // down in the Grindelwald valley until something is clicked
-  void map.getTerrainPosition({ lat: 46.6242, lon: 8.0414 }).then(placeOnGround)
+  if (alps) {
+    const marker = new Mesh(
+      new SphereGeometry(8, 24, 12),
+      new MeshBasicMaterial({ color: 0xf04040 })
+    )
+    const { x, y, z } = map.getPosition({ ...location, alt: 3e3 })
+    marker.position.set(x, y, z + 8)
+    scene.add(marker)
+
+    // down in the Grindelwald valley until something is clicked
+    void map
+      .getTerrainPosition({ lat: 46.6242, lon: 8.0414 })
+      .then(placeOnGround)
+  }
 }
 
 window.addEventListener('resize', () => {
@@ -139,8 +208,26 @@ const frame = () => {
 void renderer.setAnimationLoop(frame)
 
 const info = document.querySelector('#info')
-const status = `r${REVISION} · ${backend} · ${api} · lights ${lights ? 'on' : 'off'}${wireframe ? ' · wireframe' : ''}`
+const status = [
+  `r${REVISION}`,
+  backend,
+  `z${zoom}`,
+  api,
+  elevationApi,
+  ...(buildingsApi
+    ? [`buildings ${buildingsApi}${edges ? ' + edges' : ''}`]
+    : []),
+  `lights ${lights ? 'on' : 'off'}`,
+  ...(wireframe ? ['wireframe'] : []),
+  ...(color ? [color] : []),
+  ...(filter ? [filter] : [])
+].join(' · ')
 if (info) info.textContent = `${status} · click the terrain`
+const credits = document.querySelector('#credits')
+const showCredits = () => {
+  if (credits) credits.textContent = map.attributions.join(' · ')
+}
+showCredits()
 
 // click → geolocation (pick) → marker on the surface (getTerrainPositionSync)
 const raycaster = new Raycaster()
@@ -158,6 +245,22 @@ renderer.domElement.addEventListener('click', (event) => {
   )
   raycaster.setFromCamera(pointer, camera)
 
+  const building = buildings?.pick(raycaster)
+  buildings?.highlight(building?.feature)
+  playground.lastBuilding = building && {
+    id: building.feature.id,
+    height: building.feature.height,
+    lat: building.lat,
+    lon: building.lon
+  }
+  if (building) {
+    if (info) {
+      const height = building.feature.height
+      info.textContent = `${status} · building ${String(building.feature.id ?? '')} · ${height === undefined ? '?' : Math.round(height)} m`
+    }
+    return
+  }
+
   const hit = map.pick(raycaster)
   playground.lastPick = hit && { lat: hit.lat, lon: hit.lon, alt: hit.alt }
   if (!hit) return
@@ -171,13 +274,18 @@ renderer.domElement.addEventListener('click', (event) => {
 
 const playground: Playground = {
   map,
+  buildings,
   revision: REVISION,
   backend,
   ready,
   lastPick: undefined,
+  lastBuilding: undefined,
+  // tiles past the placeholder: textured, or plain without imagery
   texturedTiles: () =>
     Object.values(map.tileCache).filter(
-      ({ mesh }) => 'map' in mesh.material && mesh.material.map !== null
+      ({ mesh }) =>
+        'map' in mesh.material &&
+        (mesh.material.map !== null || map.source.api === 'none')
     ).length,
   freeze: async () => {
     await renderer.setAnimationLoop(null)

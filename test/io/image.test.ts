@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { vi } from 'vitest'
 
-import { loadImage, loadImageData, RETRY_DELAYS } from '../src/image'
+import { RETRY_DELAYS } from '../../src/io/fetch'
+import { loadImage, loadImageData } from '../../src/io/image'
 import {
   bitmaps,
   createImageBitmap,
@@ -10,7 +11,7 @@ import {
   installBrowserFakes,
   replies,
   settle
-} from './browser-fakes'
+} from '../support/browser-fakes'
 
 const ATTEMPTS = RETRY_DELAYS.length + 1
 

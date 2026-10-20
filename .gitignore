@@ -17,3 +17,4 @@ package-lock.json
 # Test artifacts
 playwright-report
 test-results
+.playwright-mcp
