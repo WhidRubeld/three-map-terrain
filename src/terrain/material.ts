@@ -29,6 +29,12 @@ export interface MaterialOptions {
   lights: boolean
   /** Draw lines: the terrain's triangles, the layers' edges. */
   wireframe: boolean
+  /**
+   * In wireframe, how opaque the layers' faces are under their lines, from
+   * 0 (hidden, the default) to 1 — e.g. 0.12 for a light fill. The terrain
+   * is lines only.
+   */
+  fillOpacity?: number
   fog: boolean
   /**
    * The color of the surface. It tints imagery (white leaves it as it is);

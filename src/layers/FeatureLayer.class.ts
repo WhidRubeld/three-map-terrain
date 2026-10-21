@@ -5,17 +5,18 @@ import {
   type ColorRepresentation,
   Float32BufferAttribute,
   Group,
-  type InstancedMesh,
+  InstancedMesh,
   type Intersection,
   LineBasicMaterial,
   LineSegments,
-  Material,
+  type Material,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
   MeshLambertMaterial,
   type Object3D,
   type Raycaster,
-  type Vector3
+  Vector3
 } from 'three'
 
 import { isAbortError } from '../io/fetch'
@@ -28,6 +29,14 @@ import { Footprint } from './footprint'
 import { FEATURE_ATTRIBUTE } from './geometry'
 import { Utils } from '../geo/Utils.class'
 import {
+  addDrawer,
+  type Drawer,
+  type DrawJob,
+  kick,
+  removeDrawer,
+  sliced
+} from './scheduler'
+import {
   type Rect,
   type SourceFeatures,
   TileContext
@@ -35,9 +44,9 @@ import {
 
 /**
  * How a layer's parts are drawn: the look (the map's material options —
- * `color`, `lights`, `wireframe`, `fog` — overridden by these), one
- * material for its faces, or a material per part (`undefined`: the look's).
- * Materials you pass are yours: the layer never disposes them.
+ * `color`, `lights`, `wireframe`, `fillOpacity`, `fog` — overridden by
+ * these), one material for its faces, or a material per part (`undefined`:
+ * the look's). Materials you pass are yours: the layer never disposes them.
  */
 export type LayerMaterial =
   Partial<MaterialOptions> | Material | ((part: string) => Material | undefined)
@@ -84,30 +93,42 @@ export interface GroundCover {
   covers(x: number, y: number, margin?: number): boolean
   /** Calls `listener` with every tile drawn (again) or removed; returns how to stop. */
   onTileDrawn(listener: (tile: Tile) => void): () => void
+  /**
+   * Whether a tile is still to be drawn (its data loading, its drawing
+   * queued): layers keeping clear of this one wait for it.
+   */
+  pending?(tile: Tile): boolean
   whenReady(): Promise<void>
 }
 
 /** The material options resolved against the map's: the layer's look. */
 export type Look = MaterialOptions
 
+type PartKind = 'faces' | 'lines'
+
 interface TileEntry<F> {
   tile: Tile
   keys: SourceTileKey[]
+  /** While the source tiles load. */
+  loading: boolean
   /** Set once the source tiles are loaded. */
   sources: SourceFeatures<F>[] | undefined
   /** Keys of the tiles whose heights the drawing read. */
   depends: Set<string>
   features: F[]
   objects: Object3D[]
+  /** The part of every object the layer built: its material follows the look. */
+  parts: globalThis.Map<Object3D, { part: string; kind: PartKind }>
+  /** Parts (`kind:part`) left out because their material hid them. */
+  skipped: Set<string>
   /** Objects from `ctx.add()`, and the index of their feature. */
   custom: globalThis.Map<Object3D, number>
   /** What the tile's faces cover, made when first asked. */
   footprint: Footprint | undefined
-  /** Copies of a geometry: the feature and color of every copy. */
-  instanced: globalThis.Map<
-    InstancedMesh,
-    { features: number[]; colors: Float32Array }
-  >
+  /** Copies of a geometry: the feature of every copy. */
+  instanced: globalThis.Map<InstancedMesh, number[]>
+  /** The outlines of copies in wireframe, sharing their matrices. */
+  outlines: globalThis.Map<InstancedMesh, InstancedMesh>
   overlays: Object3D[]
   done: Promise<void>
 }
@@ -115,8 +136,28 @@ interface TileEntry<F> {
 /** A ray hitting a feature behind the terrain this far (scene units) is hidden. */
 const OCCLUSION_TOLERANCE = 0.01
 
+const FOCUS = new Vector3()
+const MATRIX = new Matrix4()
+
 /** Overlays of highlighted features are drawn in front of them. */
 const HIGHLIGHT_OFFSET = { factor: -2, units: -8 }
+
+/** Whether a layer's material option is a look (not a material or a function). */
+const isLook = (
+  option: LayerMaterial | undefined
+): option is Partial<MaterialOptions> =>
+  typeof option === 'object' && !('isMaterial' in option)
+
+const sameColor = (a?: ColorRepresentation, b?: ColorRepresentation) =>
+  a === b ||
+  (a !== undefined && b !== undefined && new Color(a).equals(new Color(b)))
+
+const sameLook = (a: Look, b: Look) =>
+  a.lights === b.lights &&
+  a.wireframe === b.wireframe &&
+  a.fog === b.fog &&
+  (a.fillOpacity ?? 0) === (b.fillOpacity ?? 0) &&
+  sameColor(a.color, b.color)
 
 const matches = (feature: unknown, target: unknown) =>
   feature === target ||
@@ -131,8 +172,10 @@ const matches = (feature: unknown, target: unknown) =>
  * source's tiles for every terrain tile (shared, cancelled when unused),
  * calls `build` with a `TileContext` to draw them, and keeps the drawing in
  * step with the terrain: tiles are drawn again when the heights they read
- * change. It resolves materials per part, picks features (not behind the
- * terrain), highlights them with any material, and survives `map.clean()`.
+ * change. Tiles are drawn a few at a time between frames, the nearest to
+ * `map.focus` first. It resolves materials per part (changed in place when
+ * the look does), picks features (not behind the terrain), highlights them
+ * with any material, and survives `map.clean()`.
  *
  *     map.addLayer(new FeatureLayer({
  *       source: { minZoom: 14, maxZoom: 14, load: loadTrees },
@@ -151,7 +194,7 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
 
   /** The look, resolved when attached and when the map's changes. */
   protected look: Look | undefined
-  protected readonly materialOption: LayerMaterial | undefined
+  protected materialOption: LayerMaterial | undefined
 
   private readonly buildTile:
     ((ctx: TileContext<F>, draw: DrawFeatures<F>) => void) | undefined
@@ -166,8 +209,23 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
   private readonly highlightMaterials: Material[] = []
   private highlighted: { target: unknown; color: Color } | undefined
   private readonly dirty = new Set<TileEntry<F>>()
-  private flushing: Promise<void> | undefined
+  /** `prepare()` is due before the next tile is drawn. */
+  private stale = false
+  private preparing = false
+  /** Tiles whose source tiles are loading. */
+  private loadingTiles = 0
+  private readonly drawer: Drawer
   private readonly drawnListeners = new Set<(tile: Tile) => void>()
+  /** Changes whenever a tile's objects do: `covers()` caches by it. */
+  private version = 0
+  private coverCache:
+    | {
+        x: number
+        y: number
+        version: number
+        footprints: { footprint: Footprint; tile: Tile }[]
+      }
+    | undefined
 
   constructor({
     source,
@@ -188,6 +246,10 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
       name.charAt(0).toUpperCase() + name.slice(1),
       (tile) => this.source.load(tile)
     )
+    this.drawer = {
+      next: (waiting) => this.nextJob(waiting),
+      loading: () => this.loadingTiles > 0
+    }
   }
 
   get attribution() {
@@ -207,6 +269,7 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
     this.map = map
     map.terrain.add(this.group)
     this.look = this.resolveLook(map)
+    addDrawer(this.drawer)
   }
 
   detach() {
@@ -215,6 +278,8 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
     this.disposeMaterials()
     this.look = undefined
     this.map = undefined
+    this.stale = false
+    removeDrawer(this.drawer)
   }
 
   /** Removes the layer from its map and frees its resources. */
@@ -230,16 +295,17 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
     const entry: TileEntry<F> = {
       tile,
       keys: [],
+      loading: true,
       sources: undefined,
       depends: new Set(),
       features: [],
       objects: [],
+      parts: new globalThis.Map<Object3D, { part: string; kind: PartKind }>(),
+      skipped: new Set<string>(),
       custom: new globalThis.Map<Object3D, number>(),
       footprint: undefined,
-      instanced: new globalThis.Map<
-        InstancedMesh,
-        { features: number[]; colors: Float32Array }
-      >(),
+      instanced: new globalThis.Map<InstancedMesh, number[]>(),
+      outlines: new globalThis.Map<InstancedMesh, InstancedMesh>(),
       overlays: [],
       done: Promise.resolve()
     }
@@ -262,6 +328,8 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
     }
     this.invalidateDepending(tile)
     this.drawn(tile)
+    // layers waiting for it may go on
+    kick()
   }
 
   // --- the ground it takes ----------------------------------------------------
@@ -274,29 +342,53 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
   covers(x: number, y: number, margin = 0): boolean {
     const map = this.map
     if (!map) return false
-    const { zoom, tileSize } = map.options
+    const { tileSize } = map.options
     const [tx, ty] = [Math.floor(x), Math.floor(y)]
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const tile = map.tileCache[Utils.getTileKey(zoom, tx + dx, ty + dy)] as
-          Tile | undefined
-        const entry = tile && this.tiles.get(tile)
-        if (!entry) continue
-        entry.footprint ??= new Footprint(
-          entry.objects.flatMap((object) =>
-            (object as Partial<Mesh>).isMesh &&
-            !entry.custom.has(object) &&
-            !entry.instanced.has(object as InstancedMesh)
-              ? [(object as Mesh).geometry]
-              : []
+    let cache = this.coverCache
+    // points of one tile ask one after another: its 3 × 3 tiles' faces once
+    if (cache?.x !== tx || cache.y !== ty || cache.version !== this.version) {
+      cache = { x: tx, y: ty, version: this.version, footprints: [] }
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const tile = map.tileCache[
+            Utils.getTileKey(map.options.zoom, tx + dx, ty + dy)
+          ] as Tile | undefined
+          const entry = tile && this.tiles.get(tile)
+          if (!entry) continue
+          entry.footprint ??= new Footprint(
+            entry.objects.flatMap((object) =>
+              (object as Partial<Mesh>).isMesh &&
+              !entry.custom.has(object) &&
+              !entry.instanced.has(object as InstancedMesh)
+                ? [(object as Mesh).geometry]
+                : []
+            )
           )
-        )
-        const lx = (x - entry.tile.x - 0.5) * tileSize
-        const ly = (0.5 - (y - entry.tile.y)) * tileSize
-        if (entry.footprint.covers(lx, ly, margin * tileSize)) return true
+          if (!entry.footprint.empty) {
+            cache.footprints.push({
+              footprint: entry.footprint,
+              tile: entry.tile
+            })
+          }
+        }
       }
+      this.coverCache = cache
+    }
+    for (const { footprint, tile } of cache.footprints) {
+      const lx = (x - tile.x - 0.5) * tileSize
+      const ly = (0.5 - (y - tile.y)) * tileSize
+      if (footprint.covers(lx, ly, margin * tileSize)) return true
     }
     return false
+  }
+
+  /** Whether a tile is still to be drawn: its features loading, or its drawing queued. */
+  pending(tile: Tile): boolean {
+    const entry = this.tiles.get(tile)
+    return (
+      entry !== undefined &&
+      (entry.loading || (entry.sources !== undefined && this.dirty.has(entry)))
+    )
   }
 
   /**
@@ -318,20 +410,40 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
     }
   }
 
-  /** The map's look changed: draw everything again in the new one. */
+  /**
+   * The map's look changed: the materials follow — changed in place, the
+   * geometry kept; a material function is asked again.
+   */
   materialChanged(map: Map) {
-    this.disposeMaterials()
+    const previous = this.look
     this.look = this.resolveLook(map)
-    for (const entry of this.tiles.values()) this.dirty.add(entry)
-    this.flush()
+    this.restyle(previous, false)
+  }
+
+  /**
+   * Changes how the layer is drawn (see `LayerMaterial`): a look is merged
+   * into the layer's own (`color: undefined` takes the map's again), a
+   * material or a function replaces it, `undefined` takes the map's look.
+   * The materials change in place; the geometry is kept.
+   */
+  setMaterial(material: LayerMaterial | undefined) {
+    const current = this.materialOption
+    this.materialOption =
+      isLook(material) && isLook(current)
+        ? { ...current, ...material }
+        : material
+    if (!this.map) return
+    const previous = this.look
+    this.look = this.resolveLook(this.map)
+    this.restyle(previous, true)
   }
 
   /** Resolves once every loaded terrain tile is drawn (or failed to load). */
   async whenReady(): Promise<void> {
     for (;;) {
       await Promise.all([...this.tiles.values()].map((entry) => entry.done))
-      if (!this.flushing) return
-      await this.flushing
+      if (!this.hasWork()) return
+      await sliced()
     }
   }
 
@@ -403,7 +515,7 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
     const copies = entry?.instanced.get(object as InstancedMesh)
     if (entry && copies) {
       if (instanceId !== undefined) {
-        feature = entry.features.at(copies.features[instanceId])
+        feature = entry.features.at(copies[instanceId])
       }
     } else if (entry && attribute) {
       const vertex = (object as Partial<Mesh>).isMesh ? face?.a : index
@@ -479,39 +591,69 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
     )
   }
 
+  /** The layer's own look: its material option if that is one, else none. */
+  protected get ownLook(): Partial<MaterialOptions> {
+    return isLook(this.materialOption) ? this.materialOption : {}
+  }
+
   /** The look: the map's material options with the layer's own. */
   protected resolveLook(map: Map): Look {
-    const own =
-      this.materialOption === undefined ||
-      this.materialOption instanceof Material ||
-      typeof this.materialOption === 'function'
-        ? {}
-        : this.materialOption
-    const { lights, wireframe, fog, color } = { ...map.materialOptions, ...own }
-    return { lights, wireframe, fog, color }
+    const merged: Partial<MaterialOptions> = { ...map.materialOptions }
+    const own = Object.entries(this.ownLook) as [string, unknown][]
+    for (const [key, value] of own) {
+      // `undefined` takes the map's
+      if (value !== undefined) Object.assign(merged, { [key]: value })
+    }
+    const { lights, wireframe, fillOpacity, fog, color } =
+      merged as MaterialOptions
+    return { lights, wireframe, fillOpacity, fog, color }
   }
 
   /**
-   * The look's material for a part: unlit or lit (`lights`), with the
-   * vertex colors; faces hidden in `wireframe` (they are still picked),
-   * lines shown only there.
+   * The color of a part's built-in material, which multiplies the vertex
+   * colors: the layer's own `color`, else white. Layers give their parts
+   * the colors of their look here, so that a new look only changes the
+   * materials.
    */
-  protected createMaterial(
+  protected partColor(
     _part: string,
-    kind: 'faces' | 'lines',
-    look: Look
-  ): Material {
+    _kind: PartKind,
+    _look: Look
+  ): ColorRepresentation {
+    return this.ownLook.color ?? 0xffffff
+  }
+
+  /**
+   * Whether a look change needs the tiles drawn again — when the drawing
+   * depends on more than the materials (e.g. colors per feature).
+   */
+  protected redrawsOn(_previous: Look, _next: Look): boolean {
+    return false
+  }
+
+  /**
+   * The look's material for a part: unlit or lit (`lights`), in
+   * `partColor` times the vertex colors; in `wireframe` the lines show and
+   * the faces are hidden (still picked) or a light fill (`fillOpacity`).
+   */
+  protected createMaterial(part: string, kind: PartKind, look: Look): Material {
+    const color = this.partColor(part, kind, look)
     if (kind === 'lines') {
       return new LineBasicMaterial({
+        color,
         vertexColors: true,
         fog: look.fog,
         visible: look.wireframe
       })
     }
+    const opacity = look.wireframe ? Math.min(1, look.fillOpacity ?? 0) : 1
     const parameters = {
+      color,
       vertexColors: true,
       fog: look.fog,
-      visible: !look.wireframe
+      visible: opacity > 0,
+      // a fill under the lines: seen through, hiding none of them
+      ...(opacity < 1 && { transparent: true, opacity, depthWrite: false })
     }
     return look.lights
       ? new MeshLambertMaterial(parameters)
@@ -519,26 +661,26 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
   }
 
   /** The material of a part: yours if you gave one, else the look's. */
-  protected material(part: string, kind: 'faces' | 'lines'): Material {
+  protected material(part: string, kind: PartKind): Material {
     const key = `${kind}:${part}`
     const cached = this.materials.get(key)
     if (cached) return cached.material
-    const option = this.materialOption
-    let material: Material | undefined
-    if (typeof option === 'function') material = option(part)
-    else if (option instanceof Material && kind === 'faces') material = option
-    const own = material === undefined
-    material ??= this.createMaterial(part, kind, this.requireLook())
-    this.materials.set(key, { material, own })
+    const yours = this.optionMaterial(part, kind)
+    const material =
+      yours ?? this.createMaterial(part, kind, this.requireLook())
+    this.materials.set(key, { material, own: yours === undefined })
     return material
   }
 
-  /** Draws tiles again once the current task is done. */
+  /** Whether a tile can be drawn now; else it waits (e.g. for other layers). */
+  protected canDraw(_tile: Tile): boolean {
+    return true
+  }
+
+  /** Draws tiles again soon, a few at a time between frames. */
   protected schedule() {
-    this.flushing ??= Promise.resolve().then(() => {
-      this.flushing = undefined
-      this.flush()
-    })
+    if (!this.preparing) this.stale = true
+    kick()
   }
 
   protected requireLook(): Look {
@@ -548,10 +690,21 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
 
   // --- internals ------------------------------------------------------------
 
+  /** The material you gave for a part, if any. */
+  private optionMaterial(part: string, kind: PartKind): Material | undefined {
+    const option = this.materialOption
+    if (typeof option === 'function') return option(part)
+    if (!isLook(option) && option !== undefined && kind === 'faces') {
+      return option
+    }
+    return undefined
+  }
+
   private async load(entry: TileEntry<F>) {
     const { minZoom, maxZoom } = this.source
     entry.keys = this.sourceTiles.covering(entry.tile, minZoom, maxZoom)
     let results: F[][]
+    this.loadingTiles++
     try {
       results = await Promise.all(
         entry.keys.map((key) => this.sourceTiles.acquire(key))
@@ -561,6 +714,11 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
         console.error(error)
       }
       return
+    } finally {
+      entry.loading = false
+      this.loadingTiles--
+      // layers waiting for this one may go on
+      kick()
     }
     // removed (or the map cleaned) while loading
     if (this.tiles.get(entry.tile) !== entry || !this.map) return
@@ -601,31 +759,67 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
     if (any) this.schedule()
   }
 
-  private flush() {
-    try {
-      this.prepare()
-    } catch (error) {
-      console.error(error)
+  /** Whether tiles are left to draw (or `prepare()` to run). */
+  private hasWork(): boolean {
+    if (this.stale) return true
+    for (const entry of this.dirty) {
+      if (this.tiles.get(entry.tile) === entry && entry.sources) return true
     }
-    const entries = [...this.dirty]
-    this.dirty.clear()
-    for (const entry of entries) {
-      if (this.tiles.get(entry.tile) !== entry || !entry.sources) continue
+    return false
+  }
+
+  /** The tile to draw next — the nearest to the map's focus — for the scheduler. */
+  private nextJob(waiting: boolean): DrawJob | undefined {
+    const map = this.map
+    if (!map) return undefined
+    if (this.stale) {
+      this.stale = false
+      this.preparing = true
       try {
-        this.render(entry, entry.sources)
+        this.prepare()
       } catch (error) {
         console.error(error)
+      } finally {
+        this.preparing = false
+      }
+    }
+    if (this.dirty.size === 0) return undefined
+    const { tileSize } = map.options
+    const focus = map.focus
+      ? map.terrain.worldToLocal(FOCUS.copy(map.focus))
+      : map.getPosition({ ...map.geoLocation, alt: 0 }, { loadTile: false })
+    let next: TileEntry<F> | undefined
+    let distance = Infinity
+    for (const entry of this.dirty) {
+      // drawn when it loads, or gone
+      if (this.tiles.get(entry.tile) !== entry || !entry.sources) {
+        this.dirty.delete(entry)
+        continue
+      }
+      if (!waiting && !this.canDraw(entry.tile)) continue
+      const { x, y } = entry.tile.mesh.position
+      const d = Math.hypot(x - focus.x, y - focus.y) / tileSize
+      if (d < distance) [next, distance] = [entry, d]
+    }
+    if (!next) return undefined
+    const entry = next
+    return {
+      distance,
+      run: () => {
+        this.dirty.delete(entry)
+        if (entry.sources) this.render(entry, entry.sources)
       }
     }
   }
 
   private render(entry: TileEntry<F>, sources: SourceFeatures<F>[]) {
     this.removeObjects(entry)
-    const ctx = new TileContext<F>(
-      entry.tile,
-      sources,
-      (part) => this.material(part, 'lines').visible
-    )
+    const skipped = new Set<string>()
+    const ctx = new TileContext<F>(entry.tile, sources, (part, kind) => {
+      const shown = this.shows(part, kind)
+      if (!shown) skipped.add(`${kind}:${part}`)
+      return shown
+    })
     const draw: DrawFeatures<F> = (features) => {
       this.draw(ctx, features ?? ctx.allFeatures)
     }
@@ -634,13 +828,17 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
 
     entry.features = ctx.features
     entry.depends = ctx.depends
+    entry.skipped = skipped
+    const name = (part: string) =>
+      `${this.group.name} ${part} ${entry.tile.key()}`
     const { surfaces, lines, instances } = ctx.parts
     for (const [part, builder] of surfaces) {
       const geometry = builder.build()
       if (geometry) {
         const mesh = new Mesh(geometry, this.material(part, 'faces'))
-        mesh.name = `${this.group.name} ${part} ${entry.tile.key()}`
+        mesh.name = name(part)
         entry.objects.push(mesh)
+        entry.parts.set(mesh, { part, kind: 'faces' })
       }
     }
     for (const [part, builder] of lines) {
@@ -650,19 +848,18 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
           geometry,
           this.material(part, 'lines')
         )
-        segments.name = `${this.group.name} ${part} ${entry.tile.key()}`
+        segments.name = name(part)
         entry.objects.push(segments)
+        entry.parts.set(segments, { part, kind: 'lines' })
       }
     }
     for (const [part, builder] of instances) {
       const mesh = builder.build(this.material(part, 'faces'))
-      if (mesh?.instanceColor) {
-        mesh.name = `${this.group.name} ${part} ${entry.tile.key()}`
-        entry.instanced.set(mesh, {
-          features: builder.features,
-          colors: Float32Array.from(mesh.instanceColor.array)
-        })
+      if (mesh) {
+        mesh.name = name(part)
+        entry.instanced.set(mesh, builder.features)
         entry.objects.push(mesh)
+        entry.parts.set(mesh, { part, kind: 'faces' })
       }
     }
     for (const { object, feature } of ctx.objects) {
@@ -674,12 +871,80 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
       this.objects.set(object, entry)
       this.group.add(object)
     }
+    this.outline(entry)
     this.paint(entry)
     this.drawn(entry.tile)
   }
 
+  /**
+   * Whether a part is drawn: lines if their material shows, copies if their
+   * faces or outlines do. Faces always are (they are picked).
+   */
+  private shows(part: string, kind: PartKind): boolean {
+    if (kind === 'lines') return this.material(part, 'lines').visible
+    return (
+      this.material(part, 'faces').visible ||
+      this.outlineMaterial(part) !== undefined
+    )
+  }
+
+  /**
+   * The material of the outlines of a part's copies: in wireframe, for
+   * copies with the look's material — the lines of their triangles.
+   */
+  private outlineMaterial(part: string): Material | undefined {
+    const look = this.requireLook()
+    if (!look.wireframe) return undefined
+    this.material(part, 'faces')
+    if (!this.materials.get(`faces:${part}`)?.own) return undefined
+    const key = `outline:${part}`
+    let cached = this.materials.get(key)
+    if (!cached) {
+      cached = {
+        material: new MeshBasicMaterial({
+          color: this.partColor(part, 'lines', look),
+          wireframe: true,
+          fog: look.fog
+        }),
+        own: true
+      }
+      this.materials.set(key, cached)
+    }
+    return cached.material
+  }
+
+  /** Outlines the copies of a tile — or removes them — as the look wants. */
+  private outline(entry: TileEntry<F>) {
+    for (const [mesh, outline] of entry.outlines) {
+      outline.removeFromParent()
+      entry.outlines.delete(mesh)
+    }
+    for (const mesh of entry.instanced.keys()) {
+      const part = entry.parts.get(mesh)?.part
+      const material =
+        part === undefined ? undefined : this.outlineMaterial(part)
+      if (!material) continue
+      const outline = new InstancedMesh(mesh.geometry, material, 0)
+      // the copies' own matrices and colors: freed with them
+      outline.instanceMatrix = mesh.instanceMatrix
+      outline.instanceColor = mesh.instanceColor
+      outline.count = mesh.count
+      outline.boundingBox = mesh.boundingBox
+      outline.boundingSphere = mesh.boundingSphere
+      outline.position.copy(mesh.position)
+      outline.name = `${mesh.name} outline`
+      // the copies are picked, and exported
+      outline.raycast = () => undefined
+      outline.userData.export = false
+      entry.outlines.set(mesh, outline)
+      this.group.add(outline)
+    }
+  }
+
   private removeObjects(entry: TileEntry<F>) {
     this.clearOverlays(entry)
+    for (const outline of entry.outlines.values()) outline.removeFromParent()
+    entry.outlines.clear()
     for (const object of entry.objects) {
       this.objects.delete(object)
       object.removeFromParent()
@@ -691,18 +956,81 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
       }
     }
     entry.objects = []
+    entry.parts.clear()
     entry.custom.clear()
     entry.instanced.clear()
     entry.footprint = undefined
     entry.features = []
+    this.version++
   }
 
   private clearOverlays(entry: TileEntry<F>) {
     for (const overlay of entry.overlays) {
       overlay.removeFromParent()
-      ;(overlay as Mesh).geometry.dispose()
+      // copies of copies share the geometry: only their matrices are theirs
+      if ((overlay as Partial<InstancedMesh>).isInstancedMesh) {
+        ;(overlay as InstancedMesh).dispose()
+      } else (overlay as Mesh).geometry.dispose()
     }
     entry.overlays = []
+  }
+
+  /**
+   * Gives every object the material of its part in the current look — the
+   * geometry kept — and draws again the tiles that left out a part now
+   * shown, or all if `redrawsOn` says so. `replaced`: the option itself
+   * changed, every material is made again.
+   */
+  private restyle(previous: Look | undefined, replaced: boolean) {
+    const look = this.look
+    if (!look) return
+    const changed = replaced || !previous || !sameLook(previous, look)
+    // the same look: nothing to do but ask a material function again
+    if (!changed && typeof this.materialOption !== 'function') return
+    const old = [...this.materials.entries()]
+    this.materials.clear()
+    // the look's materials are kept if it is the same; yours are asked again
+    for (const [key, cached] of old) {
+      const at = key.indexOf(':')
+      const kind = key.slice(0, at)
+      if (
+        !changed &&
+        cached.own &&
+        kind !== 'outline' &&
+        this.optionMaterial(key.slice(at + 1), kind as PartKind) === undefined
+      ) {
+        this.materials.set(key, cached)
+      }
+    }
+    const redraw: TileEntry<F>[] = []
+    for (const entry of this.tiles.values()) {
+      for (const [object, { part, kind }] of entry.parts) {
+        ;(object as Mesh).material = this.material(part, kind)
+      }
+      this.outline(entry)
+      for (const key of entry.skipped) {
+        const at = key.indexOf(':')
+        if (this.shows(key.slice(at + 1), key.slice(0, at) as PartKind)) {
+          redraw.push(entry)
+          break
+        }
+      }
+    }
+    for (const [key, { material, own }] of old) {
+      if (own && this.materials.get(key)?.material !== material) {
+        material.dispose()
+      }
+    }
+    // highlights in the new look
+    for (const material of this.highlightMaterials.splice(0)) {
+      material.dispose()
+    }
+    for (const entry of this.tiles.values()) this.paint(entry)
+    if (previous && changed && this.redrawsOn(previous, look)) {
+      this.invalidate()
+    } else if (redraw.length > 0) {
+      this.invalidate(redraw.map((entry) => entry.tile))
+    }
   }
 
   /** Draws the highlighted features of a tile over themselves. */
@@ -715,26 +1043,30 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
         if (matches(feature, highlighted.target)) indices.add(i)
       }
     }
-    // copies are recolored
-    for (const [mesh, { features, colors }] of entry.instanced) {
-      const color = mesh.instanceColor
-      if (!color) continue
-      color.array.set(colors)
-      if (highlighted) {
-        features.forEach((feature, i) => {
-          if (indices.has(feature)) {
-            color.setXYZ(
-              i,
-              highlighted.color.r,
-              highlighted.color.g,
-              highlighted.color.b
-            )
-          }
-        })
-      }
-      color.needsUpdate = true
-    }
     if (!highlighted || indices.size === 0) return
+
+    // copies: the highlighted ones again, in front
+    for (const [mesh, features] of entry.instanced) {
+      if (!(mesh.material as Material).visible) continue
+      const copies = features.flatMap((feature, i) =>
+        indices.has(feature) ? [i] : []
+      )
+      if (copies.length === 0) continue
+      const overlay = new InstancedMesh(
+        mesh.geometry,
+        this.highlightMaterial('faces', highlighted.color),
+        copies.length
+      )
+      copies.forEach((copy, i) => {
+        mesh.getMatrixAt(copy, MATRIX)
+        overlay.setMatrixAt(i, MATRIX)
+      })
+      overlay.computeBoundingSphere()
+      overlay.raycast = () => undefined
+      overlay.userData.export = false
+      mesh.add(overlay)
+      entry.overlays.push(overlay)
+    }
 
     for (const object of entry.objects) {
       if (

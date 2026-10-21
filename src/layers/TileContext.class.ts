@@ -112,11 +112,13 @@ export class TileContext<F> {
   private current = -1
   private readonly metersPerTile: number
 
+  private readonly shownParts = new globalThis.Map<string, boolean>()
+
   constructor(
     tile: Tile,
     sources: readonly SourceFeatures<F>[],
-    /** Whether a part of lines is shown: hidden ones are not built. */
-    private readonly shown: (part: string) => boolean
+    /** Whether a part's material shows: hidden lines and copies are not built. */
+    private readonly shown: (part: string, kind: 'faces' | 'lines') => boolean
   ) {
     this.tile = tile
     this.map = tile.map
@@ -214,9 +216,25 @@ export class TileContext<F> {
     return builder
   }
 
+  /**
+   * Whether a part's material shows anything (its faces, or for copies their
+   * outlines; `kind: 'lines'` its lines): what it hides need not be drawn —
+   * the tile is drawn again when it shows. Hidden lines and copies are left
+   * out by themselves.
+   */
+  visible(part: string, kind: 'faces' | 'lines' = 'faces'): boolean {
+    const key = `${kind}:${part}`
+    let shown = this.shownParts.get(key)
+    if (shown === undefined) {
+      shown = this.shown(part, kind)
+      this.shownParts.set(key, shown)
+    }
+    return shown
+  }
+
   /** The lines of a part, or `undefined` if its material does not show them. */
   lines(part: string): LineBuilder | undefined {
-    if (!this.shown(part)) return undefined
+    if (!this.visible(part, 'lines')) return undefined
     let builder = this.lineParts.get(part)
     if (!builder) {
       builder = new LineBuilder()
@@ -227,16 +245,18 @@ export class TileContext<F> {
 
   /**
    * Copies of a geometry in a part — trees, lamps — drawn as one
-   * `InstancedMesh` per tile: `add(matrix, color)` places one (local
+   * `InstancedMesh` per tile: `add(matrix, color?)` places one (local
    * coordinates), belonging to the feature being drawn. The geometry is
    * shared, never disposed by the layer; give it a white `color` attribute
    * for the default materials, which multiply the vertex colors by the
-   * copy's color.
+   * copy's color (white by default) and the part's. Copies of a hidden
+   * part are not made.
    */
   instances(
     part: string,
     geometry: BufferGeometry
-  ): { add: (matrix: Matrix4, color: Color) => void } {
+  ): { add: (matrix: Matrix4, color?: Color) => void } {
+    if (!this.visible(part)) return { add: () => undefined }
     let builder = this.instanceParts.get(part)
     if (!builder) {
       builder = new InstanceBuilder(geometry)

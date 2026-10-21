@@ -1,7 +1,6 @@
 import {
   BufferAttribute,
   type BufferGeometry,
-  Color,
   type ColorRepresentation,
   CylinderGeometry,
   IcosahedronGeometry,
@@ -30,9 +29,9 @@ export interface TreesOptions {
   source: TreeSource | TreeSourceProps
   /**
    * How the trees are drawn: the look (crowns in green unless it gives a
-   * `color`, trunks in brown), one material for both, or a material per
-   * part: `'crowns'`, `'trunks'` — copies of one geometry
-   * (`InstancedMesh`), each in the color of its tree (`instanceColor`).
+   * `color`, trunks in brown; outlined in wireframe), one material for
+   * both, or a material per part: `'crowns'`, `'trunks'` — copies of one
+   * geometry (`InstancedMesh`) in the material's color.
    */
   material?: LayerMaterial
   /** Replaces or extends the geometry. See `FeatureLayer`. */
@@ -43,13 +42,17 @@ export interface TreesOptions {
   /**
    * Layers whose ground stays clear of trees — water, roads, buildings,
    * yours: woods in the data often take in the rivers, roads and houses
-   * crossing them. A tree stands only where none of them drew.
+   * crossing them. A tree stands only where none of them drew; trees are
+   * planted once these have drawn the tiles around.
    */
   avoid: readonly GroundCover[]
   /** Meters a tree keeps from what `avoid` drew. */
   clearance: number
-  /** Meters between the trees of a wood. */
-  spacing: number
+  /**
+   * Meters between the trees of a wood — or a function of the terrain's
+   * zoom, e.g. fewer trees on a wide map: `(zoom) => (zoom < 15 ? 14 : 9)`.
+   */
+  spacing: number | ((zoom: number) => number)
   /** Meters high, from the lowest to the highest, for trees without a height. */
   heights: readonly [low: number, high: number]
   /** At most this many trees on a terrain tile. */
@@ -86,7 +89,10 @@ const TRUNK_RADIUS = 0.035
 /** Meters trunks reach below the ground. */
 const FOUNDATION = 0.5
 
-/** The shared shapes: a trunk (z from 0 to 1) and a crown (radius 1). */
+/**
+ * The shared shapes, few triangles for many copies: a trunk (z from 0 to
+ * 1, 8 triangles) and a crown (radius 1, 20 triangles, shaded round).
+ */
 let shapes: { trunk: BufferGeometry; crown: BufferGeometry } | undefined
 
 function treeShapes() {
@@ -99,13 +105,22 @@ function treeShapes() {
       )
       return geometry
     }
+    const crown = new IcosahedronGeometry(1, 0)
+    // normals of the sphere it stands for: lit round, not as facets
+    crown.setAttribute(
+      'normal',
+      new BufferAttribute(
+        Float32Array.from(crown.getAttribute('position').array),
+        3
+      )
+    )
     shapes = {
       trunk: white(
-        new CylinderGeometry(1, 1, 1, 6, 1, true)
+        new CylinderGeometry(1, 1, 1, 4, 1, true)
           .rotateX(Math.PI / 2)
           .translate(0, 0, 0.5)
       ),
-      crown: white(new IcosahedronGeometry(1, 1))
+      crown: white(crown)
     }
   }
   return shapes
@@ -120,15 +135,57 @@ function hash(i: number, j: number, k: number) {
   return (h >>> 0) / 4294967296
 }
 
-/** Even–odd point in rings `[x0, y0, …]`. */
-function inside(x: number, y: number, rings: readonly Float64Array[]) {
-  let within = false
+/**
+ * The edges of a polygon by row of the planting grid (`cell` map units
+ * high): a point of a row can only cross those of its row.
+ */
+interface Rows {
+  cell: number
+  /** The first row. */
+  j0: number
+  /** `[x0, y0, x1, y1, …]` of the edges reaching into each row. */
+  edges: Float64Array[]
+}
+
+function rowsOf(
+  rings: readonly Float64Array[],
+  bbox: Rect,
+  cell: number
+): Rows {
+  const j0 = Math.floor(bbox[1] / cell)
+  const lists: number[][] = Array.from(
+    { length: Math.floor(bbox[3] / cell) - j0 + 1 },
+    () => []
+  )
   for (const ring of rings) {
     for (let i = 0, j = ring.length - 2; i < ring.length; j = i, i += 2) {
       const [xi, yi, xj, yj] = [ring[i], ring[i + 1], ring[j], ring[j + 1]]
-      if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
-        within = !within
+      // a horizontal edge is never crossed
+      if (yi === yj) continue
+      const last = Math.floor(Math.max(yi, yj) / cell) - j0
+      for (let r = Math.floor(Math.min(yi, yj) / cell) - j0; r <= last; r++) {
+        lists[r].push(xi, yi, xj, yj)
       }
+    }
+  }
+  return { cell, j0, edges: lists.map((list) => new Float64Array(list)) }
+}
+
+/** Even–odd point in a polygon, by the edges of its row. */
+function inside(x: number, y: number, rows: Rows) {
+  const row = Math.floor(y / rows.cell) - rows.j0
+  if (row < 0 || row >= rows.edges.length) return false
+  const edges = rows.edges[row]
+  let within = false
+  for (let k = 0; k < edges.length; k += 4) {
+    const [xi, yi, xj, yj] = [
+      edges[k],
+      edges[k + 1],
+      edges[k + 2],
+      edges[k + 3]
+    ]
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
+      within = !within
     }
   }
   return within
@@ -138,7 +195,7 @@ function inside(x: number, y: number, rings: readonly Float64Array[]) {
 interface Prepared {
   zoom: number
   points: [number, number][]
-  polygons: { rings: Float64Array[]; bbox: Rect }[]
+  polygons: { rings: Float64Array[]; bbox: Rect; rows?: Rows }[]
 }
 
 /**
@@ -147,7 +204,8 @@ interface Prepared {
  * meters, jittered — anchored to the map, so that they never move when a
  * tile is drawn again and never double at tile edges; single trees (points)
  * stand where they are. A tree is a trunk and a crown, copies of one
- * geometry each, standing on the rendered surface.
+ * geometry each, standing on the rendered surface; trunks are brown,
+ * crowns green or in the look's `color`.
  */
 export class Trees extends FeatureLayer<TreeFeature> {
   declare readonly source: TreeSource
@@ -202,6 +260,32 @@ export class Trees extends FeatureLayer<TreeFeature> {
     await super.whenReady()
   }
 
+  /** Crowns green unless the layer's look has a color; trunks brown. */
+  protected override partColor(part: string): ColorRepresentation {
+    return part === 'trunks' ? TRUNK_COLOR : (this.ownLook.color ?? CROWN_COLOR)
+  }
+
+  /**
+   * Once the layers in `avoid` have drawn the tile and its neighbours (which
+   * reach into it): planted once, not again for each of them.
+   */
+  protected override canDraw(tile: Tile): boolean {
+    const map = this.map
+    if (!map) return true
+    for (const layer of this.options.avoid) {
+      if ((layer as unknown) === this || !layer.pending) continue
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const near = map.tileCache[
+            Utils.getTileKey(tile.z, tile.x + dx, tile.y + dy)
+          ] as Tile | undefined
+          if (near && layer.pending(near)) return false
+        }
+      }
+    }
+    return true
+  }
+
   /** A feature in map units, cached. */
   private mapUnits(feature: TreeFeature): Prepared {
     const zoom = this.map?.options.zoom ?? 0
@@ -253,16 +337,15 @@ export class Trees extends FeatureLayer<TreeFeature> {
     ctx: TileContext<TreeFeature>,
     features: readonly TreeFeature[]
   ) {
+    // nothing shows: the trees are planted when they do
+    if (!ctx.visible('crowns') && !ctx.visible('trunks')) return
     const { tile, map } = ctx
     const { tileSize } = map.options
-    const { spacing, heights, maxPerTile, avoid, clearance } = this.options
-    const own =
-      typeof this.materialOption === 'object' &&
-      !('isMaterial' in this.materialOption)
-        ? this.materialOption.color
-        : undefined
-    const crownColor = new Color(own ?? CROWN_COLOR)
-    const trunkColor = new Color(TRUNK_COLOR)
+    const { heights, maxPerTile, avoid, clearance } = this.options
+    const spacing =
+      typeof this.options.spacing === 'function'
+        ? this.options.spacing(tile.z)
+        : this.options.spacing
     const { trunk, crown } = treeShapes()
     const trunks = ctx.instances('trunks', trunk)
     const crowns = ctx.instances('crowns', crown)
@@ -302,7 +385,7 @@ export class Trees extends FeatureLayer<TreeFeature> {
           (trunkHeight + FOUNDATION) * ctx.zScale
         )
       )
-      trunks.add(matrix, trunkColor)
+      trunks.add(matrix)
       matrix.compose(
         position.set(lx, ly, ground + (height - crownHeight / 2) * ctx.zScale),
         rotation,
@@ -312,7 +395,7 @@ export class Trees extends FeatureLayer<TreeFeature> {
           (crownHeight / 2) * ctx.zScale
         )
       )
-      crowns.add(matrix, crownColor)
+      crowns.add(matrix)
     }
 
     for (const source of ctx.sources) {
@@ -338,7 +421,12 @@ export class Trees extends FeatureLayer<TreeFeature> {
                 hash(Math.floor(x / cell), Math.floor(y / cell), i)
               )
           }
-          for (const { rings, bbox } of polygons) {
+          for (const polygon of polygons) {
+            const { rings, bbox } = polygon
+            if (polygon.rows?.cell !== cell) {
+              polygon.rows = rowsOf(rings, bbox, cell)
+            }
+            const { rows } = polygon
             const [i0, j0] = [
               Math.floor(Math.max(bbox[0], minX) / cell),
               Math.floor(Math.max(bbox[1], minY) / cell)
@@ -347,12 +435,12 @@ export class Trees extends FeatureLayer<TreeFeature> {
               Math.ceil(Math.min(bbox[2], maxX) / cell),
               Math.ceil(Math.min(bbox[3], maxY) / cell)
             ]
-            for (let j = j0; j < j1; j++) {
+            for (let j = j0; j < j1 && count < maxPerTile; j++) {
               for (let i = i0; i < i1; i++) {
                 // a point jittered in its cell, the same for every tile
                 const x = (i + hash(i, j, 1)) * cell
                 const y = (j + hash(i, j, 2)) * cell
-                if (within(x, y) && inside(x, y, rings)) {
+                if (within(x, y) && inside(x, y, rows)) {
                   plant(x, y, feature, hash(i, j, 3))
                 }
               }

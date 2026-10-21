@@ -48,6 +48,8 @@ export type WaterHit = FeatureHit<WaterFeature>
 /** The water's color unless the look gives one. */
 export const WATER_COLOR = '#8ab7dc'
 
+const WHITE = new Color(0xffffff)
+
 /** Water is drawn in front of the terrain, behind roads (−4). */
 const WATER_OFFSET = { factor: -1, units: -2 }
 
@@ -107,16 +109,17 @@ export class Water extends FeatureLayer<WaterFeature> {
     return material
   }
 
+  /** Blue, unless the layer's look has a color. */
+  protected override partColor(): ColorRepresentation {
+    return this.ownLook.color ?? WATER_COLOR
+  }
+
   protected override draw(
     ctx: TileContext<WaterFeature>,
     features: readonly WaterFeature[]
   ) {
-    const own =
-      typeof this.materialOption === 'object' &&
-      !('isMaterial' in this.materialOption)
-        ? this.materialOption.color
-        : undefined
-    const color = new Color(own ?? WATER_COLOR)
+    // the parts' materials have the color
+    const color = WHITE
     const wanted = new Set(features)
     const local = (line: readonly Position[]): FlatRing => {
       const flat: FlatRing = []

@@ -38,15 +38,18 @@ src/                      library (the only published code, plus dist/)
     source-tiles.ts       (internal) source tiles shared by terrain tiles, refcounts
   layers/                 the layer frame and the layers on it
     FeatureLayer.class.ts FeatureLayer: tiles, sources, redraws (tileChanged,
-                          invalidate), materials per part, pick (occlusion),
-                          highlight (overlays)
+                          invalidate), materials per part (restyled in place),
+                          pick (occlusion), highlight (overlays), pending
+    scheduler.ts          (internal) draws every layer's tiles in slices
+                          between frames, nearest to map.focus first
     TileContext.class.ts  TileContext: a tile's features, ground, primitives
                           (drapePolygon/Line/Path, extrude, face, segment, add)
     drape.ts              cutting shapes along the terrain's triangles, TileSurface
     extrude.ts            walls/roofs/floors/edges with UVs in meters
     geometry.ts           SurfaceBuilder, LineBuilder, InstanceBuilder (attributes,
                           featureIndex)
-    footprint.ts          (internal) what a tile's faces cover, from above (covers())
+    footprint.ts          (internal) what a tile's faces cover, from above (covers()),
+                          triangles in a grid (CSR arrays)
     features.ts           Position, Ring, toNumber, parseLength, clipRect, classifyRings
     buildings/            Buildings (ownership, grounding, clip), BuildingSource
                           (schema), features (MVT schemas), osm (tags, Overpass)
@@ -170,7 +173,9 @@ depends on the published package. After a release, bump it there.
   changed. The material is created synchronously right after the texture
   arrives, from the options of that moment — `setSource()` then
   `setMaterial()` in one tick ends in the second's style (unit + e2e tests
-  guard this). Layers follow through `materialChanged`.
+  guard this). Layers follow through `materialChanged` — their materials
+  only, in place (see FeatureLayer); `TerrainBase` is rebuilt only in or out
+  of wireframe.
 - **Positions** (all in `map.terrain` coordinates):
   - `getPosition({ lat, lon, alt })` → `x`/`y` from the tile grid, `z` from
     `(alt - baseAltitude) * zScale`.
@@ -206,8 +211,19 @@ depends on the published package. After a release, bump it there.
     `clamp(terrain zoom, minZoom, maxZoom)`; deeper terrain shares one,
     shallower loads up to 4² children; refcounted, aborted when unused),
     `select(tile, source, features)` (ownership), then `build(ctx, draw)`
-    (`options.build`, else the layer's `draw`). Rendering is batched in a
-    microtask (`schedule`/`flush`); `prepare()` runs first (cross-tile state).
+    (`options.build`, else the layer's `draw`).
+  - Drawing is sliced (`scheduler.ts`, one queue for every layer and map):
+    `schedule()` marks the layer stale and kicks a slice (a `MessageChannel`
+    task in browsers, `setTimeout(0)` elsewhere); a slice draws the dirty
+    tile nearest to `map.focus` (world coordinates; default the location)
+    across all layers, again and again until `SLICE_BUDGET` (6 ms) is used,
+    then posts the next slice — at least one tile per slice. `prepare()`
+    runs before a stale layer's next tile (cross-tile state). A tile whose
+    `canDraw(tile)` is false waits (Trees for `avoid`); when nothing else is
+    drawable and no layer is loading, waiting tiles are drawn anyway (layers
+    waiting for each other). `whenReady()` waits for the loads, then slice
+    by slice until nothing is stale or dirty. `pending(tile)`: loading, or
+    dirty with its sources.
   - `TileContext` records the tiles whose heights a drawing read
     (`depends`): `tileLoaded`/`tileChanged`/`tileRemoved` of one of them
     redraws the entry. Draped geometry depends on this (seams change after
@@ -225,13 +241,33 @@ depends on the published package. After a release, bump it there.
     shared geometry never.
   - Materials: `material` option = the look (`Partial<MaterialOptions>`),
     one `Material` for faces, or `(part) => Material | undefined`; else
-    `createMaterial(part, kind, look)` (faces `visible: !wireframe`, lines
-    `visible: wireframe`). Own materials are disposed on `materialChanged` /
+    `createMaterial(part, kind, look)` in `partColor(part, kind, look)`
+    (faces hidden in wireframe, or a transparent fill without depth writes
+    with `fillOpacity`; lines `visible: wireframe`). The look's colors are
+    the materials' — vertex colors are white unless they differ per
+    feature (`featureColors`) — so `materialChanged` / `setMaterial()`
+    (`restyle`) give every object (`entry.parts`) the material of its part
+    without drawing again: own materials of an unchanged look are kept,
+    the user's asked again, the rest made anew and the old disposed. Only
+    tiles that left out a part now shown (`entry.skipped`: hidden lines,
+    hidden copies — `TileContext.visible()`) or `redrawsOn(previous, next)`
+    (Buildings with `featureColors` on a new color) are drawn again. A look
+    with the same `lights`, `wireframe`, `fillOpacity`, `fog`, `color`
+    changes nothing. Own materials are disposed when replaced and on
     `detach`, the user's never.
+  - Copies (`instances`) with an own faces material are outlined in
+    wireframe: an `InstancedMesh` sharing their `instanceMatrix` (and
+    `instanceColor`) with a `wireframe: true` `MeshBasicMaterial`, made and
+    removed on restyle, never picked or exported, never disposed (the
+    copies own the buffers). Highlighted copies are an overlay
+    `InstancedMesh` of those copies (disposed: its own matrices).
   - `pick` ignores hits behind the terrain (tile meshes nearer by >
     0.01 units); `highlight` draws overlays — copies of the feature's
     triangles/segments with a highlight material (polygon offset), never
     picked, `userData.export = false` — so it works over any material.
+  - `covers()` caches the 3 × 3 tiles' footprints for the tile of the last
+    point (`version` bumps whenever objects change): Trees ask for every
+    candidate tree.
 - **Draping** (`drape.ts`, `TileContext.drapeConvex`): a convex polygon in
   grid coordinates (`col`, `row`: cells 1 × 1, rows south) is cut into
   bands, cells and the two triangles of each cell (diagonal
@@ -303,16 +339,22 @@ depends on the published package. After a release, bump it there.
   jittered grid of `spacing` meters anchored to map units — `hash(i, j, k)`
   per cell, so the same trees in every redraw and none twice at tile edges
   (each tile plants only inside source ∩ terrain tile); points are single
-  trees. `avoid` (any `GroundCover`, i.e. FeatureLayers) keeps trees off
-  what other layers drew: `FeatureLayer.covers(x, y, margin)` (map units)
-  asks the `Footprint` of the tile and its 8 neighbours (`footprint.ts`: the
-  faces' triangles from above in a 32² grid, walls skipped, built lazily,
-  dropped on every redraw); `onTileDrawn` makes Trees draw that tile and its
-  neighbours again, and `Trees.whenReady` waits for the `avoid` layers
-  first. On Lausanne it takes out a quarter of the trees, ~3 ms a tile. A tree = a trunk (open cylinder, z 0–1) and a crown (icosahedron)
-  shared by every layer, white `color` attributes, sized by its height
-  (crown 62 % of it, radius 24 %); `maxPerTile` caps a tile. In wireframe
-  the crowns' default material is hidden like any faces.
+  trees. A wood's edges are indexed by grid row (`rowsOf`, cached per
+  polygon and cell): a point tests only its row's edges. `spacing` may be
+  a function of the zoom. `avoid` (any `GroundCover`, i.e. FeatureLayers)
+  keeps trees off what other layers drew: `covers(x, y, margin)` (map
+  units) asks the `Footprint` of the tile and its 8 neighbours (`footprint.ts`: the faces' triangles from above in a grid of
+  about 4 a cell, walls skipped, built lazily, dropped on every redraw).
+  `canDraw` holds a tile until no `avoid` layer is `pending` on it or its
+  neighbours — planted once; `onTileDrawn` makes Trees draw that tile and
+  its neighbours again later, and `Trees.whenReady` waits for the `avoid`
+  layers first. On Lausanne it takes out a quarter of the trees. A tree = a
+  trunk (open 4-sided prism, z 0–1, 8 triangles) and a crown (icosahedron
+  of 20 triangles with a sphere's normals) shared by every layer, white
+  `color` attributes, sized by its height (crown 62 % of it, radius 24 %);
+  the colors are the parts' materials (`partColor`), copies have no
+  `instanceColor`; `maxPerTile` caps a tile. Nothing is planted while both
+  parts are hidden (`ctx.visible`).
 - **TerrainBase**: rebuilt from all placed tiles on every tile event — walls
   along sides without a placed neighbour, a floor per tile, `depth` meters
   below the lowest vertex; in wireframe an outline.

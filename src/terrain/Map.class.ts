@@ -136,6 +136,12 @@ export class Map {
   tileCache: Record<string, Tile> = {}
 
   terrain = new Group()
+  /**
+   * Where the layers draw first — the tiles nearest it, a few at a time
+   * between frames: e.g. `camera.position` or the controls' `target`, in
+   * world coordinates (followed as it moves). By default the `location`.
+   */
+  focus: Vector3 | undefined
   center: { x: number; y: number }
   /** `true` once `init()` has loaded the initial grid. */
   ready = false

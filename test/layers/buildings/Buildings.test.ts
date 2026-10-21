@@ -427,8 +427,7 @@ describe('Buildings', () => {
     layer.highlight()
     expect(highlights(layer)).toEqual([])
     // the buildings keep their own colors throughout
-    const colors = part(layer, 'roofs')[0].geometry.getAttribute('color')
-    expect(colors.getX(0)).toBeCloseTo(new Color(0x808080).r, 6)
+    expect(part(layer, 'roofs')[0].material.color.getHex()).toBe(0x808080)
   })
 
   it('never picks the overlay, always the building', async () => {
@@ -458,14 +457,22 @@ describe('Buildings', () => {
 
   it('draws feature colors when asked to', async () => {
     const red = box(0.3, 0.3, 0.05, { color: '#ff0000' })
-    const { layer } = await setup([red], { featureColors: true })
-    const colors = part(layer, 'walls')[0].geometry.getAttribute('color')
-
-    expect(
-      new Color(colors.getX(0), colors.getY(0), colors.getZ(0)).equals(
-        new Color('#ff0000')
+    const plain = box(0.5, 0.5, 0.05)
+    const { map, layer } = await setup([red, plain], { featureColors: true })
+    const vertexColors = () => {
+      const colors = part(layer, 'walls')[0].geometry.getAttribute('color')
+      return Array.from({ length: colors.count }, (_, i) =>
+        new Color(colors.getX(i), colors.getY(i), colors.getZ(i)).getHex()
       )
-    ).toBe(true)
+    }
+
+    expect(new Set(vertexColors())).toEqual(new Set([0xff0000, 0xffffff]))
+    expect(part(layer, 'walls')[0].material.color.getHex()).toBe(0xffffff)
+
+    // the others are in the look's color: drawn again in the new one
+    map.setMaterial({ color: '#00ff00' })
+    await layer.whenReady()
+    expect(new Set(vertexColors())).toEqual(new Set([0xff0000, 0x00ff00]))
   })
 
   describe('clip', () => {
@@ -514,25 +521,76 @@ describe('Buildings', () => {
   it('follows map.setMaterial(): color, wireframe', async () => {
     const building = box(0.3, 0.3, 0.05, { id: 'b' })
     const { map, layer } = await setup([building])
+    const [walls] = part(layer, 'walls')
+    const geometry = walls.geometry
     layer.highlight('b', 0xff0000)
 
-    map.setMaterial({ color: '#336699', wireframe: true })
+    // a color: the materials change, the geometry stays
+    map.setMaterial({ color: '#336699' })
+    expect(part(layer, 'walls')).toEqual([walls])
+    expect(walls.geometry).toBe(geometry)
+    expect(walls.material.color.getHexString()).toBe('336699')
 
-    const [walls] = part(layer, 'walls')
-    const [edges] = part<LineSegments>(layer, 'edges')
+    // the edges were left out: drawn now
+    map.setMaterial({ wireframe: true })
     // the faces are hidden by their material: still there to pick
     expect(walls.material.visible).toBe(false)
+    await layer.whenReady()
+    const [edges] = part<LineSegments>(layer, 'edges')
     expect(edges.material).toBeInstanceOf(LineBasicMaterial)
     expect((edges.material as LineBasicMaterial).visible).toBe(true)
-    const colors = edges.geometry.getAttribute('color')
-    expect(colors.getX(0)).toBeCloseTo(new Color('#336699').r, 6)
+    expect((edges.material as LineBasicMaterial).color.getHexString()).toBe(
+      '336699'
+    )
     // still highlighted, on the lines
     expect(highlights(layer)).toMatchObject([{ color: 0xff0000, lines: true }])
     expect(layer.count).toBe(1)
 
+    // out of wireframe: hidden, not drawn again
+    const [solid] = part(layer, 'walls')
     map.setMaterial({ wireframe: false })
-    expect(part(layer, 'edges')).toEqual([])
-    expect(part(layer, 'walls')[0].material.visible).toBe(true)
+    expect(part(layer, 'walls')).toEqual([solid])
+    expect(solid.material.visible).toBe(true)
+    expect((edges.material as LineBasicMaterial).visible).toBe(false)
+  })
+
+  it('leaves the layers alone when only the imagery changes', async () => {
+    const { map, layer } = await setup([box(0.3, 0.3, 0.05)])
+    const [walls] = part(layer, 'walls')
+    const material = walls.material
+
+    map.setMaterial({ process: () => undefined })
+
+    expect(part(layer, 'walls')).toEqual([walls])
+    expect(walls.material).toBe(material)
+  })
+
+  it('changes its own look with setMaterial(), the geometry kept', async () => {
+    const { map, layer } = await setup([box(0.3, 0.3, 0.05)], {}, ZOOM, {
+      color: '#d0c8b8'
+    })
+    const [walls] = part(layer, 'walls')
+    const geometry = walls.geometry
+
+    layer.setMaterial({ color: '#203040' })
+    expect(walls.material.color.getHexString()).toBe('203040')
+    layer.setMaterial({ lights: false })
+    expect(walls.material).toBeInstanceOf(MeshBasicMaterial)
+    // merged: still in its color
+    expect(walls.material.color.getHexString()).toBe('203040')
+    // the map's look again
+    layer.setMaterial({ color: undefined })
+    expect(walls.material.color.getHexString()).toBe('d0c8b8')
+
+    const custom = new MeshStandardMaterial()
+    layer.setMaterial((name) => (name === 'walls' ? custom : undefined))
+    expect(walls.material).toBe(custom)
+    expect(part(layer, 'roofs')[0].material).toBeInstanceOf(MeshLambertMaterial)
+    layer.setMaterial(undefined)
+    expect(walls.material).toBeInstanceOf(MeshLambertMaterial)
+    expect(walls.geometry).toBe(geometry)
+    expect(layer.count).toBe(1)
+    expect(map.layers).toContain(layer)
   })
 
   it('takes the style of the terrain by default', async () => {
@@ -541,11 +599,10 @@ describe('Buildings', () => {
       lights: false
     })
     const [walls] = part(layer, 'walls')
-    const colors = walls.geometry.getAttribute('color')
 
     expect(walls.material).toBeInstanceOf(MeshBasicMaterial)
     expect(
-      new Color(colors.getX(0), colors.getY(0), colors.getZ(0)).getHexString()
+      (walls.material as unknown as MeshBasicMaterial).color.getHexString()
     ).toBe('d0c8b8')
     // no lines unless wireframe or edges
     expect(part(layer, 'edges')).toEqual([])
@@ -573,11 +630,10 @@ describe('Buildings', () => {
     })
     const [walls] = part(layer, 'walls')
     const [edges] = part<LineSegments>(layer, 'edges')
-    const lineColors = edges.geometry.getAttribute('color')
 
     expect(walls.material.visible).toBe(true)
     expect(walls.material.polygonOffset).toBe(true)
-    expect(lineColors.getX(0)).toBeCloseTo(0.62, 6)
+    expect((edges.material as LineBasicMaterial).color.r).toBeCloseTo(0.62, 6)
   })
 
   it('leaves out the corner lines of curved walls', async () => {

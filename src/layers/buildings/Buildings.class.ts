@@ -1,4 +1,4 @@
-import { Color, type ColorRepresentation, Material } from 'three'
+import { Color, type ColorRepresentation, type Material } from 'three'
 
 import type { BuildingFeature } from './features'
 import { isColor, ringAnchor } from './features'
@@ -26,10 +26,10 @@ export interface BuildingsOptions {
   /**
    * How the buildings are drawn: the look — the map's by default: in its
    * `color`, lit like it, in `wireframe` (their edges) with it — one
-   * material for their faces (it gets `vertexColors`), or a material per
-   * part: `'walls'`, `'roofs'`, `'floors'` (under parts that float),
-   * `'edges'` (lines). Walls have UVs in meters along and up, roofs in
-   * meters east and north.
+   * material for their faces (it gets `vertexColors`: the colors of
+   * `featureColors`), or a material per part: `'walls'`, `'roofs'`,
+   * `'floors'` (under parts that float), `'edges'` (lines). Walls have UVs
+   * in meters along and up, roofs in meters east and north.
    */
   material?: LayerMaterial
   /**
@@ -115,9 +115,46 @@ export class Buildings extends FeatureLayer<BuildingFeature> {
       name: 'buildings'
     })
     this.options = options
-    if (options.material instanceof Material) {
-      options.material.vertexColors = true
+    this.adopt(options.material)
+  }
+
+  override setMaterial(material: LayerMaterial | undefined) {
+    this.adopt(material)
+    super.setMaterial(material)
+  }
+
+  /** One material for every face draws the colors of `featureColors`. */
+  private adopt(material: LayerMaterial | undefined) {
+    if (typeof material === 'object' && 'isMaterial' in material) {
+      material.vertexColors = true
     }
+  }
+
+  /**
+   * The look's color — or white with `featureColors`: the vertex colors
+   * have it then — edges a shade darker over solid buildings.
+   */
+  protected override partColor(
+    _part: string,
+    kind: 'faces' | 'lines',
+    look: Look
+  ): ColorRepresentation {
+    const color = new Color(
+      this.options.featureColors ? 0xffffff : (look.color ?? 0xffffff)
+    )
+    return kind === 'lines' && !look.wireframe
+      ? color.multiplyScalar(EDGE_SHADE)
+      : color
+  }
+
+  /** With `featureColors`, the others' color is in their vertices. */
+  protected override redrawsOn(previous: Look, next: Look): boolean {
+    return (
+      this.options.featureColors &&
+      !new Color(previous.color ?? 0xffffff).equals(
+        new Color(next.color ?? 0xffffff)
+      )
+    )
   }
 
   /** Edges show in wireframe or with `edges`, over faces pushed back. */
@@ -306,26 +343,23 @@ export class Buildings extends FeatureLayer<BuildingFeature> {
             high + Math.min(height, MIN_EXPOSED) * zScale
           )
 
-      const color = this.baseColor(feature, look)
-      const lineColor = look.wireframe
-        ? color
-        : color.clone().multiplyScalar(EDGE_SHADE)
+      const color = this.vertexColor(feature, look)
       ctx.feature(feature, () => {
-        ctx.extrude(polygons, bottom, top, {
-          color,
-          lineColor,
-          floor: floating
-        })
+        ctx.extrude(polygons, bottom, top, { color, floor: floating })
       })
     }
   }
 
-  private baseColor(feature: BuildingFeature, look: Look) {
-    return this.options.featureColors && feature.color && isColor(feature.color)
+  /** White, the part's material has the color — but for `featureColors`. */
+  private vertexColor(feature: BuildingFeature, look: Look) {
+    if (!this.options.featureColors) return WHITE
+    return feature.color && isColor(feature.color)
       ? new Color(feature.color)
       : new Color(look.color ?? 0xffffff)
   }
 }
+
+const WHITE = new Color(0xffffff)
 
 /** A ring in local coordinates, without a closing duplicate. */
 function flatRing(

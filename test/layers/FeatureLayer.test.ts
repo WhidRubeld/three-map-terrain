@@ -16,6 +16,7 @@ import {
   FeatureLayer,
   type FeatureLayerOptions,
   Map,
+  type Tile,
   type TileContext,
   type TileRequest,
   Utils
@@ -368,12 +369,210 @@ describe('FeatureLayer', () => {
     )
 
     expect(objects(layer, 'surface')[0].material.visible).toBe(false)
-    expect(objects(layer, 'outline')[0].material.visible).toBe(true)
+    const [outline] = objects(layer, 'outline')
+    expect(outline.material.visible).toBe(true)
     expect(layer.pick(rayDown(map, 0.5, 0.5))?.feature).toBe(thing)
 
-    // out of wireframe: hidden lines are not even built
+    // out of wireframe: hidden, not drawn again
     map.setMaterial({ wireframe: false })
+    expect(objects(layer, 'outline')).toEqual([outline])
+    expect(outline.material.visible).toBe(false)
+    // drawn again, hidden lines are not even built
+    layer.invalidate()
+    await layer.whenReady()
     expect(objects(layer, 'outline')).toEqual([])
+  })
+
+  it('fills the faces under the lines in wireframe with fillOpacity', async () => {
+    const { map, layer } = await setup(
+      [{ id: 'a', fx: 0.5, fy: 0.5 }],
+      { build: drapeSquares(0.2) },
+      { wireframe: true }
+    )
+    const [surface] = objects(layer, 'surface')
+
+    map.setMaterial({ fillOpacity: 0.12 })
+    expect(surface.material.visible).toBe(true)
+    expect(surface.material.transparent).toBe(true)
+    expect(surface.material.opacity).toBeCloseTo(0.12, 6)
+    expect(surface.material.depthWrite).toBe(false)
+    // solid: opaque again
+    map.setMaterial({ wireframe: false })
+    expect(objects(layer, 'surface')).toEqual([surface])
+    expect(surface.material.transparent).toBe(false)
+    expect(surface.material.opacity).toBe(1)
+  })
+
+  it('asks a material function again on setMaterial(), the geometry kept', async () => {
+    let materials: Record<string, MeshStandardMaterial> = {}
+    const build = vi.fn(drapeSquares(0.2))
+    const { map, layer } = await setup([{ id: 'a', fx: 0.5, fy: 0.5 }], {
+      material: (part) => materials[part],
+      build
+    })
+    const [surface] = objects(layer, 'surface')
+    const own = surface.material
+    expect(own).toBeInstanceOf(MeshLambertMaterial)
+    const dispose = vi.spyOn(own, 'dispose')
+    build.mockClear()
+
+    // the same look, other materials
+    materials = { surface: new MeshStandardMaterial() }
+    map.setMaterial({})
+    expect(surface.material).toBe(materials.surface)
+    expect(dispose).toHaveBeenCalled()
+
+    materials = {}
+    map.setMaterial({})
+    expect(surface.material).toBeInstanceOf(MeshLambertMaterial)
+    await layer.whenReady()
+    expect(build).not.toHaveBeenCalled()
+  })
+
+  it('draws tiles a few at a time, the nearest to the focus first', async () => {
+    let open: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => (open = resolve))
+    const order: string[] = []
+    let ticks = 0
+    const ticksAtDraw: number[] = []
+    const map = new Map({
+      source: { api: 'eox' },
+      location,
+      options: { zoom: ZOOM, tileSegments: 8, zScale }
+    })
+    const layer = map.addLayer(
+      new FeatureLayer<Thing>({
+        source: {
+          minZoom: ZOOM,
+          maxZoom: ZOOM,
+          load: async () => {
+            await gate
+            return []
+          }
+        },
+        build(ctx) {
+          order.push(ctx.tile.key())
+          ticksAtDraw.push(ticks)
+          // a tile longer than a slice
+          const until = performance.now() + 8
+          while (performance.now() < until) {
+            // busy
+          }
+        }
+      })
+    )
+    await map.init()
+    // the north-west tile: in world coordinates, as the camera is
+    const corner =
+      map.tileCache[Utils.getTileKey(ZOOM, center.x - 1, center.y - 1)]
+    map.terrain.position.set(100, 200, 0)
+    map.terrain.updateMatrixWorld(true)
+    map.focus = map.terrain.localToWorld(corner.mesh.position.clone())
+
+    let done = false
+    const tick = () => {
+      ticks++
+      if (!done) setTimeout(tick, 0)
+    }
+    tick()
+    open()
+    await layer.whenReady()
+    done = true
+
+    expect(order).toHaveLength(9)
+    expect(order[0]).toBe(corner.key())
+    // the far corner last
+    expect(order[8]).toBe(Utils.getTileKey(ZOOM, center.x + 1, center.y + 1))
+    // other tasks ran between the tiles
+    expect(new Set(ticksAtDraw).size).toBe(9)
+  })
+
+  it('draws first the tiles near the location without a focus', async () => {
+    const order: string[] = []
+    await setup([{ id: 'a', fx: 0.5, fy: 0.5 }], {
+      build(ctx) {
+        order.push(ctx.tile.key())
+      }
+    })
+
+    expect(order[0]).toBe(Utils.getTileKey(ZOOM, center.x, center.y))
+  })
+
+  it('tells which tiles are still to be drawn', async () => {
+    let open: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => (open = resolve))
+    const map = new Map({
+      source: { api: 'eox' },
+      location,
+      options: { zoom: ZOOM, tileSegments: 8, zScale }
+    })
+    const layer = map.addLayer(
+      new FeatureLayer<Thing>({
+        source: {
+          minZoom: ZOOM,
+          maxZoom: ZOOM,
+          load: async () => {
+            await gate
+            return []
+          }
+        }
+      })
+    )
+    await map.init()
+    const tile = map.tileCache[Utils.getTileKey(ZOOM, center.x, center.y)]
+
+    expect(layer.pending(tile)).toBe(true)
+    open()
+    await layer.whenReady()
+    expect(layer.pending(tile)).toBe(false)
+    layer.invalidate([tile])
+    expect(layer.pending(tile)).toBe(true)
+    await layer.whenReady()
+    expect(layer.pending(tile)).toBe(false)
+  })
+
+  it('has nothing pending for a tile whose source failed', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { map, layer } = await setup([], {
+      source: {
+        minZoom: ZOOM,
+        maxZoom: ZOOM,
+        load: () => Promise.reject(new Error('offline'))
+      }
+    })
+    const tile = map.tileCache[Utils.getTileKey(ZOOM, center.x, center.y)]
+
+    expect(layer.pending(tile)).toBe(false)
+    // whoever waits for it goes on
+    layer.invalidate([tile])
+    expect(layer.pending(tile)).toBe(false)
+  })
+
+  it('never waits forever for layers waiting for it', async () => {
+    class Waiting extends FeatureLayer<Thing> {
+      other: FeatureLayer<Thing> | undefined
+      protected override canDraw(tile: Tile) {
+        return !this.other?.pending(tile)
+      }
+    }
+    const map = new Map({
+      source: { api: 'eox' },
+      location,
+      options: { zoom: ZOOM, tileSegments: 8, zScale }
+    })
+    const source = {
+      minZoom: ZOOM,
+      maxZoom: ZOOM,
+      load: () => Promise.resolve([])
+    }
+    const build = vi.fn()
+    const a = map.addLayer(new Waiting({ source, build }))
+    const b = map.addLayer(new Waiting({ source, build }))
+    ;[a.other, b.other] = [b, a]
+    await map.init()
+    await map.whenReady()
+
+    expect(build).toHaveBeenCalledTimes(18)
   })
 
   it('tells which ground its faces cover, and when it draws a tile', async () => {

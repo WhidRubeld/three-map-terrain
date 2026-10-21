@@ -134,8 +134,11 @@ describe('Water', () => {
         4
       )
     }
-    const colors = water.geometry.getAttribute('color')
-    expect(colors.getX(0)).toBeCloseTo(new Color(WATER_COLOR).r, 6)
+    // blue: the material's
+    expect(water.material.color.getHexString()).toBe(
+      new Color(WATER_COLOR).getHexString()
+    )
+    expect(water.geometry.getAttribute('color').getX(0)).toBe(1)
     expect(water.material.polygonOffset).toBe(true)
     expect(layer.pick(rayDown(map, 0.3, 0.3))?.feature).toBe(lake)
     // the island

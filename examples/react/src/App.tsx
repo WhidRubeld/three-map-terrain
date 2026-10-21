@@ -148,9 +148,15 @@ const LOOKS = {
     background: 0x1b1d20,
     light: { ambient: 1.3, sun: 2.6 }
   },
+  // everything in lines — the trees outlined — over a light fill
   wireframe: {
     source: { api: 'none' },
-    material: { color: '#9fb3c8', wireframe: true, process: undefined },
+    material: {
+      color: '#9fb3c8',
+      wireframe: true,
+      fillOpacity: 0.12,
+      process: undefined
+    },
     background: 0x0f1216,
     light: { ambient: 1.5, sun: 2.5 }
   }

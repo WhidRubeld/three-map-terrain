@@ -132,6 +132,8 @@ export class LineBuilder {
 export class InstanceBuilder {
   private readonly matrices: number[] = []
   private readonly colors: number[] = []
+  /** Whether a copy has a color of its own: else they have no `instanceColor`. */
+  private tinted = false
   /** The feature index of every copy. */
   readonly features: number[] = []
 
@@ -141,9 +143,12 @@ export class InstanceBuilder {
     return this.features.length
   }
 
-  add(matrix: Matrix4, color: Color, feature: number) {
+  add(matrix: Matrix4, color: Color | undefined, feature: number) {
     this.matrices.push(...matrix.elements)
-    this.colors.push(color.r, color.g, color.b)
+    if (color && (color.r !== 1 || color.g !== 1 || color.b !== 1)) {
+      this.tinted = true
+      this.colors.push(color.r, color.g, color.b)
+    } else this.colors.push(1, 1, 1)
     this.features.push(feature)
   }
 
@@ -152,10 +157,12 @@ export class InstanceBuilder {
     if (this.count === 0) return undefined
     const mesh = new InstancedMesh(this.geometry, material, this.count)
     mesh.instanceMatrix.array.set(this.matrices)
-    mesh.instanceColor = new InstancedBufferAttribute(
-      new Float32Array(this.colors),
-      3
-    )
+    if (this.tinted) {
+      mesh.instanceColor = new InstancedBufferAttribute(
+        new Float32Array(this.colors),
+        3
+      )
+    }
     mesh.computeBoundingBox()
     mesh.computeBoundingSphere()
     return mesh
