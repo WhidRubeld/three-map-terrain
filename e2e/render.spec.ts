@@ -36,7 +36,7 @@ const openPlayground = async (
       Object.keys(window.__playground?.map.tileCache ?? {}).length
   )
   await page.evaluate(() => window.__playground?.buildings?.whenReady())
-  await page.evaluate(() => window.__playground?.roads?.whenReady())
+  await page.evaluate(() => window.__playground?.map.whenReady())
   // everything is loaded: one last frame, so that capturing it does not have
   // to compete with a render loop (seconds per frame on software renderers)
   await page.evaluate(() => window.__playground?.freeze())
@@ -484,6 +484,102 @@ for (const renderer of ['webgl', 'webgpu'] as const) {
       kind: 'primary',
       bridge: false
     })
+    expect(errors).toEqual([])
+  })
+}
+
+for (const renderer of ['webgl', 'webgpu'] as const) {
+  test(`lays water on the terrain and plants trees in woods (${renderer})`, async ({
+    page
+  }, testInfo) => {
+    const errors = collectErrors(page)
+    const zoom = 14
+    const center = Utils.position2tile(46.57634, 7.9904, zoom)
+    // a lake over the NW quadrant, a wood over the NE one
+    const tile = encodeVectorTile([
+      {
+        name: 'water',
+        features: [
+          {
+            id: 1,
+            type: 3,
+            properties: { class: 'lake' },
+            geometry: [[100, 100, 1948, 100, 1948, 1948, 100, 1948]]
+          }
+        ]
+      },
+      {
+        name: 'landcover',
+        features: [
+          {
+            id: 2,
+            type: 3,
+            properties: { class: 'wood', subclass: 'forest' },
+            geometry: [[2148, 100, 3996, 100, 3996, 1948, 2148, 1948]]
+          }
+        ]
+      }
+    ])
+    const query = await rendererQuery(page, renderer)
+    const { backend } = await openPlayground(
+      page,
+      `${query}&view=top&lights=0&nTiles=1&zoom=${zoom}&water=openfreemap&trees=openfreemap&segments=32`,
+      {
+        vectorTiles: (z, x, y) =>
+          z === zoom && x === center.x && y === center.y ? tile : undefined
+      }
+    )
+    testInfo.annotations.push({ type: 'backend', description: backend })
+
+    const png = await page.locator('canvas').screenshot()
+    const [lake] = await samplePixels(page, png, [tilePoint(page, 0.25, 0.25)])
+    // WATER_COLOR, unlit, over the red texture, not a pixel fighting through
+    expectColor(lake, [138, 183, 220], 3, 'lake')
+
+    // crowns (CROWN_COLOR) cover a good part of the wood, none outside it
+    const share = await page.evaluate(
+      async ({ base64, regions }) => {
+        const blob = await (
+          await fetch(`data:image/png;base64,${base64}`)
+        ).blob()
+        const bitmap = await createImageBitmap(blob)
+        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
+        const context = canvas.getContext('2d')
+        if (!context) throw new Error('no 2d context')
+        context.drawImage(bitmap, 0, 0)
+        return regions.map(([u0, v0, u1, v1]) => {
+          const [x0, y0] = [
+            Math.floor(u0 * bitmap.width),
+            Math.floor(v0 * bitmap.height)
+          ]
+          const [w, h] = [
+            Math.floor((u1 - u0) * bitmap.width),
+            Math.floor((v1 - v0) * bitmap.height)
+          ]
+          const { data } = context.getImageData(x0, y0, w, h)
+          let crowns = 0
+          for (let i = 0; i < data.length; i += 4) {
+            const [r, g, b] = [data[i], data[i + 1], data[i + 2]]
+            if (
+              Math.abs(r - 111) < 12 &&
+              Math.abs(g - 154) < 12 &&
+              Math.abs(b - 79) < 12
+            )
+              crowns++
+          }
+          return crowns / (w * h)
+        })
+      },
+      {
+        base64: png.toString('base64'),
+        regions: [
+          [...tilePoint(page, 0.6, 0.1), ...tilePoint(page, 0.9, 0.4)],
+          [...tilePoint(page, 0.6, 0.6), ...tilePoint(page, 0.9, 0.9)]
+        ]
+      }
+    )
+    expect(share[0]).toBeGreaterThan(0.05)
+    expect(share[1]).toBe(0)
     expect(errors).toEqual([])
   })
 }

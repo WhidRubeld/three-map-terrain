@@ -17,7 +17,7 @@ Elevation and imagery from any source, OpenStreetMap buildings standing on the t
 
 <table>
   <tr>
-    <td width="50%"><a href="https://whidrubeld.github.io/three-map-terrain/?place=lausanne&look=plain"><img src="docs/lausanne-plain.webp" alt="Lausanne as a white model: terrain without imagery, OpenStreetMap buildings with their edges, roads in a darker shade, bridges over the Flon valley and a solid base cut along the lake"></a></td>
+    <td width="50%"><a href="https://whidrubeld.github.io/three-map-terrain/?place=lausanne&look=plain"><img src="docs/lausanne-plain.webp" alt="Lausanne as a colored model: beige terrain without imagery, white OpenStreetMap buildings with their edges, gray roads and bridges over the Flon valley, the blue lake, woods of trees, on a solid base cut along the lake"></a></td>
     <td width="50%"><a href="https://whidrubeld.github.io/three-map-terrain/?place=lausanne&look=textured"><img src="docs/lausanne-textured.webp" alt="Lausanne up close on color aerial imagery: facades with windows a floor apart, asphalt roads with dashed center lines lying on the slopes"></a></td>
   </tr>
   <tr>
@@ -26,7 +26,7 @@ Elevation and imagery from any source, OpenStreetMap buildings standing on the t
   </tr>
 </table>
 
-<sub>The live example — [React Three Fiber in one component](examples/react/src/App.tsx): Lausanne from the lake to the cathedral, one map in four looks — plain, [textured](examples/react/src/textured.ts) (a few canvas textures on the layers' parts), aerial in grayscale (a `process` of the imagery), wireframe.</sub>
+<sub>The live example — [React Three Fiber in one component](examples/react/src/App.tsx): Lausanne from the lake to the cathedral, one map in four looks — plain ([colored](examples/react/src/colored.ts) by part), [textured](examples/react/src/textured.ts) (a few canvas textures on the layers' parts), aerial in grayscale (a `process` of the imagery), wireframe.</sub>
 
 </div>
 
@@ -35,6 +35,7 @@ Elevation and imagery from any source, OpenStreetMap buildings standing on the t
 - **Terrain from real elevation** — [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/), [Mapterhorn](https://mapterhorn.com), Mapbox, MapTiler or your own, at any zoom, as a grid of tiles around a location.
 - **Buildings** — OpenStreetMap buildings from [OpenFreeMap](https://openfreemap.org), VersaTiles, MapTiler, Mapbox, Protomaps or the Overpass API, or any data you load ([Overture Maps](https://overturemaps.org) in an example), standing on the rendered terrain.
 - **Roads and bridges** — roads and railways lying exactly on the terrain, cut along its triangles; bridges as decks on piers spanning valleys, joined across tiles; tunnels left out.
+- **Water and trees** — lakes, the sea and rivers lying on the terrain, islands left land; woods filled with trees (a trunk and a crown, instanced), single trees where they stand.
 - **Your own layers** — `FeatureLayer` loads the tiles of any source and keeps your geometry in step with the terrain; `TileContext` drapes polygons and lines on it, extrudes them or places your models. The built-in layers are made of it, and you can replace or extend their geometry.
 - **Any look** — every part of a layer takes your material, with UVs in meters so that textures repeat at true size; the terrain takes a material factory (PBR, shaders, node materials) and a `process` for its imagery's pixels. The built-in look — a color, lights, wireframe — is a starting point the layers share.
 - **Any source** — every source takes a preset, a `{z}/{x}/{y}` URL template, a TileJSON or your own `load`; a basemap tile is loaded once for all the layers reading it; tiles missing or beyond a source's zoom are cut out of their ancestors.
@@ -145,10 +146,17 @@ const hit = map.pick(raycaster) // { lat, lon, alt, point } | undefined
 
 ## Layers
 
-Buildings, roads and the base are layers of the map: they follow its tiles as they load, take on its look and go into its exports. Buildings and roads need a city-scale zoom — 14 to 16; at 15 a 3 × 3 grid is about 2.5 km wide — and true scale, so that they are not flattened:
+Buildings, roads, water, trees and the base are layers of the map: they follow its tiles as they load, take on its look and go into its exports. They need a city-scale zoom — 14 to 16; at 15 a 3 × 3 grid is about 2.5 km wide — and true scale, so that they are not flattened:
 
 ```ts
-import { Buildings, Map, Roads, TerrainBase } from 'three-map-terrain'
+import {
+  Buildings,
+  Map,
+  Roads,
+  TerrainBase,
+  Trees,
+  Water
+} from 'three-map-terrain'
 
 const map = new Map({
   location: { lat: 46.515, lon: 6.632 }, // Lausanne
@@ -159,11 +167,13 @@ const map = new Map({
     baseAltitude: 372 // Lake Geneva at z = 0: the scene stays near the origin
   }
 })
-// both read the OpenFreeMap tiles, loaded once
+// all read the OpenFreeMap tiles, loaded once
 const buildings = map.addLayer(
   new Buildings({ source: { api: 'openfreemap' }, edges: true })
 )
 const roads = map.addLayer(new Roads({ source: { api: 'openfreemap' } }))
+map.addLayer(new Water({ source: { api: 'openfreemap' } }))
+map.addLayer(new Trees({ source: { api: 'openfreemap' } }))
 map.addLayer(new TerrainBase()) // a solid block
 scene.add(map.terrain) // the layers are in map.terrain too
 await map.init()
@@ -191,6 +201,17 @@ With React Three Fiber, a pointer event is already an intersection: `buildings.p
 - **Bridges** are decks at their own height. Their pieces from different tiles are joined (by `id`, or end to end where nothing else meets: a viaduct mapped as several roads), and the deck is stretched over the ground between its ends — the upper hull of the terrain under it: never below the ground, no dips. Where the elevation has no embankments (an overpass on coarse data) a bridge clearing nothing rises to 5 m from its ends. Piers stand every 40 m where the deck is 3 m or more above the ground. `bridges: false` lays them on the terrain like the other roads.
 - **Tunnels** are not drawn.
 - **Parts.** `surface` (roads), `rails` (railways), `deck` (the top of bridges), `structure` (their sides, bottom and piers), `lines` (center lines and outlines, shown in wireframe). Roads and decks have UVs across (0 to 1) and along (meters): a texture with markings repeats along them.
+
+### Water
+
+- **On the surface**, like roads: areas — lakes, the sea, rivers, ponds, pools — are cut along the terrain's triangles; their holes, islands, stay land. Waterways (rivers, canals, streams, ditches) are ribbons as wide as their kind (`WATERWAY_WIDTHS`: river 12 m, canal 8, stream 2.5, ditch 1.5; `widths` overrides them) or the source says. They are drawn in front of the terrain and behind the roads. Waterways in tunnels are not drawn.
+- **Parts.** `water` (blue, `WATER_COLOR`, unless the look gives a color), `lines` (shores and center lines, in wireframe).
+
+### Trees
+
+- **Woods** — `landcover` `wood` from the basemaps, `natural=wood` and `landuse=forest` from Overpass — are filled with trees on a grid of `spacing` meters (default 9), jittered: anchored to the map, so that they never move when a tile is drawn again and never double at tile edges. **Single trees** (points: `natural=tree`, or yours) stand where they are.
+- **A tree** is a trunk and a crown — a cylinder and an ellipsoid — standing on the rendered surface, `height` meters high (from the source, or between `heights`, default 8–16 m). They are copies of one geometry each, an `InstancedMesh` per tile (at most `maxPerTile`, default 12 000): picking returns the tree or its wood, `highlight()` recolors the copies. Models without instancing (STL, OBJ, USDZ) get every copy.
+- **Parts.** `crowns` (green, `CROWN_COLOR`, unless the look gives a color), `trunks` (brown). Trees need a zoom of 14 or more (`minZoom`).
 
 ### Diorama base
 
@@ -241,15 +262,16 @@ trees.pick(raycaster)?.feature // the Tree under the pointer
 
 `TileContext` — the `ctx` — has the tile's features and the primitives that put geometry on the terrain, in the tile's local coordinates (scene units, x east, y north):
 
-| Primitive                                    | Draws                                                                                                                             |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `drapePolygon(part, rings, { color, clip })` | A polygon with holes lying on the terrain: water, parks, fields — cut along the terrain's triangles, lit like it                  |
-| `drapeLine(part, line, width, { color })`    | A ribbon lying on the terrain, with round caps; UVs across and along in meters                                                    |
-| `drapePath(part, line, { color })`           | A line lying on the terrain (lines are built only if their part's material is visible)                                            |
-| `extrude(polygons, bottom, top, style)`      | Walls, a roof and a floor (`floor`), and their edges — into the parts `walls`, `roofs`, `floors`, `edges` or the `parts` you name |
-| `face(part, points, { color, normal, uv })`  | Any planar convex polygon `[x, y, z, …]`, turned to face `normal`                                                                 |
-| `segment(part, a, b, color)`                 | A line from `[x, y, z]` to `[x, y, z]`                                                                                            |
-| `add(object)`                                | Any object — a model, an `InstancedMesh`; picked as the feature being drawn                                                       |
+| Primitive                                      | Draws                                                                                                                             |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `drapePolygon(part, rings, { color, clip })`   | A polygon with holes lying on the terrain: water, parks, fields — cut along the terrain's triangles, lit like it                  |
+| `drapeLine(part, line, width, { color })`      | A ribbon lying on the terrain, with round caps; UVs across and along in meters                                                    |
+| `drapePath(part, line, { color })`             | A line lying on the terrain (lines are built only if their part's material is visible)                                            |
+| `extrude(polygons, bottom, top, style)`        | Walls, a roof and a floor (`floor`), and their edges — into the parts `walls`, `roofs`, `floors`, `edges` or the `parts` you name |
+| `face(part, points, { color, normal, uv })`    | Any planar convex polygon `[x, y, z, …]`, turned to face `normal`                                                                 |
+| `segment(part, a, b, color)`                   | A line from `[x, y, z]` to `[x, y, z]`                                                                                            |
+| `instances(part, geometry).add(matrix, color)` | Copies of a shared geometry — trees, lamps — one `InstancedMesh` per part and tile, each copy picked as its feature               |
+| `add(object)`                                  | Any object — a model, an `InstancedMesh`; picked as the feature being drawn                                                       |
 
 And what they are made of: `toLocal([lon, lat])`, `groundAt(x, y)` (the rendered surface, also in loaded neighbours), `surfaceAt(x, y)` (height and normal, `undefined` where not loaded), `unitsPerMeter`, `zScale`, `rect` (the tile), `sources` (the features by source tile, with its `rect`), `planarUv(x, y)`, and the raw `surface(part)` / `lines(part)` builders. Heights read through `ctx` are tracked: the tile is drawn again when they change.
 
@@ -359,13 +381,13 @@ new Roads({
 
 UVs are in meters, so textures repeat at true size:
 
-| Geometry                                    | `u`                                  | `v`            |
-| ------------------------------------------- | ------------------------------------ | -------------- |
-| Roads, railways, bridge decks, `drapeLine`  | across, from 0 (left) to 1 (right)   | along, meters  |
-| Walls (`extrude`)                           | along the wall, meters               | up, meters     |
-| Roofs, floors, `drapePolygon`, flat `face`s | east, meters (continuous over tiles) | north, meters  |
-| Other `face`s                               | along its first edge, meters         | across, meters |
-| The terrain                                 | its imagery (0–1 over the tile)      | —              |
+| Geometry                                           | `u`                                  | `v`            |
+| -------------------------------------------------- | ------------------------------------ | -------------- |
+| Roads, railways, waterways, decks, `drapeLine`     | across, from 0 (left) to 1 (right)   | along, meters  |
+| Walls (`extrude`)                                  | along the wall, meters               | up, meters     |
+| Roofs, floors, water, `drapePolygon`, flat `face`s | east, meters (continuous over tiles) | north, meters  |
+| Other `face`s                                      | along its first edge, meters         | across, meters |
+| The terrain                                        | its imagery (0–1 over the tile)      | —              |
 
 Every vertex of a layer also has `color` (the look's, drawn by the built-in materials) and `featureIndex`, the index of its feature, for your shaders. `highlight()` draws over the highlighted features with a material of its own, so it works with any of yours.
 
@@ -376,7 +398,7 @@ map.setSource({ api: 'none' }) // imagery off; or another source
 map.setMaterial({ wireframe: true }) // only a new `process` reloads imagery
 ```
 
-The live example's looks are all made this way: [plain, aerial and wireframe](examples/react/src/App.tsx) from the options and a `process`, [textured](examples/react/src/textured.ts) from a few canvas textures on the layers' parts.
+The live example's looks are all made this way: aerial and wireframe from the options and a `process` ([App.tsx](examples/react/src/App.tsx)), plain from [a color per part](examples/react/src/colored.ts), textured from [a few canvas textures on the parts](examples/react/src/textured.ts) — and a part hidden where the photo has it already (`new MeshBasicMaterial({ visible: false })`).
 
 ## Export
 
@@ -429,18 +451,18 @@ Hundreds of templates with their attributions are listed by [leaflet-providers](
 
 Any other server by its URL with its `encoding` — `'terrarium'`, `'mapbox'` or a function `(r, g, b) => meters` — or a `load` returning RGBA pixels (e.g. decoded from a GeoTIFF).
 
-### Buildings and roads — a provider read through a schema
+### Buildings, roads, water, trees — a provider read through a schema
 
 A layer's features come from a **provider** — a basemap's vector tiles, Overpass, your `load` — read through the layer's **schema**: which layers of the tiles hold its features and how their fields become attributes. The layers know the schemas of the basemaps:
 
-| `api`         | Vector tiles                                                                                                                                                       | Key | Buildings: zooms, heights       | Roads: zooms |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --- | ------------------------------- | ------------ |
-| `openfreemap` | [OpenFreeMap](https://openfreemap.org) (OpenMapTiles)                                                                                                              | —   | 13–14, from OSM tags            | 12–14        |
-| `versatiles`  | [VersaTiles](https://versatiles.org) (Shortbread)                                                                                                                  | —   | 14, none: `defaultHeight`       | 12–14        |
-| `maptiler`    | MapTiler (OpenMapTiles)                                                                                                                                            | yes | 13–14, from OSM tags            | 12–14        |
-| `mapbox`      | Mapbox Streets v8                                                                                                                                                  | yes | 15–16, `height`, `min_height`   | 12–16        |
-| `protomaps`   | Protomaps basemap                                                                                                                                                  | yes | 14–15, `height`, `min_height`   | 12–15        |
-| `overpass`    | OpenStreetMap through the [Overpass API](https://overpass-api.de) — every tag; slow (tens of seconds a tile), one request at a time; `endpoint` for another server | —   | 14, `height`, `building:levels` | 14           |
+| `api`         | Vector tiles                                                                                                                                                       | Key | Buildings: zooms, heights       | Roads, water, trees: zooms |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --- | ------------------------------- | -------------------------- |
+| `openfreemap` | [OpenFreeMap](https://openfreemap.org) (OpenMapTiles)                                                                                                              | —   | 13–14, from OSM tags            | 12, 10, 12 – 14            |
+| `versatiles`  | [VersaTiles](https://versatiles.org) (Shortbread)                                                                                                                  | —   | 14, none: `defaultHeight`       | 12, 10, 12 – 14            |
+| `maptiler`    | MapTiler (OpenMapTiles)                                                                                                                                            | yes | 13–14, from OSM tags            | 12, 10, 12 – 14            |
+| `mapbox`      | Mapbox Streets v8                                                                                                                                                  | yes | 15–16, `height`, `min_height`   | 12, 10, 12 – 16            |
+| `protomaps`   | Protomaps basemap                                                                                                                                                  | yes | 14–15, `height`, `min_height`   | 12, 10, 12 – 15            |
+| `overpass`    | OpenStreetMap through the [Overpass API](https://overpass-api.de) — every tag; slow (tens of seconds a tile), one request at a time; `endpoint` for another server | —   | 14, `height`, `building:levels` | 14 (single trees too)      |
 
 Layers using the same preset share its tiles: a basemap tile is loaded and decoded once, and cancelled only when no layer needs it. To share your own tiles the same way, give the layers one `VectorTiles`:
 
@@ -496,11 +518,11 @@ The [basic example](examples/basic/src/overture.ts) loads the [Overture Maps](ht
 
 ## Examples
 
-| Example                                                      | Stack                         | What it shows                                                                                                                                                                                                                                  |
-| ------------------------------------------------------------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [React](examples/react)                                      | React Three Fiber, drei, Vite | The [live example](https://whidrubeld.github.io/three-map-terrain/): the Alps with imagery; Lausanne with buildings, roads and bridges, and a base in four looks switched at runtime — one textured; picking, highlighting, GLB and STL export |
-| [Basic](examples/basic)                                      | three.js, webpack             | San Francisco: Overture buildings from a custom PMTiles source and OpenFreeMap roads on a toned-down map, a base, picking, export                                                                                                              |
-| [**GPX Terrain**](https://github.com/whidrubeld/gpx-terrain) | React, R3F, TanStack Store    | [A full app](https://whidrubeld.github.io/gpx-terrain/) on the library: GPX tracks draped on terrain, profile, playback, picking, imagery and wireframe at runtime                                                                             |
+| Example                                                      | Stack                         | What it shows                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------ | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [React](examples/react)                                      | React Three Fiber, drei, Vite | The [live example](https://whidrubeld.github.io/three-map-terrain/): the Alps with imagery; Lausanne with buildings, roads and bridges, water, trees and a base in four looks switched at runtime — one colored by part, one textured; picking, highlighting, GLB and STL export |
+| [Basic](examples/basic)                                      | three.js, webpack             | San Francisco: Overture buildings from a custom PMTiles source and OpenFreeMap roads on a toned-down map, a base, picking, export                                                                                                                                                |
+| [**GPX Terrain**](https://github.com/whidrubeld/gpx-terrain) | React, R3F, TanStack Store    | [A full app](https://whidrubeld.github.io/gpx-terrain/) on the library: GPX tracks draped on terrain, profile, playback, picking, imagery and wireframe at runtime                                                                                                               |
 
 <table>
   <tr>
@@ -607,6 +629,14 @@ A `BuildingFeature` is `{ id?, geometry, height?, minHeight?, color?, properties
 
 A `RoadFeature` is `{ id?, geometry, kind, width?, link?, bridge?, tunnel?, layer?, properties }` with a GeoJSON `LineString` or `MultiLineString` in `[lon, lat]`. Parts: `surface`, `rails`, `deck`, `structure`, `lines`. `width(feature)` gives a road's meters across.
 
+### `new Water({ source, ...options })`
+
+Options: `source` (`WaterSource` or its props), `material`, `build`, `widths` (meters across waterways by kind), `highlightColor`, `minZoom` (`10`). A `WaterFeature` is `{ id?, geometry, kind?, width?, properties }` with a GeoJSON `Polygon` / `MultiPolygon` (areas, holes are islands) or `LineString` / `MultiLineString` (waterways). Parts: `water`, `lines`. `width(feature)` gives a waterway's meters across.
+
+### `new Trees({ source, ...options })`
+
+Options: `source` (`TreeSource` or its props), `material`, `build`, `spacing` (`9` m between the trees of a wood), `heights` (`[8, 16]` m), `maxPerTile` (`12000`), `highlightColor`, `minZoom` (`14`). A `TreeFeature` is `{ id?, geometry, height?, kind?, properties }` with a GeoJSON `Point` / `MultiPoint` (trees) or `Polygon` / `MultiPolygon` (woods). Parts: `crowns`, `trunks` (instanced).
+
 ### `new FeatureLayer({ source, build?, material?, highlightColor?, minZoom?, name? })`
 
 The frame of the layers above — [Your own layers](#your-own-layers). `source` is any `FeatureSource`; `name` names the group and its objects (`'<name> <part> <z/x/y>'`).
@@ -621,7 +651,7 @@ Side walls from the terrain's outer edges down to `depth` meters (default 50) be
 
 - `new Source(props)` — imagery; `tileUrl(z, x, y)`, `load(tile)`.
 - `new ElevationSource(props)` — elevation; `tileUrl(z, x, y)`, `load(tile)`, `decode(r, g, b)`; `decodeTerrarium`, `decodeMapbox`.
-- `new BuildingSource(props)`, `new RoadSource(props)` — features read through `buildingSchema` / `roadSchema`; `load(tile)`, `tiles`. Both are `TileFeatureSource`s.
+- `new BuildingSource(props)`, `new RoadSource(props)`, `new WaterSource(props)`, `new TreeSource(props)` — features read through `buildingSchema`, `roadSchema`, `waterSchema`, `treeSchema`; `load(tile)`, `tiles`. All are `TileFeatureSource`s.
 - `new VectorTiles(props)` — a vector tile provider (`api`, `url` or `tilejson`, `schema`); `load(tile)` → `VectorTileData` with `layer(name)`; `VectorTiles.preset(api, token?)` is the instance layers share.
 - `new Overpass({ endpoint? })` — `query(ql, signal)`, one request at a time per endpoint.
 
@@ -633,9 +663,11 @@ All take the props shown in [Sources](#sources); `map`, `Buildings`, `Roads` and
 - `Utils` — Web Mercator tile math: `position2tile`, `position2tileFraction`, `tile2bbox`, `tile2lat`, `tile2lon`, `tile2position`, `tileWidth`, `getTileKey`.
 - `Tile` — one terrain tile: elevation decoding, geometry, seams, `heightAt(u, v)`, `children()`, `loadImagery()`, `loadTexture()`, `whenTextured()`, `restyle()`, `dispose()`.
 - `loadQuadTexture`, `createTerrainMaterial` — the 2 × 2 child-tile texture and the built-in material made from it.
-- `TileContext`, `TileSurface` (heights and normals of a tile, as the GPU interpolates them), `SurfaceBuilder`, `LineBuilder`, `FEATURE_ATTRIBUTE` — what layers draw with.
+- `TileContext`, `TileSurface` (heights and normals of a tile, as the GPU interpolates them), `SurfaceBuilder`, `LineBuilder`, `InstanceBuilder`, `FEATURE_ATTRIBUTE` — what layers draw with.
 - `buildingsFromVectorTile`, `readBuildings`, `openMapTilesProperties`, `mapboxStreetsProperties`, `protomapsProperties`, `shortbreadProperties`, `overtureProperties` — buildings from vector tiles, by schema; `buildingsFromOverpass`, `overpassQuery`, `osmBuildingAttributes`, `LEVEL_HEIGHT` — from OpenStreetMap.
 - `roadsFromVectorTile`, `readRoads`, `openMapTilesRoadProperties`, `mapboxStreetsRoadProperties`, `protomapsRoadProperties`, `shortbreadRoadProperties`, `roadKind`, `ROAD_KINDS`, `ROAD_WIDTHS`, `LINK_WIDTH` — roads from vector tiles; `roadsFromOverpass`, `overpassRoadsQuery`, `osmRoadAttributes`, `LANE_WIDTH` — from OpenStreetMap.
+- `waterFromVectorTile`, `readWater`, `openMapTilesWaterProperties` (and the Mapbox, Protomaps, Shortbread ones), `WATERWAY_WIDTHS`, `WATER_COLOR`; `waterFromOverpass`, `overpassWaterQuery` — water.
+- `treesFromVectorTile`, `readTrees`, `openMapTilesTreeProperties` (and the others), `CROWN_COLOR`, `TRUNK_COLOR`; `treesFromOverpass`, `overpassTreesQuery` — trees.
 - `parseLength`, `toNumber`, `clipRect`, `isRing`, `Position`, `Ring` — reading features.
 - `decodeVectorTile`, `gunzip` — the vector tile (MVT) decoder.
 - `exportModel`, `MODEL_TYPES`, `expandTileUrl`.
@@ -707,7 +739,7 @@ yarn validate   # typecheck, lint, format check, unit tests, build
 yarn test:e2e   # rendering tests in Chromium (WebGL + WebGPU), tile servers mocked
 ```
 
-The playground takes query parameters: `renderer=webgpu` (`&forceWebGL=1` for its WebGL2 backend), `lights=0`, `wireframe=1`, `segments=40`, `nTiles=5`, `view=top`, `api=osm|swisstopo|none`, `color=e9e4da`, `gray=1` (a `process`), `elevation=mapterhorn`, `buildings=openfreemap&edges=1`, `roads=openfreemap`, `zoom=15&lat=46.515&lon=6.632`, `base=372`. Architecture notes and conventions are in [AGENTS.md](AGENTS.md).
+The playground takes query parameters: `renderer=webgpu` (`&forceWebGL=1` for its WebGL2 backend), `lights=0`, `wireframe=1`, `segments=40`, `nTiles=5`, `view=top`, `api=osm|swisstopo|none`, `color=e9e4da`, `gray=1` (a `process`), `elevation=mapterhorn`, `buildings=openfreemap&edges=1`, `roads=openfreemap`, `water=openfreemap`, `trees=openfreemap`, `zoom=15&lat=46.515&lon=6.632`, `base=372`. Architecture notes and conventions are in [AGENTS.md](AGENTS.md).
 
 ## Roadmap
 
@@ -717,7 +749,8 @@ The playground takes query parameters: `renderer=webgpu` (`&forceWebGL=1` for it
 - [x] 3D buildings, a diorama base, GLB / STL / USDZ export
 - [x] Roads, railways and bridges
 - [x] A frame for your own layers; materials, geometry and parsing replaceable at every stage
-- [ ] Water and land cover (`drapePolygon`), trees (instances)
+- [x] Water and trees (prototypes: a trunk and a crown)
+- [ ] Land cover (fields, parks, rock), tree species
 - [ ] Roof shapes (`roof:shape`, from Overpass and Overture)
 - [ ] Pin and direction components
 - [ ] Vue example

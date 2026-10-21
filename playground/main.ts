@@ -27,7 +27,11 @@ import {
   Map,
   type RoadSourceProps,
   Roads,
-  type SourceProps
+  type SourceProps,
+  type TreeSourceProps,
+  Trees,
+  Water,
+  type WaterSourceProps
 } from '../src'
 import type { Playground } from './types'
 
@@ -40,6 +44,8 @@ const elevationApi = (params.get('elevation') ?? 'aws') as ElevationApi
 // openfreemap, versatiles, overpass, maptiler, mapbox, protomaps
 const buildingsApi = params.get('buildings')
 const roadsApi = params.get('roads')
+const waterApi = params.get('water')
+const treesApi = params.get('trees')
 // for the presets that need one (mapbox, maptiler, protomaps)
 const token = params.get('token') ?? ''
 const nTiles = Number(params.get('nTiles') ?? 3)
@@ -150,6 +156,16 @@ const roads = roadsApi
       new Roads({ source: { api: roadsApi, token } as RoadSourceProps })
     )
   : undefined
+const water = waterApi
+  ? map.addLayer(
+      new Water({ source: { api: waterApi, token } as WaterSourceProps })
+    )
+  : undefined
+const trees = treesApi
+  ? map.addLayer(
+      new Trees({ source: { api: treesApi, token } as TreeSourceProps })
+    )
+  : undefined
 scene.add(map.terrain)
 const ready = map.init(() => {
   console.info('Map is ready')
@@ -238,6 +254,8 @@ const status = [
     ? [`buildings ${buildingsApi}${edges ? ' + edges' : ''}`]
     : []),
   ...(roadsApi ? [`roads ${roadsApi}`] : []),
+  ...(waterApi ? [`water ${waterApi}`] : []),
+  ...(treesApi ? [`trees ${treesApi}`] : []),
   `lights ${lights ? 'on' : 'off'}`,
   ...(wireframe ? ['wireframe'] : []),
   ...(color ? [color] : []),
@@ -315,6 +333,8 @@ const playground: Playground = {
   map,
   buildings,
   roads,
+  water,
+  trees,
   camera,
   controls,
   revision: REVISION,

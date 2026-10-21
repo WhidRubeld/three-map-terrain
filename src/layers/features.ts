@@ -89,3 +89,23 @@ export function clipRect(
   clipped = clipSide(clipped, (_, y) => y >= minY, atY(minY))
   return clipSide(clipped, (_, y) => y <= maxY, atY(maxY))
 }
+
+/**
+ * Groups the rings of a vector tile polygon into polygons: per the spec an
+ * outer ring has the sign of the first one, a hole the opposite sign.
+ */
+export function classifyRings(rings: readonly number[][]): number[][][] {
+  const polygons: number[][][] = []
+  let outerSign = 0
+  for (const ring of rings) {
+    const area = ringArea(ring)
+    if (area === 0 || ring.length < 6) continue
+    if (outerSign === 0) outerSign = Math.sign(area)
+    if (Math.sign(area) === outerSign || polygons.length === 0) {
+      polygons.push([ring])
+    } else {
+      polygons[polygons.length - 1].push(ring)
+    }
+  }
+  return polygons
+}

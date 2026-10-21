@@ -5,6 +5,7 @@ import {
   type ColorRepresentation,
   Float32BufferAttribute,
   Group,
+  type InstancedMesh,
   type Intersection,
   LineBasicMaterial,
   LineSegments,
@@ -83,6 +84,11 @@ interface TileEntry<F> {
   objects: Object3D[]
   /** Objects from `ctx.add()`, and the index of their feature. */
   custom: globalThis.Map<Object3D, number>
+  /** Copies of a geometry: the feature and color of every copy. */
+  instanced: globalThis.Map<
+    InstancedMesh,
+    { features: number[]; colors: Float32Array }
+  >
   overlays: Object3D[]
   done: Promise<void>
 }
@@ -209,6 +215,10 @@ export class FeatureLayer<F> implements MapLayer {
       features: [],
       objects: [],
       custom: new globalThis.Map<Object3D, number>(),
+      instanced: new globalThis.Map<
+        InstancedMesh,
+        { features: number[]; colors: Float32Array }
+      >(),
       overlays: [],
       done: Promise.resolve()
     }
@@ -302,9 +312,11 @@ export class FeatureLayer<F> implements MapLayer {
     object,
     face,
     index,
+    instanceId,
     point
   }: Pick<Intersection, 'object' | 'face' | 'point'> &
-    Partial<Pick<Intersection, 'index'>>): FeatureHit<F> | undefined {
+    Partial<Pick<Intersection, 'index' | 'instanceId'>>):
+    FeatureHit<F> | undefined {
     const { map } = this
     if (!map) return undefined
     let feature: F | undefined
@@ -312,7 +324,12 @@ export class FeatureLayer<F> implements MapLayer {
     const attribute = (object as Partial<Mesh>).geometry?.getAttribute(
       FEATURE_ATTRIBUTE
     ) as BufferAttribute | undefined
-    if (entry && attribute) {
+    const copies = entry?.instanced.get(object as InstancedMesh)
+    if (entry && copies) {
+      if (instanceId !== undefined) {
+        feature = entry.features.at(copies.features[instanceId])
+      }
+    } else if (entry && attribute) {
       const vertex = (object as Partial<Mesh>).isMesh ? face?.a : index
       if (vertex !== undefined) {
         feature = entry.features.at(attribute.getX(vertex))
@@ -541,7 +558,7 @@ export class FeatureLayer<F> implements MapLayer {
 
     entry.features = ctx.features
     entry.depends = ctx.depends
-    const { surfaces, lines } = ctx.parts
+    const { surfaces, lines, instances } = ctx.parts
     for (const [part, builder] of surfaces) {
       const geometry = builder.build()
       if (geometry) {
@@ -561,6 +578,17 @@ export class FeatureLayer<F> implements MapLayer {
         entry.objects.push(segments)
       }
     }
+    for (const [part, builder] of instances) {
+      const mesh = builder.build(this.material(part, 'faces'))
+      if (mesh?.instanceColor) {
+        mesh.name = `${this.group.name} ${part} ${entry.tile.key()}`
+        entry.instanced.set(mesh, {
+          features: builder.features,
+          colors: Float32Array.from(mesh.instanceColor.array)
+        })
+        entry.objects.push(mesh)
+      }
+    }
     for (const { object, feature } of ctx.objects) {
       entry.custom.set(object, feature)
       entry.objects.push(object)
@@ -578,12 +606,16 @@ export class FeatureLayer<F> implements MapLayer {
     for (const object of entry.objects) {
       this.objects.delete(object)
       object.removeFromParent()
-      if (!entry.custom.has(object)) {
+      if (entry.instanced.has(object as InstancedMesh)) {
+        // its copies; the geometry is shared
+        ;(object as InstancedMesh).dispose()
+      } else if (!entry.custom.has(object)) {
         ;(object as Mesh).geometry.dispose()
       }
     }
     entry.objects = []
     entry.custom.clear()
+    entry.instanced.clear()
     entry.features = []
   }
 
@@ -599,15 +631,39 @@ export class FeatureLayer<F> implements MapLayer {
   private paint(entry: TileEntry<F>) {
     this.clearOverlays(entry)
     const { highlighted } = this
-    if (!highlighted) return
     const indices = new Set<number>()
-    for (const [i, feature] of entry.features.entries()) {
-      if (matches(feature, highlighted.target)) indices.add(i)
+    if (highlighted) {
+      for (const [i, feature] of entry.features.entries()) {
+        if (matches(feature, highlighted.target)) indices.add(i)
+      }
     }
-    if (indices.size === 0) return
+    // copies are recolored
+    for (const [mesh, { features, colors }] of entry.instanced) {
+      const color = mesh.instanceColor
+      if (!color) continue
+      color.array.set(colors)
+      if (highlighted) {
+        features.forEach((feature, i) => {
+          if (indices.has(feature)) {
+            color.setXYZ(
+              i,
+              highlighted.color.r,
+              highlighted.color.g,
+              highlighted.color.b
+            )
+          }
+        })
+      }
+      color.needsUpdate = true
+    }
+    if (!highlighted || indices.size === 0) return
 
     for (const object of entry.objects) {
-      if (entry.custom.has(object)) continue
+      if (
+        entry.custom.has(object) ||
+        entry.instanced.has(object as InstancedMesh)
+      )
+        continue
       const { geometry, material } = object as Mesh
       if (!(material as Material).visible) continue
       const isMesh = (object as Partial<Mesh>).isMesh === true

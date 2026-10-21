@@ -44,13 +44,18 @@ src/                      library (the only published code, plus dist/)
                           (drapePolygon/Line/Path, extrude, face, segment, add)
     drape.ts              cutting shapes along the terrain's triangles, TileSurface
     extrude.ts            walls/roofs/floors/edges with UVs in meters
-    geometry.ts           SurfaceBuilder, LineBuilder (attributes, featureIndex)
-    features.ts           Position, Ring, toNumber, parseLength, clipRect
+    geometry.ts           SurfaceBuilder, LineBuilder, InstanceBuilder (attributes,
+                          featureIndex)
+    features.ts           Position, Ring, toNumber, parseLength, clipRect, classifyRings
     buildings/            Buildings (ownership, grounding, clip), BuildingSource
                           (schema), features (MVT schemas), osm (tags, Overpass)
     roads/                Roads (ribbons, decks, piers), RoadSource (schema),
                           features (kinds, widths, MVT schemas), osm, bridges
                           (joining pieces, deck profile)
+    water/                Water (draped areas and waterways), WaterSource, schemas, osm
+    trees/                Trees (woods scattered, single trees; instanced trunks
+                          and crowns), TreeSource, schemas, osm
+    osm.ts                (internal) Overpass elements, joinRings, polygonsOf
     base/                 TerrainBase: side walls + bottom (a plain MapLayer)
   io/                     network and formats
     fetch.ts              (internal) fetch with retries, HttpError
@@ -67,7 +72,8 @@ examples/basic            plain three.js + webpack: San Francisco, Overture
                           imagery toned with a `process`
 examples/react            React Three Fiber + drei + Vite; the live example
                           (GitHub Pages, deployed from master): Alps, Lausanne
-                          in four looks (textured.ts: materials per part)
+                          with all layers in four looks (colored.ts, textured.ts:
+                          materials per part)
 docs/                     README images (WebP) of the examples: `yarn screenshots`
 scripts/screenshots.mjs   renders them from the built examples (Chrome + cwebp)
 .skills/                  agent skills (symlinked as .claude/skills)
@@ -211,6 +217,11 @@ depends on the published package. After a release, bump it there.
     (never disposed). Vertices carry `position`, `normal`, `uv` (meters),
     `color` (the look) and `featureIndex` (`FEATURE_ATTRIBUTE`) — `pick`
     reads it. Line parts are built only if their material is visible.
+    `ctx.instances(part, geometry)` collects copies of a shared geometry
+    (matrix, color, feature each) into one `InstancedMesh` per part and tile:
+    picked by `instanceId`, highlighted by recoloring `instanceColor` (base
+    colors kept per mesh), disposed with `InstancedMesh.dispose()` — the
+    shared geometry never.
   - Materials: `material` option = the look (`Partial<MaterialOptions>`),
     one `Material` for faces, or `(part) => Material | undefined`; else
     `createMaterial(part, kind, look)` (faces `visible: !wireframe`, lines
@@ -281,12 +292,28 @@ depends on the published package. After a release, bump it there.
       Flon valley (Grand-Pont, Lausanne), and a straight line between the
       ends of a long hillside viaduct (Chillon, A9) runs up to 20 m into the
       slope — the hull does neither.
+- **Water** (`src/layers/water/`): areas (`drapePolygon`, holes = islands)
+  and waterways (`drapeLine`, `WATERWAY_WIDTHS`) clipped to source ∩
+  terrain tile like roads, into `water` (polygon offset −1/−2: in front of
+  the terrain, behind roads at −4), shores and center lines in `lines`.
+  Tunnels dropped by the schemas. Blue (`WATER_COLOR`) unless the look has
+  its own color.
+- **Trees** (`src/layers/trees/`): woods (polygons) are scattered on a
+  jittered grid of `spacing` meters anchored to map units — `hash(i, j, k)`
+  per cell, so the same trees in every redraw and none twice at tile edges
+  (each tile plants only inside source ∩ terrain tile); points are single
+  trees. A tree = a trunk (open cylinder, z 0–1) and a crown (icosahedron)
+  shared by every layer, white `color` attributes, sized by its height
+  (crown 62 % of it, radius 24 %); `maxPerTile` caps a tile. In wireframe
+  the crowns' default material is hidden like any faces.
 - **TerrainBase**: rebuilt from all placed tiles on every tile event — walls
   along sides without a placed neighbour, a floor per tile, `depth` meters
   below the lowest vertex; in wireframe an outline.
 - **Export** (`src/export/model.ts`): copies the object tree (sharing
   geometries; all visible; lines only with `lines`; never objects with
-  `userData.export === false`, e.g. highlights), converts materials to
+  `userData.export === false`, e.g. highlights), expands every
+  `InstancedMesh` into a mesh of its copies for formats without instancing
+  (STL, OBJ, USDZ; glTF keeps `EXT_mesh_gpu_instancing`), converts materials to
   `MeshStandardMaterial` (USDZ needs it), turns Z-up into Y-up for glTF /
   OBJ / USDZ (not STL), scales (meters: `tileWidth / tileSize`) and runs
   three's exporter, imported dynamically (`three/addons/exporters/*`, kept

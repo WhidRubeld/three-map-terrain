@@ -1,4 +1,11 @@
-import { Color, type Object3D, ShapeUtils, Vector2 } from 'three'
+import {
+  type BufferGeometry,
+  Color,
+  type Matrix4,
+  type Object3D,
+  ShapeUtils,
+  Vector2
+} from 'three'
 
 import { clipRect, isRing, type Position } from './features'
 import { Utils } from '../geo/Utils.class'
@@ -14,7 +21,7 @@ import {
   TileSurface
 } from './drape'
 import { extrude, type FlatRing } from './extrude'
-import { LineBuilder, SurfaceBuilder } from './geometry'
+import { InstanceBuilder, LineBuilder, SurfaceBuilder } from './geometry'
 
 /** `[minX, minY, maxX, maxY]` in a tile's local coordinates. */
 export type Rect = readonly [
@@ -99,6 +106,7 @@ export class TileContext<F> {
 
   private readonly surfaces = new globalThis.Map<string, SurfaceBuilder>()
   private readonly lineParts = new globalThis.Map<string, LineBuilder>()
+  private readonly instanceParts = new globalThis.Map<string, InstanceBuilder>()
   private readonly own: TileSurface
   private readonly point: SurfacePoint = { z: 0, nx: 0, ny: 0, nz: 1 }
   private current = -1
@@ -217,9 +225,40 @@ export class TileContext<F> {
     return builder
   }
 
+  /**
+   * Copies of a geometry in a part — trees, lamps — drawn as one
+   * `InstancedMesh` per tile: `add(matrix, color)` places one (local
+   * coordinates), belonging to the feature being drawn. The geometry is
+   * shared, never disposed by the layer; give it a white `color` attribute
+   * for the default materials, which multiply the vertex colors by the
+   * copy's color.
+   */
+  instances(
+    part: string,
+    geometry: BufferGeometry
+  ): { add: (matrix: Matrix4, color: Color) => void } {
+    let builder = this.instanceParts.get(part)
+    if (!builder) {
+      builder = new InstanceBuilder(geometry)
+      this.instanceParts.set(part, builder)
+    } else if (builder.geometry !== geometry) {
+      throw new Error(`The part ${part} has copies of another geometry`)
+    }
+    const copies = builder
+    return {
+      add: (matrix, color) => {
+        copies.add(matrix, color, this.current)
+      }
+    }
+  }
+
   /** Everything built, by part. */
   get parts() {
-    return { surfaces: this.surfaces, lines: this.lineParts }
+    return {
+      surfaces: this.surfaces,
+      lines: this.lineParts,
+      instances: this.instanceParts
+    }
   }
 
   /**
@@ -246,6 +285,7 @@ export class TileContext<F> {
     let size = this.objects.length
     for (const builder of this.surfaces.values()) size += builder.vertexCount
     for (const builder of this.lineParts.values()) size += builder.vertexCount
+    for (const builder of this.instanceParts.values()) size += builder.count
     return size
   }
 
@@ -408,8 +448,10 @@ export class TileContext<F> {
       return out
     }
     const [outer, ...holes] = clipped.map(points)
+    // drops repeated end points: the points are listed afterwards
+    const triangles = ShapeUtils.triangulateShape(outer, holes)
     const all = [outer, ...holes].flat()
-    for (const [a, b, c] of ShapeUtils.triangulateShape(outer, holes)) {
+    for (const [a, b, c] of triangles) {
       this.drapeConvex(
         part,
         [all[a].x, all[a].y, all[b].x, all[b].y, all[c].x, all[c].y],

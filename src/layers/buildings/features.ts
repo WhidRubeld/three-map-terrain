@@ -5,13 +5,16 @@ import { Color } from 'three'
 import { gunzip, type VectorTileValue } from '../../io/mvt'
 import { VectorTileData } from '../../sources/vector-tiles'
 import {
+  classifyRings,
   clipRect,
   isRing,
   type Position,
   type Ring,
-  ringArea,
   toNumber
 } from '../features'
+
+// kept here for the tests and older imports
+export { classifyRings }
 
 export type BuildingId = string | number
 
@@ -126,26 +129,6 @@ export const overtureProperties: BuildingProperties = (p) => {
 /** Clips a ring to `[0, extent]²`: buffered geometry would be drawn twice. */
 export const clipRing = (ring: readonly number[], extent: number) =>
   clipRect(ring, 0, 0, extent, extent)
-
-/**
- * Groups the rings of a vector tile polygon into polygons: per the spec an
- * outer ring has the sign of the first one, a hole the opposite sign.
- */
-export function classifyRings(rings: readonly number[][]): number[][][] {
-  const polygons: number[][][] = []
-  let outerSign = 0
-  for (const ring of rings) {
-    const area = ringArea(ring)
-    if (area === 0 || ring.length < 6) continue
-    if (outerSign === 0) outerSign = Math.sign(area)
-    if (Math.sign(area) === outerSign || polygons.length === 0) {
-      polygons.push([ring])
-    } else {
-      polygons[polygons.length - 1].push(ring)
-    }
-  }
-  return polygons
-}
 
 /**
  * Buildings of one vector tile (MVT; gzip is detected), clipped to the tile

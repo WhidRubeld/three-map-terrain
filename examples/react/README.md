@@ -16,9 +16,12 @@ What it shows ([src/App.tsx](src/App.tsx)):
 - **Lausanne** — from Lake Geneva up to the cathedral, true to scale
   (`exaggeration: 1`, `baseAltitude: 372`), Mapterhorn elevation,
   OpenFreeMap buildings with their edges, roads and railways (`Roads`,
-  footpaths left out with `kinds`) whose bridges span the Flon valley, and
-  a `TerrainBase`, set up once. Four looks switched at runtime with
-  `map.setSource` / `map.setMaterial` — plain (no imagery), aerial
+  footpaths left out with `kinds`) whose bridges span the Flon valley, the
+  lake and the river (`Water`), the woods of the ravines (`Trees`) and a
+  `TerrainBase`, set up once. Four looks switched at runtime with
+  `map.setSource` / `map.setMaterial` — plain (no imagery, a color per part
+  from [src/colored.ts](src/colored.ts): beige ground, white buildings,
+  gray roads, the water blue and the trees green), aerial
   (swisstopo from a URL template, in grayscale by a `process` of its
   pixels), textured, wireframe — which the layers take on.
   `?place=lausanne&look=textured` opens one directly.

@@ -1,5 +1,7 @@
 import {
   BoxGeometry,
+  InstancedMesh,
+  Matrix4,
   BufferGeometry,
   Float32BufferAttribute,
   Group,
@@ -155,6 +157,26 @@ describe('exportModel', () => {
     const gltf = await glbJson(await exportModel(original, 'glb'))
 
     expect(gltf.meshes).toHaveLength(1)
+  })
+
+  it('writes the copies of an InstancedMesh where the format has no instancing', async () => {
+    const group = new Group()
+    const copies = new InstancedMesh(
+      new BoxGeometry(1, 1, 1),
+      new MeshLambertMaterial(),
+      3
+    )
+    for (let i = 0; i < 3; i++) {
+      copies.setMatrixAt(i, new Matrix4().makeTranslation(i * 10, 0, 0))
+    }
+    group.add(copies)
+
+    const stl = await exportModel(group, 'stl')
+    // binary STL: 80-byte header, the triangle count, 50 bytes a triangle
+    const view = new DataView(await stl.arrayBuffer())
+    expect(view.getUint32(80, true)).toBe(3 * 12)
+    // the scene keeps its instanced mesh
+    expect(group.children).toEqual([copies])
   })
 
   it('drops textures when asked to, and exports placeholder materials', async () => {

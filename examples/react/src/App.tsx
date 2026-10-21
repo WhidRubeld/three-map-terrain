@@ -3,7 +3,7 @@ import './App.css'
 import { MapControls, PerspectiveCamera } from '@react-three/drei'
 import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { useEffect, useMemo, useState } from 'react'
-import { type Material, Raycaster } from 'three'
+import { type Material, MeshBasicMaterial, Raycaster } from 'three'
 import {
   type BuildingFeature,
   Buildings,
@@ -16,9 +16,12 @@ import {
   Roads,
   type SourceProps,
   type TerrainMaterialOptions,
-  TerrainBase
+  TerrainBase,
+  Trees,
+  Water
 } from 'three-map-terrain'
 
+import { COLORED } from './colored'
 import { TEXTURED } from './textured'
 
 type Point = readonly [x: number, y: number, z: number]
@@ -32,6 +35,7 @@ const lausanne = { lat: 46.515, lon: 6.632 }
  */
 let parts: Readonly<Record<string, Material>> = {}
 const byPart = (part: string): Material | undefined => parts[part]
+const HIDDEN = new MeshBasicMaterial({ visible: false })
 
 const PLACES = {
   alps: {
@@ -72,6 +76,13 @@ const PLACES = {
           material: byPart
         })
       )
+      // the lake and the Flon, the woods of the ravines
+      map.addLayer(
+        new Water({ source: { api: 'openfreemap' }, material: byPart })
+      )
+      map.addLayer(
+        new Trees({ source: { api: 'openfreemap' }, material: byPart })
+      )
       map.addLayer(new TerrainBase())
       return map
     }
@@ -107,10 +118,11 @@ const SWISSIMAGE: SourceProps = {
 }
 
 const LOOKS = {
-  // no imagery: the relief shows in the light
+  // no imagery: a colored model, the relief shows in the light
   plain: {
     source: { api: 'none' },
-    material: { color: '#f2ede5', wireframe: false, process: undefined },
+    material: { color: '#e8dcc3', wireframe: false, process: undefined },
+    parts: COLORED,
     background: 0x1d1c1a,
     light: { ambient: 0.9, sun: 3.2 }
   },
@@ -118,6 +130,8 @@ const LOOKS = {
   aerial: {
     source: SWISSIMAGE,
     material: { color: '#ffffff', wireframe: false, process: gray },
+    // the photo has its water and trees
+    parts: { water: HIDDEN, crowns: HIDDEN, trunks: HIDDEN },
     background: 0x161616,
     light: { ambient: 1.4, sun: 2.4 }
   },

@@ -38,6 +38,9 @@ It runs `e2e/render.spec.ts` against the playground for `renderer=webgl` and
   map's color without a pixel of the terrain fighting through (WebGL and
   WebGPU: the polygon offset), a bridge becomes a deck, a tunnel is not
   drawn, and a click picks the road (`lastRoad`);
+- water from a mocked tile lies on the terrain in `WATER_COLOR`, and a
+  wood is filled with crowns (`CROWN_COLOR`) — none outside it (WebGL and
+  WebGPU);
 - `setSource()` + `setMaterial()` in one go (a look switch) ends in the
   second's style: wireframe lines in the new color;
 - `map.export('glb')` writes a GLB with the stitched texture embedded.
@@ -72,6 +75,7 @@ Query parameters:
 | `buildings`          | `openfreemap`, `versatiles`, `overpass`, … | —        | the `Buildings` layer; `token=…` for keyed ones                    |
 | `edges`              | `1`                                        | —        | buildings' `edges`                                                 |
 | `roads`              | `openfreemap`, `versatiles`, `overpass`, … | —        | the `Roads` layer (bridges, tunnels)                               |
+| `water`, `trees`     | `openfreemap`, `versatiles`, `overpass`, … | —        | the `Water` and `Trees` layers                                     |
 | `gray`               | `1`                                        | —        | a grayscale `process` of the imagery (the playground's own)        |
 | `zoom`, `lat`, `lon` | numbers                                    | Alps, 11 | another place or zoom: drawn true to scale (`exaggeration=…`)      |
 | `base`               | meters                                     | `0`      | `baseAltitude`                                                     |
@@ -79,7 +83,7 @@ Query parameters:
 | `segments`           | integer                                    | `100`    | `tileSegments` (try `40` with `wireframe=1`)                       |
 | `view`               | `orbit`, `top`                             | `orbit`  | perspective + MapControls, or orthographic top view                |
 
-`window.__playground` exposes `{ map, buildings, roads, camera, controls, revision, backend, ready, texturedTiles(), lastPick, lastBuilding, lastRoad, freeze() }` — e.g. `__playground.map.setMaterial({ wireframe: true })` or `await __playground.map.export('glb')` from the console.
+`window.__playground` exposes `{ map, buildings, roads, water, trees, camera, controls, revision, backend, ready, texturedTiles(), lastPick, lastBuilding, lastRoad, freeze() }` — e.g. `__playground.map.setMaterial({ wireframe: true })` or `await __playground.map.export('glb')` from the console.
 
 Buildings and looks, with real data:
 
@@ -141,7 +145,10 @@ Same checklist as above. The React example runs in `StrictMode`, so
 `init → clean → init` happens on mount — there must be exactly 9 tiles and no
 errors about aborted requests.
 
-- React (`?place=lausanne&look=plain|aerial|textured|wireframe`): switch
+- React (`?place=lausanne&look=plain|aerial|textured|wireframe`): plain is
+  a colored model — beige ground, white buildings, gray roads, the blue
+  lake, green woods, on the base — and aerial hides the water and trees
+  (the photo has them). Switch
   the looks back and forth (e.g. wireframe → textured → plain, and through
   aerial) — every look must be complete each time, the textured one with
   its materials on every part and none left behind in the others; the

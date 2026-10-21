@@ -2,7 +2,12 @@
 export * from './FeatureLayer.class'
 export * from './TileContext.class'
 export { type FlatRing } from './extrude'
-export { FEATURE_ATTRIBUTE, LineBuilder, SurfaceBuilder } from './geometry'
+export {
+  FEATURE_ATTRIBUTE,
+  InstanceBuilder,
+  LineBuilder,
+  SurfaceBuilder
+} from './geometry'
 export { type SurfacePoint, TileSurface } from './drape'
 export {
   clipRect,
@@ -14,4 +19,6 @@ export {
 } from './features'
 export * from './buildings'
 export * from './roads'
+export * from './water'
+export * from './trees'
 export * from './base'

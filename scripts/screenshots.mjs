@@ -99,8 +99,11 @@ for (const scene of SCENES) {
     deviceScaleFactor: 2
   })
   await page.goto(`http://localhost:${port}/${scene.query ?? ''}`)
-  // tiles and their textures: wait until the network is quiet
-  await page.waitForLoadState('networkidle')
+  // tiles and their textures: wait until the network is quiet — or, with a
+  // slow tile server retrying, a while
+  await page
+    .waitForLoadState('networkidle', { timeout: 90000 })
+    .catch(() => console.warn(`${scene.name}: the network never went quiet`))
   await page.waitForTimeout(2000)
   if (scene.prepare) await scene.prepare(page)
   if (scene.click) await page.mouse.click(...scene.click)

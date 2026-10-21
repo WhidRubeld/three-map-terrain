@@ -8,7 +8,9 @@ import type {
   Map,
   RoadId,
   RoadKind,
-  Roads
+  Roads,
+  Trees,
+  Water
 } from '../src'
 
 /** Debug handle exposed as `window.__playground` (used by the e2e tests). */
@@ -18,6 +20,10 @@ export interface Playground {
   buildings: Buildings | undefined
   /** The roads layer (`?roads=…`). */
   roads: Roads | undefined
+  /** The water layer (`?water=…`). */
+  water: Water | undefined
+  /** The trees layer (`?trees=…`). */
+  trees: Trees | undefined
   /** three.js `REVISION` actually loaded */
   revision: string
   /** `webgl`, `webgpu`, or `webgpu (webgl2 backend)` */
