@@ -376,6 +376,32 @@ describe('FeatureLayer', () => {
     expect(objects(layer, 'outline')).toEqual([])
   })
 
+  it('tells which ground its faces cover, and when it draws a tile', async () => {
+    const { map, layer } = await setup([{ id: 'a', fx: 0.5, fy: 0.5 }], {
+      build: drapeSquares(0.2)
+    })
+    const at = (fx: number, fy: number) =>
+      [center.x + fx, center.y + fy] as const
+    const meter = 1 / Utils.tileWidth(location.lat, ZOOM)
+
+    expect(layer.covers(...at(0.5, 0.5))).toBe(true)
+    expect(layer.covers(...at(0.65, 0.5))).toBe(false)
+    // within 0.06 tiles of its edge at 0.6
+    expect(layer.covers(...at(0.65, 0.5), 0.06)).toBe(true)
+    expect(meter).toBeGreaterThan(0)
+
+    const drawn = vi.fn()
+    const stop = layer.onTileDrawn(drawn)
+    const tile = map.tileCache[Utils.getTileKey(ZOOM, center.x, center.y)]
+    layer.invalidate([tile])
+    await layer.whenReady()
+    expect(drawn).toHaveBeenCalledWith(tile)
+    stop()
+    layer.invalidate([tile])
+    await layer.whenReady()
+    expect(drawn).toHaveBeenCalledOnce()
+  })
+
   it('frees its own materials on removal, never yours', async () => {
     const custom = new MeshStandardMaterial()
     const { map, layer } = await setup([{ id: 'a', fx: 0.5, fy: 0.5 }], {

@@ -17,7 +17,8 @@ What it shows ([src/App.tsx](src/App.tsx)):
   (`exaggeration: 1`, `baseAltitude: 372`), Mapterhorn elevation,
   OpenFreeMap buildings with their edges, roads and railways (`Roads`,
   footpaths left out with `kinds`) whose bridges span the Flon valley, the
-  lake and the river (`Water`), the woods of the ravines (`Trees`) and a
+  lake and the river (`Water`), the woods of the ravines (`Trees`, kept
+  clear of the water, roads and houses with `avoid`) and a
   `TerrainBase`, set up once. Four looks switched at runtime with
   `map.setSource` / `map.setMaterial` — plain (no imagery, a color per part
   from [src/colored.ts](src/colored.ts): beige ground, white buildings,

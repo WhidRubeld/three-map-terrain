@@ -17,10 +17,13 @@ import {
   type DrawFeatures,
   type FeatureHit,
   FeatureLayer,
+  type GroundCover,
   type LayerMaterial
 } from '../FeatureLayer.class'
 import type { Rect, TileContext } from '../TileContext.class'
 import { Utils } from '../../geo/Utils.class'
+import type { Map } from '../../terrain/Map.class'
+import type { Tile } from '../../terrain/Tile.class'
 
 export interface TreesOptions {
   /** Where the trees come from: a `TreeSource`, or the props to create one. */
@@ -37,6 +40,14 @@ export interface TreesOptions {
     ctx: TileContext<TreeFeature>,
     draw: DrawFeatures<TreeFeature>
   ) => void
+  /**
+   * Layers whose ground stays clear of trees — water, roads, buildings,
+   * yours: woods in the data often take in the rivers, roads and houses
+   * crossing them. A tree stands only where none of them drew.
+   */
+  avoid: readonly GroundCover[]
+  /** Meters a tree keeps from what `avoid` drew. */
+  clearance: number
   /** Meters between the trees of a wood. */
   spacing: number
   /** Meters high, from the lowest to the highest, for trees without a height. */
@@ -52,6 +63,8 @@ export interface TreesOptions {
 export const defaultTreesOptions: Readonly<
   Omit<TreesOptions, 'source' | 'material' | 'build'>
 > = Object.freeze({
+  avoid: [],
+  clearance: 2,
   spacing: 9,
   heights: [8, 16] as const,
   maxPerTile: 12000,
@@ -141,6 +154,7 @@ export class Trees extends FeatureLayer<TreeFeature> {
   readonly options: Omit<TreesOptions, 'source'>
 
   private readonly prepared = new WeakMap<TreeFeature, Prepared>()
+  private unsubscribe: (() => void)[] = []
 
   constructor({
     source,
@@ -156,6 +170,36 @@ export class Trees extends FeatureLayer<TreeFeature> {
       name: 'trees'
     })
     this.options = options
+  }
+
+  /** Trees near a tile drawn again by a layer in `avoid` are planted again. */
+  override attach(map: Map) {
+    super.attach(map)
+    this.unsubscribe = this.options.avoid.map((layer) =>
+      layer.onTileDrawn((tile) => {
+        const near: Tile[] = []
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const neighbour = map.tileCache[
+              Utils.getTileKey(tile.z, tile.x + dx, tile.y + dy)
+            ] as Tile | undefined
+            if (neighbour) near.push(neighbour)
+          }
+        }
+        this.invalidate(near)
+      })
+    )
+  }
+
+  override detach() {
+    for (const stop of this.unsubscribe.splice(0)) stop()
+    super.detach()
+  }
+
+  /** Also waits for the layers in `avoid`, which plant trees again. */
+  override async whenReady(): Promise<void> {
+    await Promise.all(this.options.avoid.map((layer) => layer.whenReady()))
+    await super.whenReady()
   }
 
   /** A feature in map units, cached. */
@@ -211,7 +255,7 @@ export class Trees extends FeatureLayer<TreeFeature> {
   ) {
     const { tile, map } = ctx
     const { tileSize } = map.options
-    const { spacing, heights, maxPerTile } = this.options
+    const { spacing, heights, maxPerTile, avoid, clearance } = this.options
     const own =
       typeof this.materialOption === 'object' &&
       !('isMaterial' in this.materialOption)
@@ -225,6 +269,7 @@ export class Trees extends FeatureLayer<TreeFeature> {
     const wanted = new Set(features)
     const meters = Utils.tileWidth(map.geoLocation.lat, tile.z)
     const cell = spacing / meters // map units
+    const margin = clearance / meters
     const matrix = new Matrix4()
     const position = new Vector3()
     const scale = new Vector3()
@@ -238,6 +283,7 @@ export class Trees extends FeatureLayer<TreeFeature> {
       random: number
     ) => {
       if (count >= maxPerTile) return
+      if (avoid.some((layer) => layer.covers(x, y, margin))) return
       count++
       const lx = (x - tile.x - 0.5) * tileSize
       const ly = (0.5 - (y - tile.y)) * tileSize

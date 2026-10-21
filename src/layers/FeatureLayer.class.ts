@@ -24,7 +24,9 @@ import { type SourceTileKey, SourceTiles } from '../sources/source-tiles'
 import type { GeoLocation, Map, MapLayer } from '../terrain/Map.class'
 import type { MaterialOptions } from '../terrain/material'
 import type { Tile } from '../terrain/Tile.class'
+import { Footprint } from './footprint'
 import { FEATURE_ATTRIBUTE } from './geometry'
+import { Utils } from '../geo/Utils.class'
 import {
   type Rect,
   type SourceFeatures,
@@ -70,6 +72,21 @@ export interface FeatureHit<F> extends GeoLocation {
   point: Vector3
 }
 
+/**
+ * A layer whose drawing takes the ground — water, roads, buildings — so that
+ * others keep clear of it: `new Trees({ avoid: [water, roads] })`.
+ */
+export interface GroundCover {
+  /**
+   * Whether what the layer drew covers a point of the ground, or comes
+   * within `margin` of it — in map units (tiles at the map's zoom).
+   */
+  covers(x: number, y: number, margin?: number): boolean
+  /** Calls `listener` with every tile drawn (again) or removed; returns how to stop. */
+  onTileDrawn(listener: (tile: Tile) => void): () => void
+  whenReady(): Promise<void>
+}
+
 /** The material options resolved against the map's: the layer's look. */
 export type Look = MaterialOptions
 
@@ -84,6 +101,8 @@ interface TileEntry<F> {
   objects: Object3D[]
   /** Objects from `ctx.add()`, and the index of their feature. */
   custom: globalThis.Map<Object3D, number>
+  /** What the tile's faces cover, made when first asked. */
+  footprint: Footprint | undefined
   /** Copies of a geometry: the feature and color of every copy. */
   instanced: globalThis.Map<
     InstancedMesh,
@@ -122,7 +141,7 @@ const matches = (feature: unknown, target: unknown) =>
  *       }
  *     }))
  */
-export class FeatureLayer<F> implements MapLayer {
+export class FeatureLayer<F> implements MapLayer, GroundCover {
   readonly source: FeatureSource<F>
   /** Holds the objects of every tile; added to `map.terrain`. */
   readonly group = new Group()
@@ -148,6 +167,7 @@ export class FeatureLayer<F> implements MapLayer {
   private highlighted: { target: unknown; color: Color } | undefined
   private readonly dirty = new Set<TileEntry<F>>()
   private flushing: Promise<void> | undefined
+  private readonly drawnListeners = new Set<(tile: Tile) => void>()
 
   constructor({
     source,
@@ -215,6 +235,7 @@ export class FeatureLayer<F> implements MapLayer {
       features: [],
       objects: [],
       custom: new globalThis.Map<Object3D, number>(),
+      footprint: undefined,
       instanced: new globalThis.Map<
         InstancedMesh,
         { features: number[]; colors: Float32Array }
@@ -240,6 +261,61 @@ export class FeatureLayer<F> implements MapLayer {
       if (this.sourceTiles.release(key)) this.sourceDropped(key)
     }
     this.invalidateDepending(tile)
+    this.drawn(tile)
+  }
+
+  // --- the ground it takes ----------------------------------------------------
+
+  /**
+   * Whether the layer's faces cover a point of the ground (seen from above),
+   * or come within `margin` of it — in map units (tiles at the map's zoom).
+   * Faces reaching into a neighbouring tile count there too.
+   */
+  covers(x: number, y: number, margin = 0): boolean {
+    const map = this.map
+    if (!map) return false
+    const { zoom, tileSize } = map.options
+    const [tx, ty] = [Math.floor(x), Math.floor(y)]
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const tile = map.tileCache[Utils.getTileKey(zoom, tx + dx, ty + dy)] as
+          Tile | undefined
+        const entry = tile && this.tiles.get(tile)
+        if (!entry) continue
+        entry.footprint ??= new Footprint(
+          entry.objects.flatMap((object) =>
+            (object as Partial<Mesh>).isMesh &&
+            !entry.custom.has(object) &&
+            !entry.instanced.has(object as InstancedMesh)
+              ? [(object as Mesh).geometry]
+              : []
+          )
+        )
+        const lx = (x - entry.tile.x - 0.5) * tileSize
+        const ly = (0.5 - (y - entry.tile.y)) * tileSize
+        if (entry.footprint.covers(lx, ly, margin * tileSize)) return true
+      }
+    }
+    return false
+  }
+
+  /**
+   * Calls `listener` with every tile the layer draws (again) or removes —
+   * e.g. to draw what depends on it again. Returns how to stop.
+   */
+  onTileDrawn(listener: (tile: Tile) => void): () => void {
+    this.drawnListeners.add(listener)
+    return () => this.drawnListeners.delete(listener)
+  }
+
+  private drawn(tile: Tile) {
+    for (const listener of this.drawnListeners) {
+      try {
+        listener(tile)
+      } catch (error) {
+        console.error(error)
+      }
+    }
   }
 
   /** The map's look changed: draw everything again in the new one. */
@@ -599,6 +675,7 @@ export class FeatureLayer<F> implements MapLayer {
       this.group.add(object)
     }
     this.paint(entry)
+    this.drawn(entry.tile)
   }
 
   private removeObjects(entry: TileEntry<F>) {
@@ -616,6 +693,7 @@ export class FeatureLayer<F> implements MapLayer {
     entry.objects = []
     entry.custom.clear()
     entry.instanced.clear()
+    entry.footprint = undefined
     entry.features = []
   }
 

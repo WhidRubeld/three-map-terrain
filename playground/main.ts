@@ -161,9 +161,13 @@ const water = waterApi
       new Water({ source: { api: waterApi, token } as WaterSourceProps })
     )
   : undefined
+// clear of the water, roads and buildings shown
 const trees = treesApi
   ? map.addLayer(
-      new Trees({ source: { api: treesApi, token } as TreeSourceProps })
+      new Trees({
+        source: { api: treesApi, token } as TreeSourceProps,
+        avoid: [water, roads, buildings].filter((layer) => layer !== undefined)
+      })
     )
   : undefined
 scene.add(map.terrain)

@@ -59,16 +59,16 @@ const PLACES = {
         },
         material: LOOKS.plain.material
       })
-      // set up once: they take on the terrain's look. Buildings and roads
-      // share the OpenFreeMap tiles; bridges span the Flon valley
-      map.addLayer(
+      // set up once: they take on the terrain's look. All read the
+      // OpenFreeMap tiles; bridges span the Flon valley
+      const buildings = map.addLayer(
         new Buildings({
           source: { api: 'openfreemap' },
           edges: true,
           material: byPart
         })
       )
-      map.addLayer(
+      const roads = map.addLayer(
         new Roads({
           source: { api: 'openfreemap' },
           // streets and railways; footpaths would clutter the photo
@@ -76,12 +76,17 @@ const PLACES = {
           material: byPart
         })
       )
-      // the lake and the Flon, the woods of the ravines
-      map.addLayer(
+      // the lake and the Flon, the woods of the ravines — not in the river,
+      // on the roads or in the houses the woods of the data take in
+      const water = map.addLayer(
         new Water({ source: { api: 'openfreemap' }, material: byPart })
       )
       map.addLayer(
-        new Trees({ source: { api: 'openfreemap' }, material: byPart })
+        new Trees({
+          source: { api: 'openfreemap' },
+          avoid: [water, roads, buildings],
+          material: byPart
+        })
       )
       map.addLayer(new TerrainBase())
       return map

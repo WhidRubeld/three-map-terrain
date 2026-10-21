@@ -46,6 +46,7 @@ src/                      library (the only published code, plus dist/)
     extrude.ts            walls/roofs/floors/edges with UVs in meters
     geometry.ts           SurfaceBuilder, LineBuilder, InstanceBuilder (attributes,
                           featureIndex)
+    footprint.ts          (internal) what a tile's faces cover, from above (covers())
     features.ts           Position, Ring, toNumber, parseLength, clipRect, classifyRings
     buildings/            Buildings (ownership, grounding, clip), BuildingSource
                           (schema), features (MVT schemas), osm (tags, Overpass)
@@ -302,7 +303,13 @@ depends on the published package. After a release, bump it there.
   jittered grid of `spacing` meters anchored to map units — `hash(i, j, k)`
   per cell, so the same trees in every redraw and none twice at tile edges
   (each tile plants only inside source ∩ terrain tile); points are single
-  trees. A tree = a trunk (open cylinder, z 0–1) and a crown (icosahedron)
+  trees. `avoid` (any `GroundCover`, i.e. FeatureLayers) keeps trees off
+  what other layers drew: `FeatureLayer.covers(x, y, margin)` (map units)
+  asks the `Footprint` of the tile and its 8 neighbours (`footprint.ts`: the
+  faces' triangles from above in a 32² grid, walls skipped, built lazily,
+  dropped on every redraw); `onTileDrawn` makes Trees draw that tile and its
+  neighbours again, and `Trees.whenReady` waits for the `avoid` layers
+  first. On Lausanne it takes out a quarter of the trees, ~3 ms a tile. A tree = a trunk (open cylinder, z 0–1) and a crown (icosahedron)
   shared by every layer, white `color` attributes, sized by its height
   (crown 62 % of it, radius 24 %); `maxPerTile` caps a tile. In wireframe
   the crowns' default material is hidden like any faces.

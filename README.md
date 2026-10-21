@@ -172,8 +172,14 @@ const buildings = map.addLayer(
   new Buildings({ source: { api: 'openfreemap' }, edges: true })
 )
 const roads = map.addLayer(new Roads({ source: { api: 'openfreemap' } }))
-map.addLayer(new Water({ source: { api: 'openfreemap' } }))
-map.addLayer(new Trees({ source: { api: 'openfreemap' } }))
+const water = map.addLayer(new Water({ source: { api: 'openfreemap' } }))
+// not in the river, on the roads or in the houses a wood of the data takes in
+map.addLayer(
+  new Trees({
+    source: { api: 'openfreemap' },
+    avoid: [water, roads, buildings]
+  })
+)
 map.addLayer(new TerrainBase()) // a solid block
 scene.add(map.terrain) // the layers are in map.terrain too
 await map.init()
@@ -210,6 +216,7 @@ With React Three Fiber, a pointer event is already an intersection: `buildings.p
 ### Trees
 
 - **Woods** — `landcover` `wood` from the basemaps, `natural=wood` and `landuse=forest` from Overpass — are filled with trees on a grid of `spacing` meters (default 9), jittered: anchored to the map, so that they never move when a tile is drawn again and never double at tile edges. **Single trees** (points: `natural=tree`, or yours) stand where they are.
+- **Clear ground.** Woods in the data are coarse areas: they take in the rivers, roads and houses crossing them. `avoid` lists the layers whose ground stays clear of trees — water, roads, buildings, yours: a tree stands only where none of them drew, at least `clearance` meters (default 2) from it. When one of them draws a tile again (it loads later, a neighbour stitches), the trees there are planted again.
 - **A tree** is a trunk and a crown — a cylinder and an ellipsoid — standing on the rendered surface, `height` meters high (from the source, or between `heights`, default 8–16 m). They are copies of one geometry each, an `InstancedMesh` per tile (at most `maxPerTile`, default 12 000): picking returns the tree or its wood, `highlight()` recolors the copies. Models without instancing (STL, OBJ, USDZ) get every copy.
 - **Parts.** `crowns` (green, `CROWN_COLOR`, unless the look gives a color), `trunks` (brown). Trees need a zoom of 14 or more (`minZoom`).
 
@@ -635,13 +642,13 @@ Options: `source` (`WaterSource` or its props), `material`, `build`, `widths` (m
 
 ### `new Trees({ source, ...options })`
 
-Options: `source` (`TreeSource` or its props), `material`, `build`, `spacing` (`9` m between the trees of a wood), `heights` (`[8, 16]` m), `maxPerTile` (`12000`), `highlightColor`, `minZoom` (`14`). A `TreeFeature` is `{ id?, geometry, height?, kind?, properties }` with a GeoJSON `Point` / `MultiPoint` (trees) or `Polygon` / `MultiPolygon` (woods). Parts: `crowns`, `trunks` (instanced).
+Options: `source` (`TreeSource` or its props), `material`, `build`, `avoid` (layers whose ground stays clear, `[]`), `clearance` (`2` m from it), `spacing` (`9` m between the trees of a wood), `heights` (`[8, 16]` m), `maxPerTile` (`12000`), `highlightColor`, `minZoom` (`14`). A `TreeFeature` is `{ id?, geometry, height?, kind?, properties }` with a GeoJSON `Point` / `MultiPoint` (trees) or `Polygon` / `MultiPolygon` (woods). Parts: `crowns`, `trunks` (instanced).
 
 ### `new FeatureLayer({ source, build?, material?, highlightColor?, minZoom?, name? })`
 
 The frame of the layers above — [Your own layers](#your-own-layers). `source` is any `FeatureSource`; `name` names the group and its objects (`'<name> <part> <z/x/y>'`).
 
-The layers share these members: `pick(raycaster)` and `pickIntersection(intersection)` → `{ feature, lat, lon, alt, point }` (not behind the terrain); `highlight(feature | id, color?)` — a feature with an `id` is highlighted in every tile, no argument clears it; `invalidate(tiles?)` to draw again; `whenReady()`; `count`; `group` (in `map.terrain`); `source`, `attribution`; `dispose()`.
+The layers share these members: `pick(raycaster)` and `pickIntersection(intersection)` → `{ feature, lat, lon, alt, point }` (not behind the terrain); `highlight(feature | id, color?)` — a feature with an `id` is highlighted in every tile, no argument clears it; `invalidate(tiles?)` to draw again; `whenReady()`; `count`; `group` (in `map.terrain`); `source`, `attribution`; `dispose()`. And the ground they take (`GroundCover`, what `avoid` reads): `covers(x, y, margin?)` — whether their faces, seen from above, cover a point in map units (tiles at the map's zoom), or come within `margin` of it — and `onTileDrawn(listener)` — told about every tile drawn again or removed, returns how to stop.
 
 ### `new TerrainBase({ depth?, material? })`
 

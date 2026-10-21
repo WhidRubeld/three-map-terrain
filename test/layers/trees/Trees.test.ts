@@ -16,7 +16,9 @@ import {
   Trees,
   treesFromOverpass,
   treesFromVectorTile,
-  Utils
+  Utils,
+  Water,
+  type WaterFeature
 } from '../../../src'
 import { terrariumPixels } from '../../support/helpers'
 import { encodeVectorTile } from '../../support/mvt-encoder'
@@ -258,5 +260,96 @@ describe('Trees', () => {
         geometry: { type: 'Point', coordinates: [6.6, 46.5] }
       }
     ])
+  })
+})
+
+describe('Trees clear of other layers', () => {
+  // a wood across the center tile, a river through its middle
+  const forest = wood(0.1, 0.1, 0.9, 0.9)
+  const river: WaterFeature = {
+    kind: 'river',
+    geometry: {
+      type: 'LineString',
+      coordinates: [lonLat(0.5, 0), lonLat(0.5, 1)]
+    },
+    properties: {}
+  }
+
+  const plant = (waterLate: boolean) => {
+    // every tile's water waits
+    const waiting: (() => void)[] = []
+    const map = new Map({
+      source: { api: 'eox' },
+      location,
+      options: { zoom: ZOOM, tileSegments: 8, exaggeration: 1 }
+    })
+    const water = map.addLayer(
+      new Water({
+        source: {
+          minZoom: ZOOM,
+          maxZoom: ZOOM,
+          load: async ({ x, y }) => {
+            if (waterLate) {
+              await new Promise<void>((resolve) => waiting.push(resolve))
+            }
+            return x === center.x && y === center.y ? [river] : []
+          }
+        },
+        widths: { river: 40 }
+      })
+    )
+    const trees = map.addLayer(
+      new Trees({
+        source: {
+          minZoom: ZOOM,
+          maxZoom: ZOOM,
+          load: ({ x, y }) =>
+            Promise.resolve(x === center.x && y === center.y ? [forest] : [])
+        },
+        avoid: [water],
+        clearance: 5
+      })
+    )
+    return {
+      map,
+      trees,
+      release: () => {
+        for (const resolve of waiting) resolve()
+      }
+    }
+  }
+
+  const across = (map: Map, trees: Trees) => {
+    const meters = Utils.tileWidth(location.lat, ZOOM)
+    const tile = map.tileCache[Utils.getTileKey(ZOOM, center.x, center.y)]
+    const { tileSize } = map.options
+    return positions(trees, 'trunks').map(
+      (p) => Math.abs((p.x - tile.mesh.position.x) / tileSize) * meters
+    )
+  }
+
+  it('leaves the water and its clearance without trees', async () => {
+    const { map, trees } = plant(false)
+    await map.init()
+    await map.whenReady()
+    const distances = across(map, trees)
+
+    expect(distances.length).toBeGreaterThan(100)
+    // half the river (20 m) and the clearance (5 m)
+    expect(Math.min(...distances)).toBeGreaterThanOrEqual(25 - 1e-6)
+  })
+
+  it('takes out the trees in water that arrives later', async () => {
+    const { map, trees, release } = plant(true)
+    await map.init()
+    // the wood is planted before the river is there
+    await vi.waitFor(() => {
+      expect(positions(trees, 'trunks').length).toBeGreaterThan(100)
+    })
+    expect(Math.min(...across(map, trees))).toBeLessThan(25)
+
+    release()
+    await map.whenReady()
+    expect(Math.min(...across(map, trees))).toBeGreaterThanOrEqual(25 - 1e-6)
   })
 })
