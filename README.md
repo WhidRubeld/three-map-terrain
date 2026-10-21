@@ -22,11 +22,11 @@ Elevation and imagery from any source, OpenStreetMap buildings standing on the t
   </tr>
   <tr>
     <td><a href="https://whidrubeld.github.io/three-map-terrain/?place=lausanne&look=aerial"><img src="docs/lausanne-aerial.webp" alt="The same Lausanne with swisstopo aerial imagery in grayscale under white buildings and roads"></a></td>
-    <td><a href="https://whidrubeld.github.io/three-map-terrain/?place=lausanne&look=wireframe"><img src="docs/lausanne-wireframe.webp" alt="The same Lausanne in wireframe: the terrain's triangles, the buildings' and the base's edges, the roads' center lines"></a></td>
+    <td><a href="https://whidrubeld.github.io/three-map-terrain/?place=lausanne&look=wireframe"><img src="docs/lausanne-wireframe.webp" alt="The same Lausanne in wireframe: the terrain's triangles, the buildings' and the base's edges, the roads' center lines, the trees' outlines, over a light fill"></a></td>
   </tr>
 </table>
 
-<sub>The live example — [React Three Fiber in one component](examples/react/src/App.tsx): Lausanne from the lake to the cathedral, one map in four looks — plain ([colored](examples/react/src/colored.ts) by part), [textured](examples/react/src/textured.ts) (a few canvas textures on the layers' parts), aerial in grayscale (a `process` of the imagery), wireframe.</sub>
+<sub>The live example — [React Three Fiber in one component](examples/react/src/App.tsx): Lausanne from the lake to the cathedral, one map in four looks — plain ([colored](examples/react/src/colored.ts) by part), [textured](examples/react/src/textured.ts) (a few canvas textures on the layers' parts), aerial in grayscale (a `process` of the imagery), wireframe over a light fill.</sub>
 
 </div>
 
@@ -192,6 +192,12 @@ buildings.highlight(hit?.feature)
 
 With React Three Fiber, a pointer event is already an intersection: `buildings.pickIntersection(event)`; roads, which lie on the terrain, are picked with the event's ray: `roads.pick(new Raycaster(event.ray.origin, event.ray.direction))`.
 
+Layers draw their tiles a few at a time between frames, across every layer — so that the data arriving at once never holds up a frame — the nearest to `map.focus` first: by default the location, or a point you keep, in world coordinates:
+
+```ts
+map.focus = camera.position // or controls.target: followed as it moves
+```
+
 ### Buildings
 
 - **On the surface.** Walls start just below the lowest ground under them; the roof is `height` meters above it — and at least 3 m above the highest ground on a slope. Heights are scaled like the terrain. Parts with a `minHeight` (overhangs, towers on podiums) float with a floor; courtyards stay open. Roofs are flat.
@@ -216,9 +222,10 @@ With React Three Fiber, a pointer event is already an intersection: `buildings.p
 ### Trees
 
 - **Woods** — `landcover` `wood` from the basemaps, `natural=wood` and `landuse=forest` from Overpass — are filled with trees on a grid of `spacing` meters (default 9), jittered: anchored to the map, so that they never move when a tile is drawn again and never double at tile edges. **Single trees** (points: `natural=tree`, or yours) stand where they are.
-- **Clear ground.** Woods in the data are coarse areas: they take in the rivers, roads and houses crossing them. `avoid` lists the layers whose ground stays clear of trees — water, roads, buildings, yours: a tree stands only where none of them drew, at least `clearance` meters (default 2) from it. When one of them draws a tile again (it loads later, a neighbour stitches), the trees there are planted again.
-- **A tree** is a trunk and a crown — a cylinder and an ellipsoid — standing on the rendered surface, `height` meters high (from the source, or between `heights`, default 8–16 m). They are copies of one geometry each, an `InstancedMesh` per tile (at most `maxPerTile`, default 12 000): picking returns the tree or its wood, `highlight()` recolors the copies. Models without instancing (STL, OBJ, USDZ) get every copy.
-- **Parts.** `crowns` (green, `CROWN_COLOR`, unless the look gives a color), `trunks` (brown). Trees need a zoom of 14 or more (`minZoom`).
+- **Clear ground.** Woods in the data are coarse areas: they take in the rivers, roads and houses crossing them. `avoid` lists the layers whose ground stays clear of trees — water, roads, buildings, yours: a tree stands only where none of them drew, at least `clearance` meters (default 2) from it. A tile's trees are planted once those layers have drawn it and its neighbours; when one of them draws a tile again later, the trees there are planted again.
+- **A tree** is a trunk and a crown — a prism and an ellipsoid, 8 and 20 triangles, the crown shaded round — standing on the rendered surface, `height` meters high (from the source, or between `heights`, default 8–16 m). They are copies of one geometry each, an `InstancedMesh` per tile (at most `maxPerTile`, default 12 000): picking returns the tree or its wood, `highlight()` draws its copies over them; in wireframe they are outlined. Models without instancing (STL, OBJ, USDZ) get every copy.
+- **Fewer on a wide map.** `spacing` can be a function of the terrain's zoom: `spacing: (zoom) => (zoom < 15 ? 14 : 9)`.
+- **Parts.** `crowns` (green, `CROWN_COLOR`, unless the look gives a color), `trunks` (brown) — in their materials' colors: `trees.setMaterial({ color: '#8a8a8a' })` or materials of yours recolor them in place. Trees need a zoom of 14 or more (`minZoom`).
 
 ### Diorama base
 
@@ -269,18 +276,18 @@ trees.pick(raycaster)?.feature // the Tree under the pointer
 
 `TileContext` — the `ctx` — has the tile's features and the primitives that put geometry on the terrain, in the tile's local coordinates (scene units, x east, y north):
 
-| Primitive                                      | Draws                                                                                                                             |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `drapePolygon(part, rings, { color, clip })`   | A polygon with holes lying on the terrain: water, parks, fields — cut along the terrain's triangles, lit like it                  |
-| `drapeLine(part, line, width, { color })`      | A ribbon lying on the terrain, with round caps; UVs across and along in meters                                                    |
-| `drapePath(part, line, { color })`             | A line lying on the terrain (lines are built only if their part's material is visible)                                            |
-| `extrude(polygons, bottom, top, style)`        | Walls, a roof and a floor (`floor`), and their edges — into the parts `walls`, `roofs`, `floors`, `edges` or the `parts` you name |
-| `face(part, points, { color, normal, uv })`    | Any planar convex polygon `[x, y, z, …]`, turned to face `normal`                                                                 |
-| `segment(part, a, b, color)`                   | A line from `[x, y, z]` to `[x, y, z]`                                                                                            |
-| `instances(part, geometry).add(matrix, color)` | Copies of a shared geometry — trees, lamps — one `InstancedMesh` per part and tile, each copy picked as its feature               |
-| `add(object)`                                  | Any object — a model, an `InstancedMesh`; picked as the feature being drawn                                                       |
+| Primitive                                       | Draws                                                                                                                                      |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `drapePolygon(part, rings, { color, clip })`    | A polygon with holes lying on the terrain: water, parks, fields — cut along the terrain's triangles, lit like it                           |
+| `drapeLine(part, line, width, { color })`       | A ribbon lying on the terrain, with round caps; UVs across and along in meters                                                             |
+| `drapePath(part, line, { color })`              | A line lying on the terrain (lines are built only if their part's material is visible)                                                     |
+| `extrude(polygons, bottom, top, style)`         | Walls, a roof and a floor (`floor`), and their edges — into the parts `walls`, `roofs`, `floors`, `edges` or the `parts` you name          |
+| `face(part, points, { color, normal, uv })`     | Any planar convex polygon `[x, y, z, …]`, turned to face `normal`                                                                          |
+| `segment(part, a, b, color)`                    | A line from `[x, y, z]` to `[x, y, z]`                                                                                                     |
+| `instances(part, geometry).add(matrix, color?)` | Copies of a shared geometry — trees, lamps — one `InstancedMesh` per part and tile, each copy picked as its feature, outlined in wireframe |
+| `add(object)`                                   | Any object — a model, an `InstancedMesh`; picked as the feature being drawn                                                                |
 
-And what they are made of: `toLocal([lon, lat])`, `groundAt(x, y)` (the rendered surface, also in loaded neighbours), `surfaceAt(x, y)` (height and normal, `undefined` where not loaded), `unitsPerMeter`, `zScale`, `rect` (the tile), `sources` (the features by source tile, with its `rect`), `planarUv(x, y)`, and the raw `surface(part)` / `lines(part)` builders. Heights read through `ctx` are tracked: the tile is drawn again when they change.
+And what they are made of: `toLocal([lon, lat])`, `groundAt(x, y)` (the rendered surface, also in loaded neighbours), `surfaceAt(x, y)` (height and normal, `undefined` where not loaded), `unitsPerMeter`, `zScale`, `rect` (the tile), `sources` (the features by source tile, with its `rect`), `planarUv(x, y)`, `visible(part, kind?)` (whether a part's material shows: skip drawing what it hides — the tile is drawn again once it shows), and the raw `surface(part)` / `lines(part)` builders. Heights read through `ctx` are tracked: the tile is drawn again when they change.
 
 The built-in layers take a `build` too, which receives their own drawing as `draw(features?)` — replace the geometry of some features, keep it for the others:
 
@@ -303,7 +310,7 @@ new Buildings({
 })
 ```
 
-Subclass `FeatureLayer` for a reusable layer: override `draw(ctx, features)` (and `select()` to decide which tile draws a feature crossing tiles, `createMaterial()` for its look, `sourceLoaded()` / `prepare()` for what spans tiles — `Roads` joins its bridges there). `FeatureLayer` is new in 3.0: its API may still grow.
+Subclass `FeatureLayer` for a reusable layer: override `draw(ctx, features)` (and `select()` to decide which tile draws a feature crossing tiles, `partColor()` / `createMaterial()` for its look — colors in the materials, so that a new look only changes them — `sourceLoaded()` / `prepare()` for what spans tiles — `Roads` joins its bridges there — and `canDraw(tile)` to wait for other layers, as `Trees` waits for `avoid`). `FeatureLayer` is new in 3.0: its API may still grow.
 
 Underneath is `MapLayer`, the interface the map talks to; implement it for anything that is not tile features — every method is optional:
 
@@ -324,14 +331,18 @@ map.addLayer({
 
 The library draws with three.js' built-in materials from a few options — the look — and lets you replace any of them.
 
-**The look** — `lights`, `wireframe`, `fog`, `color` — is shared: the terrain's (the map's `material`) is the default of every layer, which can override it.
+**The look** — `lights`, `wireframe`, `fillOpacity`, `fog`, `color` — is shared: the terrain's (the map's `material`) is the default of every layer, which can override it.
 
 ```ts
 // no imagery: a plain model, the relief shows in the light; the layers too
 new Map({ location, material: { color: '#f2ede5' } })
 
-// everything in lines: the terrain's triangles, the buildings' edges, the roads' center lines
-new Map({ location, material: { wireframe: true, color: '#9fb3c8' } })
+// everything in lines: the terrain's triangles, the buildings' edges, the
+// roads' center lines, the trees' outlines — over a light fill of the faces
+new Map({
+  location,
+  material: { wireframe: true, fillOpacity: 0.12, color: '#9fb3c8' }
+})
 ```
 
 **The imagery's pixels** — `process` draws on a tile's stitched imagery before it becomes a texture: tone it, blend in a hillshade, render your own data into it. It runs on the CPU, the same in every browser, and goes into exported models:
@@ -396,14 +407,21 @@ UVs are in meters, so textures repeat at true size:
 | Other `face`s                                      | along its first edge, meters         | across, meters |
 | The terrain                                        | its imagery (0–1 over the tile)      | —              |
 
-Every vertex of a layer also has `color` (the look's, drawn by the built-in materials) and `featureIndex`, the index of its feature, for your shaders. `highlight()` draws over the highlighted features with a material of its own, so it works with any of yours.
+The built-in materials have the look's colors — each part its own shade — and multiply the vertex colors, white but where colors differ by feature (`featureColors`). Every vertex also has `featureIndex`, the index of its feature, for your shaders. `highlight()` draws over the highlighted features with a material of its own, so it works with any of yours.
 
-Change the look at runtime — the textures are kept, the layers follow, and a material function is asked again:
+Change the look at runtime — the textures are kept, the layers' materials change in place, their geometry stays, and a material function is asked again:
 
 ```ts
 map.setSource({ api: 'none' }) // imagery off; or another source
 map.setMaterial({ wireframe: true }) // only a new `process` reloads imagery
+
+// a layer's own look, merged into it; a material or a function replaces it
+buildings.setMaterial({ color: '#d8d4cc' })
+roads.setMaterial((part) => (part === 'surface' ? road : undefined))
+water.setMaterial(undefined) // the map's look again
 ```
+
+Only what a hidden material left out — lines out of wireframe, copies of a hidden part — is drawn when it shows, a few tiles at a time.
 
 The live example's looks are all made this way: aerial and wireframe from the options and a `process` ([App.tsx](examples/react/src/App.tsx)), plain from [a color per part](examples/react/src/colored.ts), textured from [a few canvas textures on the parts](examples/react/src/textured.ts) — and a part hidden where the photo has it already (`new MeshBasicMaterial({ visible: false })`).
 
@@ -568,14 +586,15 @@ The [basic example](examples/basic/src/overture.ts) loads the [Overture Maps](ht
 
 **`TerrainMaterialOptions`** (defaults in `defaultMaterialOptions`) — the look (`MaterialOptions`, shared with the layers), and the terrain's own
 
-| Option      | Default   | Description                                                                                                       |
-| ----------- | --------- | ----------------------------------------------------------------------------------------------------------------- |
-| `lights`    | `true`    | `MeshLambertMaterial` (lit) or `MeshBasicMaterial` (unlit)                                                        |
-| `wireframe` | `false`   | Draw lines — the terrain's triangles (`tileSegments` of 32–64 reads well), the layers' edges and center lines     |
-| `fog`       | `true`    | Whether the scene fog applies                                                                                     |
-| `color`     | `#ffffff` | Tints imagery (white leaves it as it is); without imagery, the color of the surface                               |
-| `process`   | —         | `(context, { width, height, z, x, y }) => void \| Promise<void>`: draws on a tile's stitched imagery              |
-| `create`    | —         | `({ texture, tile, options }) => Material`: makes a tile's material; by default `createTerrainMaterial`, the look |
+| Option        | Default   | Description                                                                                                       |
+| ------------- | --------- | ----------------------------------------------------------------------------------------------------------------- |
+| `lights`      | `true`    | `MeshLambertMaterial` (lit) or `MeshBasicMaterial` (unlit)                                                        |
+| `wireframe`   | `false`   | Draw lines — the terrain's triangles (`tileSegments` of 32–64 reads well), the layers' edges and center lines     |
+| `fillOpacity` | `0`       | In wireframe, how opaque the layers' faces are under their lines (`0.12`: a light fill; `0`: hidden)              |
+| `fog`         | `true`    | Whether the scene fog applies                                                                                     |
+| `color`       | `#ffffff` | Tints imagery (white leaves it as it is); without imagery, the color of the surface                               |
+| `process`     | —         | `(context, { width, height, z, x, y }) => void \| Promise<void>`: draws on a tile's stitched imagery              |
+| `create`      | —         | `({ texture, tile, options }) => Material`: makes a tile's material; by default `createTerrainMaterial`, the look |
 
 Until its texture arrives, a tile shows a shared wireframe placeholder.
 
@@ -586,6 +605,7 @@ Positions are in `map.terrain` coordinates: X east, Y north, Z up. Transforms of
 | Member                                                                    | Returns                                 | Description                                                                                                                                                                               |
 | ------------------------------------------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `terrain`                                                                 | `Group`                                 | Add it to your scene; one mesh per loaded tile, and the layers' objects                                                                                                                   |
+| `focus`                                                                   | `Vector3 \| undefined`                  | Where the layers draw first, in world coordinates — e.g. `camera.position` or the controls' `target`, followed as it moves; by default the location                                       |
 | `init(callback?)`                                                         | `Promise<void>`                         | Loads the grid. Resolves (and calls `callback`, sets `ready`) once every tile has its elevation and seams are stitched; textures keep streaming in. Calls before `clean()` share one load |
 | `whenReady()`                                                             | `Promise<void>`                         | Resolves once everything is loaded: tiles, their textures, the layers' content                                                                                                            |
 | `getPosition({ lat, lon, alt }, { loadTile })`                            | `{ x, y, z }`                           | `x`, `y` of a geolocation, `z = (alt − baseAltitude) × zScale`. Loads the tile if it is not in the grid, unless `loadTile: false`                                                         |
@@ -594,7 +614,7 @@ Positions are in `map.terrain` coordinates: X east, Y north, Z up. Transforms of
 | `getLocation({ x, y, z })`                                                | `{ lat, lon, alt }`                     | Inverse of `getPosition`; `alt` in meters                                                                                                                                                 |
 | `pick(raycaster)`                                                         | `{ lat, lon, alt, point } \| undefined` | The terrain hit by a ray, e.g. after `raycaster.setFromCamera(pointer, camera)`; `point` in world coordinates                                                                             |
 | `setSource(source)`                                                       | `void`                                  | Replaces the imagery (`{ api: 'none' }` turns it off); each tile keeps its texture until the new one arrives                                                                              |
-| `setMaterial(options)`                                                    | `void`                                  | Changes the material options of the terrain and the layers that follow it; a new `process` reloads the imagery                                                                            |
+| `setMaterial(options)`                                                    | `void`                                  | Changes the material options of the terrain and the layers that follow it — their materials, in place; a new `process` reloads the imagery                                                |
 | `addLayer(layer)`, `removeLayer(layer)`, `layers`                         |                                         | [Layers](#layers): buildings, roads, base, yours. Layers survive `clean()`                                                                                                                |
 | `export(format?, options?)`                                               | `Promise<Blob>`                         | [A model file](#export) of everything                                                                                                                                                     |
 | `attributions`                                                            | `string[]`                              | The credits of the sources and layers in use — show them with the map                                                                                                                     |
@@ -642,13 +662,13 @@ Options: `source` (`WaterSource` or its props), `material`, `build`, `widths` (m
 
 ### `new Trees({ source, ...options })`
 
-Options: `source` (`TreeSource` or its props), `material`, `build`, `avoid` (layers whose ground stays clear, `[]`), `clearance` (`2` m from it), `spacing` (`9` m between the trees of a wood), `heights` (`[8, 16]` m), `maxPerTile` (`12000`), `highlightColor`, `minZoom` (`14`). A `TreeFeature` is `{ id?, geometry, height?, kind?, properties }` with a GeoJSON `Point` / `MultiPoint` (trees) or `Polygon` / `MultiPolygon` (woods). Parts: `crowns`, `trunks` (instanced).
+Options: `source` (`TreeSource` or its props), `material`, `build`, `avoid` (layers whose ground stays clear, `[]`), `clearance` (`2` m from it), `spacing` (`9` m between the trees of a wood, or `(zoom) => meters`), `heights` (`[8, 16]` m), `maxPerTile` (`12000`), `highlightColor`, `minZoom` (`14`). A `TreeFeature` is `{ id?, geometry, height?, kind?, properties }` with a GeoJSON `Point` / `MultiPoint` (trees) or `Polygon` / `MultiPolygon` (woods). Parts: `crowns`, `trunks` (instanced).
 
 ### `new FeatureLayer({ source, build?, material?, highlightColor?, minZoom?, name? })`
 
 The frame of the layers above — [Your own layers](#your-own-layers). `source` is any `FeatureSource`; `name` names the group and its objects (`'<name> <part> <z/x/y>'`).
 
-The layers share these members: `pick(raycaster)` and `pickIntersection(intersection)` → `{ feature, lat, lon, alt, point }` (not behind the terrain); `highlight(feature | id, color?)` — a feature with an `id` is highlighted in every tile, no argument clears it; `invalidate(tiles?)` to draw again; `whenReady()`; `count`; `group` (in `map.terrain`); `source`, `attribution`; `dispose()`. And the ground they take (`GroundCover`, what `avoid` reads): `covers(x, y, margin?)` — whether their faces, seen from above, cover a point in map units (tiles at the map's zoom), or come within `margin` of it — and `onTileDrawn(listener)` — told about every tile drawn again or removed, returns how to stop.
+The layers share these members: `pick(raycaster)` and `pickIntersection(intersection)` → `{ feature, lat, lon, alt, point }` (not behind the terrain); `highlight(feature | id, color?)` — a feature with an `id` is highlighted in every tile, no argument clears it; `setMaterial(material)` — a look merged into the layer's, or a material or a function replacing it, changed in place; `invalidate(tiles?)` to draw again; `whenReady()`; `count`; `group` (in `map.terrain`); `source`, `attribution`; `dispose()`. And the ground they take (`GroundCover`, what `avoid` reads): `covers(x, y, margin?)` — whether their faces, seen from above, cover a point in map units (tiles at the map's zoom), or come within `margin` of it — `onTileDrawn(listener)` — told about every tile drawn again or removed, returns how to stop — and `pending(tile)` — whether a tile is still to be drawn, its data loading or its drawing queued (optional for your own).
 
 ### `new TerrainBase({ depth?, material? })`
 
@@ -686,6 +706,15 @@ All take the props shown in [Sources](#sources); `map`, `Buildings`, `Roads` and
 Tiles are fetched with CORS. Network errors, HTTP 408/425/429/5xx and bodies that cannot be decoded (tile servers occasionally send truncated images with status 200) are retried up to three times with backoff, bypassing the HTTP cache. A texture that still cannot be decoded is drawn as far as it arrived; an elevation tile never is, since partial heights would be bogus terrain. A missing tile (404) falls back to its ancestors, up to six levels — the browser still logs the 404. Vector tiles that are missing are empty.
 
 ## Upgrading
+
+### To 3.1
+
+Nothing breaks; worth knowing:
+
+- **Layers draw a few tiles at a time** between frames, the nearest to `map.focus` first, instead of all at once: wait for `layer.whenReady()` (or `map.whenReady()`) before reading what they drew.
+- **A new look changes the materials, not the geometry.** The built-in layers' colors are their materials' (`partColor`); their vertex colors are white — but for `featureColors` — so a material of yours with `vertexColors` shows its own color, no longer tinted by the look. A `process` alone leaves the layers alone.
+- **Trees** have crowns of 20 triangles shaded round (were 80) on 4-sided trunks, are planted once the `avoid` layers have drawn the tiles around (not before, then again), have no `instanceColor` (the parts' materials color them), are highlighted by copies drawn over them, and are outlined in wireframe.
+- In wireframe, `fillOpacity` gives the layers' faces a fill under their lines; by default they stay hidden.
 
 ### To 3.0
 

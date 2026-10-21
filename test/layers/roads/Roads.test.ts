@@ -397,7 +397,9 @@ describe('Roads', () => {
 
     expect(surface.material.polygonOffset).toBe(true)
     expect(surface.material.polygonOffsetFactor).toBeLessThan(0)
-    expect(colors.getX(0)).toBeCloseTo(0.8, 6)
+    // the shade is the material's: a new look only changes it
+    expect(surface.material.color.r).toBeCloseTo(0.8, 6)
+    expect(colors.getX(0)).toBe(1)
   })
 
   it('draws center lines in wireframe', async () => {

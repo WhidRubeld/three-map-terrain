@@ -82,6 +82,7 @@ export type RoadHit = FeatureHit<RoadFeature>
 
 /** Roads: the look's color times this; bridges keep it. */
 const ROAD_SHADE = 0.8
+const WHITE = new Color(0xffffff)
 /** Draped roads are drawn this far in front of the terrain (depth units). */
 const SURFACE_OFFSET = { factor: -1, units: -4 }
 /** Meters a deck is thick. */
@@ -548,29 +549,30 @@ export class Roads extends FeatureLayer<RoadFeature> {
     return material
   }
 
-  /** The roads' color, and the bridges'. */
-  private colors(look: Look) {
-    const own =
-      typeof this.materialOption === 'object' &&
-      !('isMaterial' in this.materialOption)
-        ? this.materialOption.color
-        : undefined
-    const structure = new Color(
-      this.map?.materialOptions.color ?? look.color ?? 0xffffff
+  /**
+   * Roads in the layer's own color, or a shade of the look's; the bridges'
+   * structure in the map's color.
+   */
+  protected override partColor(
+    part: string,
+    _kind: 'faces' | 'lines',
+    look: Look
+  ): ColorRepresentation {
+    if (part === 'structure') {
+      return this.map?.materialOptions.color ?? look.color ?? 0xffffff
+    }
+    return (
+      this.ownLook.color ??
+      new Color(look.color ?? 0xffffff).multiplyScalar(ROAD_SHADE)
     )
-    const road =
-      own === undefined
-        ? new Color(look.color ?? 0xffffff).multiplyScalar(ROAD_SHADE)
-        : new Color(own)
-    return { road, structure }
   }
 
   protected override draw(
     ctx: TileContext<RoadFeature>,
     features: readonly RoadFeature[]
   ) {
-    const look = this.requireLook()
-    const { road, structure } = this.colors(look)
+    // the parts' materials have the colors
+    const [road, structure] = [WHITE, WHITE]
     const wanted = new Set(features)
     const { tile } = ctx
     const { tileSize } = ctx.map.options

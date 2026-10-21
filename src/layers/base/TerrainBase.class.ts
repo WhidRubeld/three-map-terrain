@@ -84,10 +84,17 @@ export class TerrainBase implements MapLayer {
     this.update(tile)
   }
 
+  /** The new look's material; built again only in or out of wireframe. */
   materialChanged(map: Map) {
-    if (this.ownMaterial) this.material?.dispose()
+    const [material, own, wireframe] = [
+      this.material,
+      this.ownMaterial,
+      this.wireframe
+    ]
     this.setupMaterial(map)
-    this.update()
+    if (this.wireframe !== wireframe) this.update()
+    else if (this.object && this.material) this.object.material = this.material
+    if (own && material !== this.material) material?.dispose()
   }
 
   private setupMaterial(map: Map) {

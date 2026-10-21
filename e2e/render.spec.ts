@@ -536,6 +536,47 @@ for (const renderer of ['webgl', 'webgpu'] as const) {
     // WATER_COLOR, unlit, over the red texture, not a pixel fighting through
     expectColor(lake, [138, 183, 220], 3, 'lake')
 
+    /** The share of pixels near `color` in each region `[u0, v0, u1, v1]`. */
+    const shares = (
+      png: Buffer,
+      color: readonly number[],
+      regions: number[][]
+    ) =>
+      page.evaluate(
+        async ({ base64, color, regions }) => {
+          const blob = await (
+            await fetch(`data:image/png;base64,${base64}`)
+          ).blob()
+          const bitmap = await createImageBitmap(blob)
+          const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
+          const context = canvas.getContext('2d')
+          if (!context) throw new Error('no 2d context')
+          context.drawImage(bitmap, 0, 0)
+          return regions.map(([u0, v0, u1, v1]) => {
+            const [x0, y0] = [
+              Math.floor(u0 * bitmap.width),
+              Math.floor(v0 * bitmap.height)
+            ]
+            const [w, h] = [
+              Math.floor((u1 - u0) * bitmap.width),
+              Math.floor((v1 - v0) * bitmap.height)
+            ]
+            const { data } = context.getImageData(x0, y0, w, h)
+            let near = 0
+            for (let i = 0; i < data.length; i += 4) {
+              if (
+                Math.abs(data[i] - color[0]) < 12 &&
+                Math.abs(data[i + 1] - color[1]) < 12 &&
+                Math.abs(data[i + 2] - color[2]) < 12
+              )
+                near++
+            }
+            return near / (w * h)
+          })
+        },
+        { base64: png.toString('base64'), color, regions }
+      )
+
     // crowns (CROWN_COLOR) cover a good part of the wood, none outside it
     const share = await page.evaluate(
       async ({ base64, regions }) => {
@@ -580,6 +621,39 @@ for (const renderer of ['webgl', 'webgpu'] as const) {
     )
     expect(share[0]).toBeGreaterThan(0.05)
     expect(share[1]).toBe(0)
+
+    // a wireframe look with a fill, the trees in a color of their own: the
+    // materials change, the trees are outlined
+    await page.evaluate(async () => {
+      const playground = window.__playground
+      playground?.map.setMaterial({ wireframe: true, fillOpacity: 0.5 })
+      playground?.trees?.setMaterial({ color: '#ff00ff' })
+      await playground?.map.whenReady()
+      await playground?.freeze()
+    })
+    const wireframe = await page.locator('canvas').screenshot()
+    const wood = [...tilePoint(page, 0.6, 0.1), ...tilePoint(page, 0.9, 0.4)]
+    const outside = [...tilePoint(page, 0.6, 0.6), ...tilePoint(page, 0.9, 0.9)]
+    const [outlined, none] = await shares(
+      wireframe,
+      [255, 0, 255],
+      [wood, outside]
+    )
+    expect(outlined).toBeGreaterThan(0.02)
+    expect(none).toBe(0)
+    // the lake: half its blue over the background — blended in sRGB
+    // (WebGLRenderer) or in linear (WebGPURenderer)
+    const lakeRegion = [
+      ...tilePoint(page, 0.1, 0.1),
+      ...tilePoint(page, 0.4, 0.4)
+    ]
+    const filled = await Promise.all(
+      [
+        [86, 108, 127],
+        [102, 136, 162]
+      ].map(async (color) => (await shares(wireframe, color, [lakeRegion]))[0])
+    )
+    expect(Math.max(...filled)).toBeGreaterThan(0.3)
     expect(errors).toEqual([])
   })
 }
