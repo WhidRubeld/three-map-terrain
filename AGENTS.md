@@ -16,6 +16,7 @@ src/                      library (the only published code, plus dist/)
                           setSource/setMaterial, whenReady, export
     Tile.class.ts         Tile: elevation → PlaneGeometry, texture (re)loading, seams
     quad-texture-material.ts  4 child tiles → one CanvasTexture; MaterialOptions
+  color-filter.ts       (internal) the imagery `filter`: CSS color functions → pixels
     TerrainBase.class.ts  layer: side walls + bottom (diorama block)
   sources/                where terrain tiles come from
     tile-source.ts        TileRequest, URL templates, fallback to ancestors
@@ -110,10 +111,17 @@ depends on the published package. After a release, bump it there.
 - **Texture**: each tile is textured with its four children at `zoom + 1`,
   drawn into one 2×2 canvas (`NW | NE / SW | SE`, `flipY` maps canvas top to
   north) → `CanvasTexture` with `SRGBColorSpace` → `MeshLambertMaterial`
-  (`lights: true`) or `MeshBasicMaterial`, with `color` (a tint) and the
-  imagery drawn through `filter` (canvas `filter`). No custom shaders on
-  purpose: they break between three.js releases and don't run on
+  (`lights: true`) or `MeshBasicMaterial`, with `color` (a tint). No custom
+  shaders on purpose: they break between three.js releases and don't run on
   `WebGPURenderer`.
+- **Filter**: material colors can only tint, so `filter` (CSS color
+  functions: grayscale, sepia, saturate, hue-rotate, invert, opacity,
+  brightness, contrast) is baked into the stitched canvas on the CPU
+  (`color-filter.ts`): each function is its color matrix from the Filter
+  Effects spec, in sRGB on non-premultiplied pixels, clamped after every
+  step — within 1/255 of Chrome's canvas filter. Never use the canvas
+  `filter`: Safari has none (none at all on `OffscreenCanvas`). An invalid
+  filter is ignored with one warning, as CSS does.
 - **Runtime style**: `setSource` reloads every placed tile's texture
   (`buildmesh`: a generation counter and a per-texture `AbortController`
   drop superseded loads; the old material stays until the new one is in and

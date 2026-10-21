@@ -57,11 +57,41 @@ describe('loadQuadTexture', () => {
     for (const bitmap of bitmaps) expect(bitmap.close).toHaveBeenCalled()
   })
 
-  it('draws the imagery through a CSS filter', async () => {
-    await loadQuadTexture(['nw', 'sw', 'ne', 'se'], undefined, 'grayscale(1)')
+  it('applies the filter to the stitched pixels, not as a canvas filter', async () => {
+    // the fake canvas reads transparent black: inverted, it turns white
+    await loadQuadTexture(['nw', 'sw', 'ne', 'se'], undefined, 'invert(1)')
     const [canvas] = FakeOffscreenCanvas.instances
 
-    for (const draw of canvas.draws) expect(draw.filter).toBe('grayscale(1)')
+    // Safari has no canvas filter: the context's is never used
+    for (const draw of canvas.draws) expect(draw.filter).toBeUndefined()
+    expect(canvas.contextSettings).toEqual({ willReadFrequently: true })
+    expect(canvas.reads).toEqual([[0, 0, 512, 512]])
+    expect(canvas.puts).toHaveLength(1)
+    const [{ data, x, y }] = canvas.puts
+    expect([x, y, data.length]).toEqual([0, 0, 512 * 512 * 4])
+    expect([...data.subarray(0, 8)]).toEqual([
+      255, 255, 255, 0, 255, 255, 255, 0
+    ])
+  })
+
+  it('reads no pixels without a filter, or with one that changes nothing', async () => {
+    await loadQuadTexture(['nw', 'sw', 'ne', 'se'])
+    await loadQuadTexture(['nw', 'sw', 'ne', 'se'], undefined, 'grayscale(0)')
+
+    for (const canvas of FakeOffscreenCanvas.instances) {
+      expect(canvas.contextSettings).toBeUndefined()
+      expect([canvas.reads, canvas.puts]).toEqual([[], []])
+    }
+  })
+
+  it('ignores an invalid filter with a warning', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await loadQuadTexture(['nw', 'sw', 'ne', 'se'], undefined, 'blur(2px)')
+    const [canvas] = FakeOffscreenCanvas.instances
+
+    expect(canvas.draws).toHaveLength(4)
+    expect(canvas.puts).toEqual([])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('blur(2px)'))
   })
 
   it('forwards the abort signal to every request', async () => {
@@ -214,7 +244,7 @@ describe('QuadTextureMaterial', () => {
     expect(material).toBeInstanceOf(MeshBasicMaterial)
     const [canvas] = FakeOffscreenCanvas.instances
     expect(material.map?.image).toBe(canvas)
-    expect(canvas.draws[0].filter).toBe('sepia(1)')
+    expect(canvas.puts).toHaveLength(1) // filtered
   })
 })
 

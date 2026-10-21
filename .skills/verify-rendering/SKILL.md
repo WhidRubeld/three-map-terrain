@@ -62,7 +62,7 @@ Query parameters:
 | `wireframe`          | `1`                                        | —        | `wireframe` material option                                        |
 | `api`                | `eox`, `osm`, `swisstopo`, `none`          | `eox`    | texture source (`swisstopo`: a `url` template; `none`: no imagery) |
 | `color`              | hex without `#`                            | —        | `material.color` (a tint, or the plain terrain)                    |
-| `filter`             | CSS filter                                 | —        | `material.filter`, e.g. `grayscale(1)`                             |
+| `filter`             | CSS color functions                        | —        | `material.filter`, e.g. `grayscale(1)`                             |
 | `elevation`          | `aws`, `mapterhorn`, …                     | `aws`    | elevation source                                                   |
 | `buildings`          | `openfreemap`, `versatiles`, `overpass`, … | —        | the `Buildings` layer; `token=…` for keyed ones                    |
 | `edges`              | `1`                                        | —        | buildings' `edges`                                                 |

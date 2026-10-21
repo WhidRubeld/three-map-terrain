@@ -32,7 +32,7 @@ Elevation, imagery and OpenStreetMap buildings in one style, the geolocation mat
 - **Terrain from real elevation** — [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/), [Mapterhorn](https://mapterhorn.com), Mapbox, MapTiler or your own, at any zoom, as a grid of tiles around a location.
 - **3D buildings** — OpenStreetMap buildings from [OpenFreeMap](https://openfreemap.org), VersaTiles, MapTiler, Mapbox, Protomaps or the Overpass API, or any data you load ([Overture Maps](https://overturemaps.org) in an example), standing on the rendered terrain, with picking and highlighting.
 - **Any source** — every source takes a preset, a `{z}/{x}/{y}` URL template or your own `load` function; tiles missing or beyond a source's zoom are cut out of their ancestors.
-- **One look for everything** — imagery or none, a color, a CSS filter, wireframe: the buildings and the base take on the terrain's style, also when it changes at runtime.
+- **One look for everything** — imagery or none, a color, a filter (grayscale, sepia, brightness… the same in every browser), wireframe: the buildings and the base take on the terrain's style, also when it changes at runtime.
 - **Diorama base** — `TerrainBase` closes the terrain into a solid block; buildings are cut cleanly at its edge.
 - **Export** — the terrain with its imagery, buildings and base as GLB, glTF, OBJ, STL (3D printing) or USDZ (AR), in meters.
 - **Geolocation both ways** — place objects at a latitude/longitude (on the surface or at an altitude), and read the geolocation under the pointer.
@@ -197,6 +197,8 @@ new Map({ location, material: { wireframe: true, color: '#9fb3c8' } })
 // a solid block: walls from the terrain's outer edges down, and a bottom
 map.addLayer(new TerrainBase({ depth: 50 }))
 ```
+
+`filter` takes the color functions of CSS — `grayscale`, `sepia`, `saturate`, `hue-rotate`, `invert`, `opacity`, `brightness`, `contrast` — in any order. The library applies them to the imagery's pixels, so they look the same in every browser and renderer, Safari included, and go into exported models; other functions such as `blur()` make the filter invalid, and it is ignored with a warning.
 
 Change them at runtime — the textures are kept, the buildings and the base follow:
 
@@ -370,7 +372,7 @@ map.addLayer({
 | `wireframe` | `false`   | Draw lines — the terrain's triangles (`tileSegments` of 32–64 reads well), the buildings' and the base's edges |
 | `fog`       | `true`    | Whether the scene fog applies                                                                                  |
 | `color`     | `#ffffff` | Tints imagery (white leaves it as it is); without imagery, the color of the surface                            |
-| `filter`    | `'none'`  | A CSS filter for the imagery, e.g. `'grayscale(1)'`                                                            |
+| `filter`    | `'none'`  | CSS color functions for the imagery, e.g. `'grayscale(1) brightness(1.1)'`, applied to its pixels              |
 
 Until its texture arrives, a tile shows a shared wireframe placeholder.
 
@@ -455,6 +457,7 @@ Nothing breaks; worth knowing:
 - `source` is optional: without it the terrain has no imagery (`{ api: 'none' }`). `Source.api` can also be `'custom'` and `'none'`.
 - A tile that answers 404 now falls back to its ancestor instead of staying untextured or failing to load.
 - `QuadTextureMaterialOptions` has `color` and `filter`; `createQuadTextureMaterial()` takes `null` for a plain material; `Tile.buildmesh()` disposes the material it replaces.
+- `filter` is applied by the library, no longer by the canvas, which Safari cannot do: it now works there. It takes the color functions of CSS; a filter with others (`blur()`, `drop-shadow()`) is ignored with a warning.
 - `Tile.baseURL` still works but `elevation` replaces it.
 
 ### From 1.x

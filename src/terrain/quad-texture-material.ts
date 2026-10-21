@@ -8,6 +8,7 @@ import {
   Texture
 } from 'three'
 
+import { applyColorFilter, colorFilter } from './color-filter'
 import { createCanvas2D, loadImage, releaseImage } from '../io/image'
 import type { TileImageSource } from '../sources/Source.class'
 import { type TileRegion, WHOLE_TILE } from '../sources/tile-source'
@@ -32,9 +33,12 @@ export interface MaterialOptions {
 
 export interface QuadTextureMaterialOptions extends MaterialOptions {
   /**
-   * A CSS filter applied to the imagery, e.g. `'grayscale(1)'` or
-   * `'saturate(0.4) brightness(1.1)'`, to tone it down to the buildings.
-   * `'none'` by default.
+   * A CSS filter of color functions for the imagery, e.g. `'grayscale(1)'`
+   * or `'saturate(0.4) brightness(1.1)'`, to tone it down to the buildings:
+   * `grayscale`, `sepia`, `saturate`, `hue-rotate`, `invert`, `opacity`,
+   * `brightness`, `contrast`. The library applies it to the pixels, so it
+   * looks the same in every browser (Safari has no canvas filters).
+   * `'none'` by default; an invalid filter is ignored with a warning.
    */
   filter?: string
 }
@@ -95,7 +99,7 @@ const isRejected = (
 export async function loadQuadTexture(
   inputs: QuadTextureInputs,
   signal?: AbortSignal,
-  /** A CSS filter, e.g. `'grayscale(1)'`; ignored where canvas filters are not supported. */
+  /** A CSS filter of color functions, e.g. `'grayscale(1)'` */
   filter = 'none'
 ): Promise<CanvasTexture<QuadTextureCanvas>> {
   const results = await Promise.allSettled(
@@ -122,8 +126,12 @@ export async function loadQuadTexture(
       )
     const width = Math.max(...tiles.map((tile) => size(tile, 'width')))
     const height = Math.max(...tiles.map((tile) => size(tile, 'height')))
-    const { canvas, context } = createCanvas2D(width * 2, height * 2)
-    if (filter !== 'none' && 'filter' in context) context.filter = filter
+    const steps = colorFilter(filter)
+    const { canvas, context } = createCanvas2D(
+      width * 2,
+      height * 2,
+      steps.length > 0 ? { willReadFrequently: true } : undefined
+    )
 
     const draw = ({ image, region }: QuadTextureTile, x: number, y: number) => {
       if (!region || region.size === 1) {
@@ -147,6 +155,11 @@ export async function loadQuadTexture(
     draw(ne, width, 0)
     draw(sw, 0, height)
     draw(se, width, height)
+    if (steps.length > 0) {
+      const pixels = context.getImageData(0, 0, width * 2, height * 2)
+      applyColorFilter(pixels.data, steps)
+      context.putImageData(pixels, 0, 0)
+    }
 
     const texture = new CanvasTexture<QuadTextureCanvas>(canvas)
     texture.colorSpace = SRGBColorSpace

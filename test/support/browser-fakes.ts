@@ -22,6 +22,10 @@ export class FakeOffscreenCanvas {
     /** the context's `filter`, if not `'none'` */
     filter?: string
   }[] = []
+  /** `getImageData` rectangles `[x, y, w, h]` */
+  reads: number[][] = []
+  /** `putImageData` calls */
+  puts: { data: Uint8ClampedArray; x: number; y: number }[] = []
   contextSettings: unknown
 
   constructor(
@@ -33,7 +37,7 @@ export class FakeOffscreenCanvas {
 
   getContext(_type: '2d', settings?: unknown) {
     this.contextSettings = settings
-    const draws = this.draws
+    const { draws, reads, puts } = this
     return {
       filter: 'none',
       drawImage(image: FakeBitmap, ...args: number[]) {
@@ -53,11 +57,19 @@ export class FakeOffscreenCanvas {
         const [x, y, w = image.width, h = image.height] = args
         return draws.push({ url: image.url, x, y, w, h, ...filter })
       },
-      getImageData: (x: number, y: number, width: number, height: number) => ({
-        width,
-        height,
-        data: new Uint8ClampedArray(width * height * 4)
-      })
+      getImageData: (x: number, y: number, width: number, height: number) => {
+        reads.push([x, y, width, height])
+        return {
+          width,
+          height,
+          data: new Uint8ClampedArray(width * height * 4)
+        }
+      },
+      putImageData: (
+        image: { data: Uint8ClampedArray },
+        x: number,
+        y: number
+      ) => puts.push({ data: image.data, x, y })
     }
   }
 }

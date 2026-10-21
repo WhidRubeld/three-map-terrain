@@ -377,6 +377,40 @@ test('draws terrain without imagery in its color, buildings in tone', async ({
   expect(errors).toEqual([])
 })
 
+test('filters the imagery by itself, also without canvas filters (Safari)', async ({
+  page
+}) => {
+  // Safari has no canvas filter: take Chromium's away too
+  await page.addInitScript(() => {
+    for (const context of [
+      CanvasRenderingContext2D,
+      OffscreenCanvasRenderingContext2D
+    ]) {
+      Reflect.deleteProperty(context.prototype, 'filter')
+    }
+  })
+  const errors = collectErrors(page)
+  const filter = encodeURIComponent('grayscale(1) brightness(1.1)')
+  await openPlayground(
+    page,
+    `renderer=webgl&view=top&lights=0&nTiles=1&filter=${filter}`
+  )
+
+  const png = await page.locator('canvas').screenshot()
+  const [nw, ne, sw, se] = await samplePixels(page, png, [
+    tilePoint(page, 0.25, 0.25),
+    tilePoint(page, 0.75, 0.25),
+    tilePoint(page, 0.25, 0.75),
+    tilePoint(page, 0.75, 0.75)
+  ])
+  // the luminance of red, green, blue and mid-gray, × 1.1
+  expectColor(nw, [60, 60, 60], 2, 'nw')
+  expectColor(ne, [201, 201, 201], 2, 'ne')
+  expectColor(sw, [20, 20, 20], 2, 'sw')
+  expectColor(se, [141, 141, 141], 2, 'se')
+  expect(errors).toEqual([])
+})
+
 test('switches imagery and style at runtime, in one go', async ({ page }) => {
   const errors = collectErrors(page)
   await openPlayground(
