@@ -54,16 +54,35 @@ const turn = async (page) => {
   }
 }
 
+/** Lowers the camera over the city and comes close: facades and markings. */
+const closeUp = async (page) => {
+  await page.mouse.move(700, 500)
+  await page.mouse.down({ button: 'right' })
+  await page.mouse.move(700, 380, { steps: 12 })
+  await page.mouse.up({ button: 'right' })
+  await page.mouse.move(760, 560)
+  for (let i = 0; i < 8; i++) {
+    await page.mouse.wheel(0, -350)
+    await page.waitForTimeout(120)
+  }
+}
+
 const SCENES = [
   // the README's hero: the live example
   { name: 'hero', example: 'react', click: [770, 520] },
-  // its Lausanne, one map in three looks
+  // its Lausanne, one map in four looks; the textured one up close
   ...['plain', 'aerial', 'wireframe'].map((look) => ({
     name: `lausanne-${look}`,
     example: 'react',
     query: `?place=lausanne&look=${look}`,
     prepare: turn
   })),
+  {
+    name: 'lausanne-textured',
+    example: 'react',
+    query: '?place=lausanne&look=textured',
+    prepare: closeUp
+  },
   // San Francisco, Overture buildings; a click stops the rotation
   { name: 'basic', example: 'basic', click: [860, 320] }
 ]
@@ -80,8 +99,11 @@ for (const scene of SCENES) {
     deviceScaleFactor: 2
   })
   await page.goto(`http://localhost:${port}/${scene.query ?? ''}`)
-  // tiles and their textures: wait until the network is quiet
-  await page.waitForLoadState('networkidle')
+  // tiles and their textures: wait until the network is quiet — or, with a
+  // slow tile server retrying, a while
+  await page
+    .waitForLoadState('networkidle', { timeout: 90000 })
+    .catch(() => console.warn(`${scene.name}: the network never went quiet`))
   await page.waitForTimeout(2000)
   if (scene.prepare) await scene.prepare(page)
   if (scene.click) await page.mouse.click(...scene.click)

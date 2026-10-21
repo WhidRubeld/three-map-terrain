@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   defaultMapOptions,
-  defaultTextureOptions,
+  defaultMaterialOptions,
   ElevationSource,
   Map,
   type MapLayer,
@@ -20,7 +20,7 @@ import {
   Source,
   type Tile
 } from '../../src'
-import { loadQuadTexture } from '../../src/terrain/quad-texture-material'
+import { loadQuadTexture } from '../../src/terrain/material'
 import { FakeFileReader } from '../support/browser-fakes'
 import { raycastZ, terrariumPixels } from '../support/helpers'
 
@@ -43,10 +43,8 @@ vi.mock('../../src/io/image', async (importOriginal) => ({
   loadImageData
 }))
 
-vi.mock('../../src/terrain/quad-texture-material', async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import('../../src/terrain/quad-texture-material')
-  >()),
+vi.mock('../../src/terrain/material', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/terrain/material')>()),
   // no canvas in Node: a texture stands in for the stitched imagery
   loadQuadTexture: vi.fn(() => Promise.resolve(new Texture()))
 }))
@@ -112,10 +110,10 @@ describe('Map', () => {
       tileSegments: 256
     })
     expect(map.materialOptions).toEqual({
-      ...defaultTextureOptions,
+      ...defaultMaterialOptions,
       lights: false
     })
-    expect(defaultTextureOptions.lights).toBe(true)
+    expect(defaultMaterialOptions.lights).toBe(true)
     expect(map.center).toEqual({ x: 2138, y: 1447 })
   })
 
@@ -378,17 +376,26 @@ describe('Map', () => {
       expect(material.color.getHex()).toBe(0x00ff00)
     })
 
-    it('reloads the imagery for a new filter', async () => {
+    it('reloads the imagery for a new process, restyles for a new factory', async () => {
       const map = createMap()
       await map.init()
       await map.whenReady()
       vi.mocked(loadQuadTexture).mockClear()
 
-      map.setMaterial({ filter: 'grayscale(1)' })
+      const process = vi.fn()
+      map.setMaterial({ process })
       await map.whenReady()
-
       expect(loadQuadTexture).toHaveBeenCalledTimes(9)
-      expect(vi.mocked(loadQuadTexture).mock.calls[0][2]).toBe('grayscale(1)')
+      expect(vi.mocked(loadQuadTexture).mock.calls[0][2]).toBeTypeOf('function')
+
+      vi.mocked(loadQuadTexture).mockClear()
+      const custom = new MeshBasicMaterial({ color: 0xff00ff })
+      map.setMaterial({ create: () => custom })
+      await map.whenReady()
+      expect(loadQuadTexture).not.toHaveBeenCalled()
+      for (const tile of Object.values(map.tileCache)) {
+        expect(tile.mesh.material).toBe(custom)
+      }
     })
   })
 
@@ -764,7 +771,7 @@ describe('Map', () => {
       })
 
       expect(map.source).toBeInstanceOf(Source)
-      expect(map.source.mapUrl(1, 0, 1)).toBe('https://img/1/0/1.jpg')
+      expect(map.source.tileUrl(1, 0, 1)).toBe('https://img/1/0/1.jpg')
       expect(map.elevation).toBeInstanceOf(ElevationSource)
       expect(map.elevation.api).toBe('mapterhorn')
     })
@@ -845,6 +852,29 @@ describe('Map', () => {
         expect(events.filter((e) => e.startsWith('loaded'))).toHaveLength(9)
       }
       expect(map.layers).toEqual([early.layer, late.layer])
+    })
+
+    it('tells layers whose seams a tile stitched that their heights changed', async () => {
+      const map = createMap()
+      const changes: string[] = []
+      map.addLayer({
+        tileChanged: (tile: Tile) => {
+          // stitched to the neighbour that loaded, still in the scene
+          expect(tile.mesh.parent).toBe(map.terrain)
+          changes.push(tile.key())
+        }
+      })
+      await map.init()
+      changes.length = 0
+
+      // a tile east of the grid: its western neighbour's east seam changes
+      await map.getTerrainPosition({
+        lat: location.lat,
+        lon: location.lon + (2 * 360) / 2 ** defaultMapOptions.zoom
+      })
+
+      expect(changes).toContain('11/1070/723')
+      expect(changes).not.toContain('11/1071/723')
     })
 
     it('also for tiles loaded on demand', async () => {

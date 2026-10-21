@@ -36,6 +36,7 @@ const openPlayground = async (
       Object.keys(window.__playground?.map.tileCache ?? {}).length
   )
   await page.evaluate(() => window.__playground?.buildings?.whenReady())
+  await page.evaluate(() => window.__playground?.map.whenReady())
   // everything is loaded: one last frame, so that capturing it does not have
   // to compete with a render loop (seconds per frame on software renderers)
   await page.evaluate(() => window.__playground?.freeze())
@@ -376,6 +377,212 @@ test('draws terrain without imagery in its color, buildings in tone', async ({
   expectColor(roof, [64, 128, 192], 2, 'roof')
   expect(errors).toEqual([])
 })
+
+test('processes the imagery on the CPU before it becomes a texture', async ({
+  page
+}) => {
+  const errors = collectErrors(page)
+  // the playground's gray=1: a few lines of `process`, in grayscale
+  await openPlayground(page, 'renderer=webgl&view=top&lights=0&nTiles=1&gray=1')
+
+  const png = await page.locator('canvas').screenshot()
+  const [nw, ne, sw, se] = await samplePixels(page, png, [
+    tilePoint(page, 0.25, 0.25),
+    tilePoint(page, 0.75, 0.25),
+    tilePoint(page, 0.25, 0.75),
+    tilePoint(page, 0.75, 0.75)
+  ])
+  // the Rec. 709 luma of red, green, blue and mid-gray
+  expectColor(nw, [54, 54, 54], 2, 'nw')
+  expectColor(ne, [182, 182, 182], 2, 'ne')
+  expectColor(sw, [18, 18, 18], 2, 'sw')
+  expectColor(se, [128, 128, 128], 2, 'se')
+  expect(errors).toEqual([])
+})
+
+for (const renderer of ['webgl', 'webgpu'] as const) {
+  test(`drapes roads on the terrain and bridges them over it (${renderer})`, async ({
+    page
+  }, testInfo) => {
+    const errors = collectErrors(page)
+    const zoom = 14
+    const center = Utils.position2tile(46.57634, 7.9904, zoom)
+    // a primary road across the southern half; a bridge across the north
+    const tile = encodeVectorTile([
+      {
+        name: 'transportation',
+        features: [
+          {
+            id: 1,
+            type: 2,
+            properties: { class: 'primary' },
+            geometry: [[-200, 3072, 4296, 3072]]
+          },
+          {
+            id: 2,
+            type: 2,
+            properties: { class: 'primary', brunnel: 'bridge', layer: 1 },
+            geometry: [[600, 1024, 3496, 1024]]
+          },
+          {
+            id: 3,
+            type: 2,
+            properties: { class: 'minor', brunnel: 'tunnel' },
+            geometry: [[2560, 0, 2560, 4096]]
+          }
+        ]
+      }
+    ])
+    const query = await rendererQuery(page, renderer)
+    const { backend } = await openPlayground(
+      page,
+      `${query}&view=top&lights=0&nTiles=1&zoom=${zoom}&roads=openfreemap&segments=32`,
+      {
+        vectorTiles: (z, x, y) =>
+          z === zoom && x === center.x && y === center.y ? tile : undefined
+      }
+    )
+    testInfo.annotations.push({ type: 'backend', description: backend })
+
+    const counts = await page.evaluate(() => {
+      const children = window.__playground?.roads?.group.children ?? []
+      return {
+        roads: window.__playground?.roads?.count,
+        decks: children.filter((object) => object.name.startsWith('roads deck'))
+          .length
+      }
+    })
+    // the road and the bridge, not the tunnel
+    expect(counts).toEqual({ roads: 2, decks: 1 })
+
+    const canvas = page.locator('canvas')
+    const [road, beside, deck, tunnel] = await samplePixels(
+      page,
+      await canvas.screenshot(),
+      [
+        tilePoint(page, 0.3, 0.75),
+        tilePoint(page, 0.3, 0.85),
+        tilePoint(page, 0.3, 0.25),
+        tilePoint(page, 0.625, 0.6)
+      ]
+    )
+    // a shade of the map's white (0.8 linear, sRGB 231), over the texture,
+    // without a single pixel of the terrain fighting through
+    expectColor(road, [231, 231, 231], 3, 'road')
+    expectColor(deck, [231, 231, 231], 3, 'deck')
+    expectColor(beside, QUADRANT_COLORS.sw, 2, 'beside the road')
+    expectColor(tunnel, QUADRANT_COLORS.se, 2, 'over the tunnel')
+
+    const box = await canvas.boundingBox()
+    if (!box) throw new Error('canvas is not visible')
+    const [u, v] = tilePoint(page, 0.3, 0.75)
+    await canvas.click({ position: { x: u * box.width, y: v * box.height } })
+    expect(
+      await page.evaluate(() => window.__playground?.lastRoad)
+    ).toMatchObject({
+      id: 1,
+      kind: 'primary',
+      bridge: false
+    })
+    expect(errors).toEqual([])
+  })
+}
+
+for (const renderer of ['webgl', 'webgpu'] as const) {
+  test(`lays water on the terrain and plants trees in woods (${renderer})`, async ({
+    page
+  }, testInfo) => {
+    const errors = collectErrors(page)
+    const zoom = 14
+    const center = Utils.position2tile(46.57634, 7.9904, zoom)
+    // a lake over the NW quadrant, a wood over the NE one
+    const tile = encodeVectorTile([
+      {
+        name: 'water',
+        features: [
+          {
+            id: 1,
+            type: 3,
+            properties: { class: 'lake' },
+            geometry: [[100, 100, 1948, 100, 1948, 1948, 100, 1948]]
+          }
+        ]
+      },
+      {
+        name: 'landcover',
+        features: [
+          {
+            id: 2,
+            type: 3,
+            properties: { class: 'wood', subclass: 'forest' },
+            geometry: [[2148, 100, 3996, 100, 3996, 1948, 2148, 1948]]
+          }
+        ]
+      }
+    ])
+    const query = await rendererQuery(page, renderer)
+    const { backend } = await openPlayground(
+      page,
+      `${query}&view=top&lights=0&nTiles=1&zoom=${zoom}&water=openfreemap&trees=openfreemap&segments=32`,
+      {
+        vectorTiles: (z, x, y) =>
+          z === zoom && x === center.x && y === center.y ? tile : undefined
+      }
+    )
+    testInfo.annotations.push({ type: 'backend', description: backend })
+
+    const png = await page.locator('canvas').screenshot()
+    const [lake] = await samplePixels(page, png, [tilePoint(page, 0.25, 0.25)])
+    // WATER_COLOR, unlit, over the red texture, not a pixel fighting through
+    expectColor(lake, [138, 183, 220], 3, 'lake')
+
+    // crowns (CROWN_COLOR) cover a good part of the wood, none outside it
+    const share = await page.evaluate(
+      async ({ base64, regions }) => {
+        const blob = await (
+          await fetch(`data:image/png;base64,${base64}`)
+        ).blob()
+        const bitmap = await createImageBitmap(blob)
+        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
+        const context = canvas.getContext('2d')
+        if (!context) throw new Error('no 2d context')
+        context.drawImage(bitmap, 0, 0)
+        return regions.map(([u0, v0, u1, v1]) => {
+          const [x0, y0] = [
+            Math.floor(u0 * bitmap.width),
+            Math.floor(v0 * bitmap.height)
+          ]
+          const [w, h] = [
+            Math.floor((u1 - u0) * bitmap.width),
+            Math.floor((v1 - v0) * bitmap.height)
+          ]
+          const { data } = context.getImageData(x0, y0, w, h)
+          let crowns = 0
+          for (let i = 0; i < data.length; i += 4) {
+            const [r, g, b] = [data[i], data[i + 1], data[i + 2]]
+            if (
+              Math.abs(r - 111) < 12 &&
+              Math.abs(g - 154) < 12 &&
+              Math.abs(b - 79) < 12
+            )
+              crowns++
+          }
+          return crowns / (w * h)
+        })
+      },
+      {
+        base64: png.toString('base64'),
+        regions: [
+          [...tilePoint(page, 0.6, 0.1), ...tilePoint(page, 0.9, 0.4)],
+          [...tilePoint(page, 0.6, 0.6), ...tilePoint(page, 0.9, 0.9)]
+        ]
+      }
+    )
+    expect(share[0]).toBeGreaterThan(0.05)
+    expect(share[1]).toBe(0)
+    expect(errors).toEqual([])
+  })
+}
 
 test('switches imagery and style at runtime, in one go', async ({ page }) => {
   const errors = collectErrors(page)

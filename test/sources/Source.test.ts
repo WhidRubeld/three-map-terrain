@@ -34,14 +34,9 @@ describe('Source', () => {
     ]
   ] satisfies [SourceProps, string][])('builds %o tile urls', (props, url) => {
     const source = new Source(props)
-    expect(source.mapUrl(11, 1069, 724)).toBe(url)
+    expect(source.tileUrl(11, 1069, 724)).toBe(url)
     expect(source.maxZoom).toBe(Infinity)
     expect(source.attribution).not.toBe('')
-  })
-
-  it('stores the token only for token-based apis', () => {
-    expect(new Source({ api: 'osm' }).token).toBe('')
-    expect(new Source({ api: 'mapbox', token: 'abc' }).token).toBe('abc')
   })
 
   it('rejects unknown apis and empty props', () => {
@@ -61,7 +56,7 @@ describe('Source', () => {
       attribution: '© swisstopo'
     })
     expect(swisstopo.api).toBe('custom')
-    expect(swisstopo.mapUrl(15, 17061, 11532)).toBe(
+    expect(swisstopo.tileUrl(15, 17061, 11532)).toBe(
       'https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/default/current/3857/15/17061/11532.jpeg'
     )
     expect([swisstopo.maxZoom, swisstopo.attribution]).toEqual([
@@ -70,9 +65,9 @@ describe('Source', () => {
     ])
 
     const esri = new Source({ url: (z, x, y) => `https://esri/${z}/${y}/${x}` })
-    expect(esri.mapUrl(3, 1, 2)).toBe('https://esri/3/2/1')
+    expect(esri.tileUrl(3, 1, 2)).toBe('https://esri/3/2/1')
     expect(
-      new Source({ url: 'https://{s}.t/{z}', subdomains: 'q' }).mapUrl(1, 0, 0)
+      new Source({ url: 'https://{s}.t/{z}', subdomains: 'q' }).tileUrl(1, 0, 0)
     ).toBe('https://q.t/1')
   })
 
@@ -102,7 +97,7 @@ describe('Source', () => {
   it('has no imagery with api none', async () => {
     const source = new Source({ api: 'none' })
 
-    expect([source.api, source.attribution, source.mapUrl(1, 0, 0)]).toEqual([
+    expect([source.api, source.attribution, source.tileUrl(1, 0, 0)]).toEqual([
       'none',
       '',
       ''
@@ -118,7 +113,7 @@ describe('Source', () => {
 
     expect(await source.load({ z: 2, x: 1, y: 3, signal })).toBe(canvas)
     expect(load).toHaveBeenCalledWith({ z: 2, x: 1, y: 3, signal })
-    expect(source.mapUrl(2, 1, 3)).toBe('')
+    expect(source.tileUrl(2, 1, 3)).toBe('')
     expect(loadImage).not.toHaveBeenCalled()
   })
 })

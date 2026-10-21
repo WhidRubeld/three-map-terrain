@@ -3,21 +3,39 @@ import './App.css'
 import { MapControls, PerspectiveCamera } from '@react-three/drei'
 import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { useEffect, useMemo, useState } from 'react'
+import { type Material, MeshBasicMaterial, Raycaster } from 'three'
 import {
   type BuildingFeature,
   Buildings,
   type GeoLocation,
+  type ImageryProcessor,
   Map,
   type ModelFormat,
-  type QuadTextureMaterialOptions,
+  ROAD_KINDS,
+  type RoadFeature,
+  Roads,
   type SourceProps,
-  TerrainBase
+  type TerrainMaterialOptions,
+  TerrainBase,
+  Trees,
+  Water
 } from 'three-map-terrain'
+
+import { COLORED } from './colored'
+import { TEXTURED } from './textured'
 
 type Point = readonly [x: number, y: number, z: number]
 
 const alps = { lat: 46.57634, lon: 7.9904 }
 const lausanne = { lat: 46.515, lon: 6.632 }
+
+/**
+ * The layers' materials by part in the current look — none but in the
+ * textured one: the look's. `setMaterial()` makes the layers ask again.
+ */
+let parts: Readonly<Record<string, Material>> = {}
+const byPart = (part: string): Material | undefined => parts[part]
+const HIDDEN = new MeshBasicMaterial({ visible: false })
 
 const PLACES = {
   alps: {
@@ -41,9 +59,34 @@ const PLACES = {
         },
         material: LOOKS.plain.material
       })
-      // set up once: both take on the terrain's look
+      // set up once: they take on the terrain's look. All read the
+      // OpenFreeMap tiles; bridges span the Flon valley
+      const buildings = map.addLayer(
+        new Buildings({
+          source: { api: 'openfreemap' },
+          edges: true,
+          material: byPart
+        })
+      )
+      const roads = map.addLayer(
+        new Roads({
+          source: { api: 'openfreemap' },
+          // streets and railways; footpaths would clutter the photo
+          kinds: ROAD_KINDS.filter((kind) => kind !== 'path'),
+          material: byPart
+        })
+      )
+      // the lake and the Flon, the woods of the ravines — not in the river,
+      // on the roads or in the houses the woods of the data take in
+      const water = map.addLayer(
+        new Water({ source: { api: 'openfreemap' }, material: byPart })
+      )
       map.addLayer(
-        new Buildings({ source: { api: 'openfreemap' }, edges: true })
+        new Trees({
+          source: { api: 'openfreemap' },
+          avoid: [water, roads, buildings],
+          material: byPart
+        })
       )
       map.addLayer(new TerrainBase())
       return map
@@ -53,39 +96,61 @@ const PLACES = {
 
 type Place = keyof typeof PLACES
 
+/** The imagery toned down to the buildings: gray, a little brighter. */
+const gray: ImageryProcessor = (context, { width, height }) => {
+  const image = context.getImageData(0, 0, width, height)
+  const { data } = image
+  for (let i = 0; i < data.length; i += 4) {
+    const luma = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]
+    data[i] = data[i + 1] = data[i + 2] = luma * 1.1
+  }
+  context.putImageData(image, 0, 0)
+}
+
 /** One look for the terrain — and the layers, which take it on. */
 interface Look {
   source: SourceProps
-  material: Partial<QuadTextureMaterialOptions>
+  material: Partial<TerrainMaterialOptions>
+  /** The layers' own materials, by part. */
+  parts?: Readonly<Record<string, Material>>
   background: number
   light: { ambient: number; sun: number }
 }
 
+const SWISSIMAGE: SourceProps = {
+  url: 'https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/default/current/3857/{z}/{x}/{y}.jpeg',
+  attribution: '© swisstopo'
+}
+
 const LOOKS = {
-  // no imagery: the relief shows in the light
+  // no imagery: a colored model, the relief shows in the light
   plain: {
     source: { api: 'none' },
-    material: { color: '#f2ede5', wireframe: false, filter: 'none' },
+    material: { color: '#e8dcc3', wireframe: false, process: undefined },
+    parts: COLORED,
     background: 0x1d1c1a,
     light: { ambient: 0.9, sun: 3.2 }
   },
   // the photo, in the buildings' tone
   aerial: {
-    source: {
-      url: 'https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/default/current/3857/{z}/{x}/{y}.jpeg',
-      attribution: '© swisstopo'
-    },
-    material: {
-      color: '#ffffff',
-      wireframe: false,
-      filter: 'grayscale(1) brightness(1.1)'
-    },
+    source: SWISSIMAGE,
+    material: { color: '#ffffff', wireframe: false, process: gray },
+    // the photo has its water and trees
+    parts: { water: HIDDEN, crowns: HIDDEN, trunks: HIDDEN },
     background: 0x161616,
     light: { ambient: 1.4, sun: 2.4 }
   },
+  // the photo in color; roads, railways and facades with textures
+  textured: {
+    source: SWISSIMAGE,
+    material: { color: '#ffffff', wireframe: false, process: undefined },
+    parts: TEXTURED,
+    background: 0x1b1d20,
+    light: { ambient: 1.3, sun: 2.6 }
+  },
   wireframe: {
     source: { api: 'none' },
-    material: { color: '#9fb3c8', wireframe: true, filter: 'none' },
+    material: { color: '#9fb3c8', wireframe: true, process: undefined },
     background: 0x0f1216,
     light: { ambient: 1.5, sun: 2.5 }
   }
@@ -104,6 +169,7 @@ const param = (name: string) =>
 type Picked =
   | { kind: 'terrain'; location: GeoLocation; position: Point }
   | { kind: 'building'; location: GeoLocation; feature: BuildingFeature }
+  | { kind: 'road'; location: GeoLocation; feature: RoadFeature }
 
 export default function App() {
   const [place, setPlace] = useState<Place>(
@@ -115,6 +181,7 @@ export default function App() {
   })
   const map = useMemo(() => PLACES[place].create(), [place])
   const buildings = map.layers.find((layer) => layer instanceof Buildings)
+  const roads = map.layers.find((layer) => layer instanceof Roads)
   const look = place === 'alps' ? ALPS_LOOK : LOOKS[lookName]
   const [ready, setReady] = useState(false)
   const [picked, setPicked] = useState<Picked | null>(null)
@@ -137,9 +204,10 @@ export default function App() {
   // another look: the same map and buildings, restyled
   useEffect(() => {
     if (place === 'alps') return
-    const { source, material } = LOOKS[lookName]
-    map.setSource(source)
-    map.setMaterial(material)
+    const look: Look = LOOKS[lookName]
+    parts = look.parts ?? {}
+    map.setSource(look.source)
+    map.setMaterial(look.material)
   }, [map, place, lookName])
 
   // the credits of the sources in use, once the look is applied
@@ -162,12 +230,21 @@ export default function App() {
     // a building: its feature, highlighted
     const building = buildings?.pickIntersection(event)
     buildings?.highlight(building?.feature)
+    // a road under the pointer, not one the terrain hides
+    const road = building
+      ? undefined
+      : roads?.pick(new Raycaster(event.ray.origin, event.ray.direction))
+    roads?.highlight(road?.feature)
     if (building) {
       setPicked({
         kind: 'building',
         location: building,
         feature: building.feature
       })
+      return
+    }
+    if (road) {
+      setPicked({ kind: 'road', location: road, feature: road.feature })
       return
     }
     // the terrain: event.point is in world space, getLocation expects
@@ -263,7 +340,7 @@ export default function App() {
             : picked
               ? describe(picked)
               : buildings
-                ? 'Click a building or the terrain.'
+                ? 'Click a building, a road or the terrain.'
                 : 'Click the terrain: its geolocation shows here.'}
         </p>
         <p className='muted'>Drag to pan, right-drag to rotate.</p>
@@ -329,6 +406,12 @@ function describe(picked: Picked) {
   const { lat, lon, alt } = picked.location
   const where = `${lat.toFixed(5)}, ${lon.toFixed(5)}`
   if (picked.kind === 'terrain') return `${where} · ${Math.round(alt)} m`
+  if (picked.kind === 'road') {
+    const { kind, bridge, properties } = picked.feature
+    const name =
+      typeof properties.name === 'string' ? `${properties.name}, ` : ''
+    return `${name}${kind}${bridge ? ' bridge' : ''} · ${where} · ${Math.round(alt)} m`
+  }
   const { height } = picked.feature
   return `Building${height === undefined ? '' : `, ${Math.round(height)} m high`} · ${where}`
 }

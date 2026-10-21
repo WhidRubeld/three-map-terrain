@@ -1,5 +1,6 @@
 import {
   Group,
+  MeshBasicMaterial,
   MeshLambertMaterial,
   MeshNormalMaterial,
   Texture,
@@ -8,7 +9,6 @@ import {
 import { describe, expect, it, vi } from 'vitest'
 
 import {
-  createQuadTextureMaterial,
   decodeMapbox,
   type ElevationPixels,
   type ElevationSourceProps,
@@ -21,10 +21,8 @@ import {
 } from '../../src'
 import { raycastZ, terrariumPixels } from '../support/helpers'
 
-vi.mock('../../src/terrain/quad-texture-material', async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import('../../src/terrain/quad-texture-material')
-  >()),
+vi.mock('../../src/terrain/material', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/terrain/material')>()),
   // no canvas in Node: a texture stands in for the stitched imagery
   loadQuadTexture: vi.fn(() => Promise.resolve(new Texture()))
 }))
@@ -60,16 +58,13 @@ describe('Tile', () => {
     const tile = new Tile(createMap(), 11, 1069, 724)
 
     expect(tile.key()).toBe('11/1069/724')
-    expect(tile.keyNeighX()).toBe('11/1070/724')
-    expect(tile.keyNeighY()).toBe('11/1069/725')
     expect(tile.url()).toBe(
       'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/11/1069/724.png'
     )
-    expect(tile.mapUrl()).toBe('https://tile.openstreetmap.org/11/1069/724.png')
   })
 
   it('lists the four child tiles in NW, SW, NE, SE order', () => {
-    const children = new Tile(createMap(), 11, 10, 20).childrens()
+    const children = new Tile(createMap(), 11, 10, 20).children()
 
     expect(children.map((tile) => tile.key())).toEqual([
       '12/20/40',
@@ -174,80 +169,103 @@ describe('Tile', () => {
 
   it('swaps the placeholder material once the texture is loaded', async () => {
     const tile = new Tile(createMap(), 11, 0, 0)
-    const material = createQuadTextureMaterial(new Texture())
-    vi.spyOn(tile, 'buildMaterial').mockResolvedValue(material)
+    const texture = new Texture()
+    vi.spyOn(tile, 'loadImagery').mockResolvedValue(texture as never)
 
     expect(tile.mesh.material).toBeInstanceOf(MeshNormalMaterial)
-    await tile.buildmesh()
-    expect(tile.mesh.material).toBe(material)
+    await tile.loadTexture()
+    const material = tile.mesh.material as MeshLambertMaterial
+    expect(material).toBeInstanceOf(MeshLambertMaterial)
+    expect(material.map).toBe(texture)
+  })
+
+  it("makes the material with the map's factory", async () => {
+    const map = createMap()
+    const custom = new MeshBasicMaterial()
+    const create = vi.fn(() => custom)
+    map.materialOptions = { ...map.materialOptions, create }
+    const tile = new Tile(map, 11, 0, 0)
+    const texture = new Texture()
+    vi.spyOn(tile, 'loadImagery').mockResolvedValue(texture as never)
+
+    await tile.loadTexture()
+
+    expect(tile.mesh.material).toBe(custom)
+    expect(create).toHaveBeenCalledWith({
+      texture,
+      tile,
+      options: map.materialOptions
+    })
   })
 
   it('reloads its texture, discarding a load it replaced', async () => {
     const tile = new Tile(createMap(), 11, 0, 0)
-    const stale = createQuadTextureMaterial(new Texture())
-    const fresh = createQuadTextureMaterial(new Texture())
-    let resolveStale: ((material: typeof stale) => void) | undefined
-    vi.spyOn(tile, 'buildMaterial')
+    const stale = new Texture()
+    const fresh = new Texture()
+    let resolveStale: ((texture: Texture) => void) | undefined
+    vi.spyOn(tile, 'loadImagery')
       .mockReturnValueOnce(
         new Promise((resolve) => {
-          resolveStale = resolve
+          resolveStale = resolve as (texture: Texture) => void
         })
       )
-      .mockResolvedValueOnce(fresh)
+      .mockResolvedValueOnce(fresh as never)
     const disposeStale = vi.spyOn(stale, 'dispose')
 
-    const first = tile.buildmesh()
-    const second = tile.buildmesh()
+    const first = tile.loadTexture()
+    const second = tile.loadTexture()
     await second
     resolveStale?.(stale)
     await first
 
-    expect(tile.mesh.material).toBe(fresh)
+    expect((tile.mesh.material as MeshLambertMaterial).map).toBe(fresh)
     expect(disposeStale).toHaveBeenCalled()
     await expect(tile.whenTextured()).resolves.toBeUndefined()
   })
 
-  it('disposes the material it replaces, not the placeholder', async () => {
+  it('disposes the material and texture it replaces, not the placeholder', async () => {
     const tile = new Tile(createMap(), 11, 0, 0)
-    const first = createQuadTextureMaterial(new Texture())
-    const second = createQuadTextureMaterial(new Texture())
-    vi.spyOn(tile, 'buildMaterial')
-      .mockResolvedValueOnce(first)
-      .mockResolvedValueOnce(second)
-    const disposeTexture = vi.spyOn(first.map ?? new Texture(), 'dispose')
+    const [first, second] = [new Texture(), new Texture()]
+    vi.spyOn(tile, 'loadImagery')
+      .mockResolvedValueOnce(first as never)
+      .mockResolvedValueOnce(second as never)
+    const disposeTexture = vi.spyOn(first, 'dispose')
 
-    await tile.buildmesh()
-    await tile.buildmesh()
+    await tile.loadTexture()
+    const disposeMaterial = vi.spyOn(tile.mesh.material, 'dispose')
+    await tile.loadTexture()
 
-    expect(tile.mesh.material).toBe(second)
+    expect((tile.mesh.material as MeshLambertMaterial).map).toBe(second)
     expect(disposeTexture).toHaveBeenCalled()
+    expect(disposeMaterial).toHaveBeenCalled()
   })
 
   it('restyles keeping its texture', async () => {
     const map = createMap()
     const tile = new Tile(map, 11, 0, 0)
-    const textured = createQuadTextureMaterial(new Texture())
-    vi.spyOn(tile, 'buildMaterial').mockResolvedValue(textured)
-    await tile.buildmesh()
-    const disposeTexture = vi.spyOn(textured.map ?? new Texture(), 'dispose')
+    const texture = new Texture()
+    vi.spyOn(tile, 'loadImagery').mockResolvedValue(texture as never)
+    await tile.loadTexture()
+    const textured = tile.mesh.material
+    const disposeTexture = vi.spyOn(texture, 'dispose')
 
     map.materialOptions = { ...map.materialOptions, color: 0x00ff00 }
     tile.restyle()
 
     const material = tile.mesh.material as MeshLambertMaterial
     expect(material).not.toBe(textured)
-    expect(material.map).toBe(textured.map)
+    expect(material.map).toBe(texture)
     expect(material.color.getHex()).toBe(0x00ff00)
     expect(disposeTexture).not.toHaveBeenCalled()
   })
 
   it('disposes a texture that arrives after the tile was disposed', async () => {
     const tile = new Tile(createMap(), 11, 0, 0)
-    const material = createQuadTextureMaterial(new Texture())
-    const dispose = vi.spyOn(material, 'dispose')
-    vi.spyOn(tile, 'buildMaterial').mockResolvedValue(material)
+    const texture = new Texture()
+    const dispose = vi.spyOn(texture, 'dispose')
+    vi.spyOn(tile, 'loadImagery').mockResolvedValue(texture as never)
 
-    const pending = tile.buildmesh()
+    const pending = tile.loadTexture()
     tile.dispose()
     await pending
 
@@ -255,16 +273,17 @@ describe('Tile', () => {
     expect(tile.mesh.material).toBeInstanceOf(MeshNormalMaterial)
   })
 
-  it('releases its mesh resources on dispose', () => {
+  it('releases its mesh resources and its texture on dispose', async () => {
     const tile = new Tile(createMap(), 11, 0, 0)
     const parent = new Group().add(tile.mesh)
-    const map = new Texture()
-    const material = new MeshLambertMaterial({ map })
-    tile.mesh.material = material
+    const texture = new Texture()
+    vi.spyOn(tile, 'loadImagery').mockResolvedValue(texture as never)
+    await tile.loadTexture()
+    const material = tile.mesh.material
 
     const geometryDispose = vi.spyOn(tile.geometry, 'dispose')
     const materialDispose = vi.spyOn(material, 'dispose')
-    const textureDispose = vi.spyOn(map, 'dispose')
+    const textureDispose = vi.spyOn(texture, 'dispose')
 
     tile.dispose()
 
@@ -339,29 +358,16 @@ describe('Tile', () => {
         'No elevation tile at 11/0/0 or its ancestors'
       )
     })
-
-    it('still honours a changed baseURL (terrarium)', () => {
-      const tile = new Tile(
-        createMap(4, { elevation: { api: 'mapterhorn' } }),
-        11,
-        1,
-        2
-      )
-      expect(tile.url()).toBe('https://tiles.mapterhorn.com/11/1/2.webp')
-
-      tile.baseURL = 'https://my.server/terrarium'
-      expect(tile.url()).toBe('https://my.server/terrarium/11/1/2.png')
-    })
   })
 
-  describe('buildMaterial', () => {
+  describe('loadImagery', () => {
     const image = {
       width: 256,
       height: 256,
       close: vi.fn()
     } as unknown as ImageBitmap
     const childLoaders = async (tile: Tile) => {
-      await tile.buildMaterial()
+      await tile.loadImagery()
       const [inputs] = vi.mocked(loadQuadTexture).mock.calls.at(-1) ?? []
       if (!inputs) throw new Error('loadQuadTexture was not called')
       return Promise.all(
@@ -422,12 +428,35 @@ describe('Tile', () => {
       })
       const tile = new Tile(map, 11, 10, 20)
 
-      const material = await tile.buildMaterial()
+      expect(await tile.loadImagery()).toBeNull()
+      await tile.loadTexture()
 
+      const material = tile.mesh.material as MeshLambertMaterial
       expect(loadQuadTexture).not.toHaveBeenCalled()
       expect(material.map).toBeNull()
       expect(material.color.getHex()).toBe(0x336699)
       expect(material.wireframe).toBe(true)
+    })
+
+    it("hands the map's process the stitched canvas and the tile", async () => {
+      const load = vi.fn((_tile: TileRequest) => Promise.resolve(image))
+      const process = vi.fn()
+      const map = createMap(4, { source: { load } })
+      map.materialOptions = { ...map.materialOptions, process }
+      const tile = new Tile(map, 11, 10, 20)
+
+      await tile.loadImagery()
+      const [, , processor] = vi.mocked(loadQuadTexture).mock.calls.at(-1) ?? []
+      const context = {} as CanvasRenderingContext2D
+      await processor?.(context, 512, 256)
+
+      expect(process).toHaveBeenCalledWith(context, {
+        width: 512,
+        height: 256,
+        z: 11,
+        x: 10,
+        y: 20
+      })
     })
 
     it('fails a texture whose tile and ancestors are all missing', async () => {

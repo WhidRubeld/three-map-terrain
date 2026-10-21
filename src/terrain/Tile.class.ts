@@ -1,47 +1,37 @@
 import {
+  type CanvasTexture,
   type Material,
   MathUtils,
   Mesh,
   MeshNormalMaterial,
   PlaneGeometry,
-  Texture
+  type Texture
 } from 'three'
 
 import { Utils } from '../geo/Utils.class'
 import { isAbortError } from '../io/fetch'
-import { loadImageData } from '../io/image'
-import {
-  decodeTerrarium,
-  type ElevationDecoder,
-  type ElevationPixels
+import type {
+  ElevationDecoder,
+  ElevationPixels
 } from '../sources/ElevationSource.class'
+import { decodeTerrarium } from '../sources/ElevationSource.class'
 import type { TileImageSource } from '../sources/Source.class'
 import { loadWithFallback, type TileRegion } from '../sources/tile-source'
 import type { Map } from './Map.class'
 import {
-  createQuadTextureMaterial,
-  disposeMaterial,
+  createTerrainMaterial,
   loadQuadTexture,
-  type TileMaterial
-} from './quad-texture-material'
+  type QuadTextureCanvas
+} from './material'
 
 /** Shown until the tile texture has been loaded. Shared, never disposed. */
 const placeholderMaterial = new MeshNormalMaterial({ wireframe: true })
-
-const TERRARIUM_URL = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium'
 
 export class Tile {
   readonly map: Map
   readonly x: number
   readonly y: number
   readonly z: number
-
-  /**
-   * Legacy: pass `elevation` to the `Map` instead. When changed, terrarium
-   * tiles are loaded from `${baseURL}/{z}/{x}/{y}.png` instead of the map's
-   * elevation source.
-   */
-  baseURL = TERRARIUM_URL
 
   shape: number[] | null = null
   elevation: Float32Array | null = null
@@ -50,12 +40,12 @@ export class Tile {
   seamY = false
 
   private _mesh: Mesh<PlaneGeometry, Material> | undefined
+  /** The imagery the material is made from; the tile disposes it. */
+  private texture: Texture | null = null
   private readonly abortController = new AbortController()
-  /** Cancels the texture being loaded; replaced by every `buildmesh()`. */
+  /** Cancels the texture being loaded; replaced by every `loadTexture()`. */
   private textureController = new AbortController()
   private textureGeneration = 0
-  /** Counts `restyle()`s: a material made before one is out of date. */
-  private styleGeneration = 0
   private textureLoad: Promise<void> = Promise.resolve()
   private disposed = false
 
@@ -66,7 +56,7 @@ export class Tile {
     this.y = y
   }
 
-  /** Created lazily so that throwaway tiles (e.g. `childrens()`) stay cheap. */
+  /** Created lazily so that throwaway tiles (e.g. `children()`) stay cheap. */
   get mesh(): Mesh<PlaneGeometry, Material> {
     if (!this._mesh) {
       const { tileSize, tileSegments } = this.map.options
@@ -91,23 +81,9 @@ export class Tile {
     return Utils.getTileKey(this.z, this.x, this.y)
   }
 
-  keyNeighX() {
-    return Utils.getTileKey(this.z, this.x + 1, this.y)
-  }
-
-  keyNeighY() {
-    return Utils.getTileKey(this.z, this.x, this.y + 1)
-  }
-
-  mapUrl() {
-    return this.map.source.mapUrl(this.z, this.x, this.y)
-  }
-
   /** URL of this tile's elevation (`''` for a source with only a `load`). */
   url() {
-    return this.legacyElevation()
-      ? `${this.baseURL}/${this.z}/${this.x}/${this.y}.png`
-      : this.map.elevation.tileUrl(this.z, this.x, this.y)
+    return this.map.elevation.tileUrl(this.z, this.x, this.y)
   }
 
   /**
@@ -200,7 +176,8 @@ export class Tile {
     geometry.computeBoundingSphere()
   }
 
-  childrens() {
+  /** The four tiles at zoom + 1 covering this one: NW, SW, NE, SE. */
+  children() {
     return [
       new Tile(this.map, this.z + 1, this.x * 2, this.y * 2),
       new Tile(this.map, this.z + 1, this.x * 2, this.y * 2 + 1),
@@ -210,19 +187,18 @@ export class Tile {
   }
 
   /**
-   * Textures the tile with its four children at `zoom + 1`. A child beyond
-   * the source's `maxZoom`, or missing, is cut out of its nearest ancestor;
-   * children sharing an ancestor load it once.
+   * Loads the tile's imagery: its four children at `zoom + 1` stitched into
+   * one texture, processed by the map's `process`; `null` without imagery.
+   * A child beyond the source's `maxZoom`, or missing, is cut out of its
+   * nearest ancestor; children sharing an ancestor load it once.
    */
-  async buildMaterial(): Promise<TileMaterial> {
-    const { source } = this.map
-    // no imagery: nothing to load, the terrain is drawn in its color
-    if (source.api === 'none') {
-      return createQuadTextureMaterial(null, this.map.materialOptions)
-    }
-    const { signal } = this.textureController
+  async loadImagery(
+    signal: AbortSignal = this.textureController.signal
+  ): Promise<CanvasTexture<QuadTextureCanvas> | null> {
+    const { source, materialOptions } = this.map
+    if (source.api === 'none') return null
     const memo = new globalThis.Map<string, Promise<TileImageSource | null>>()
-    const [nw, sw, ne, se] = this.childrens().map((child) => async () => {
+    const [nw, sw, ne, se] = this.children().map((child) => async () => {
       const loaded = await loadWithFallback(
         { z: child.z, x: child.x, y: child.y, signal },
         source.maxZoom,
@@ -234,25 +210,26 @@ export class Tile {
       }
       return { image: loaded.data, region: loaded.region }
     })
-    const texture = await loadQuadTexture(
+    const { process } = materialOptions
+    return loadQuadTexture(
       [nw, sw, ne, se],
       signal,
-      this.map.materialOptions.filter
+      process &&
+        ((context, width, height) =>
+          process(context, { width, height, z: this.z, x: this.x, y: this.y }))
     )
-    // the options as they are now: they may have changed meanwhile
-    return createQuadTextureMaterial(texture, this.map.materialOptions)
   }
 
   /**
-   * Loads the texture — again after `map.setSource()` — and swaps it in once
-   * it is there; the previous one stays until then. A load still running is
-   * cancelled.
+   * Loads the imagery — again after `map.setSource()` — and swaps the
+   * material made from it in once it is there; the previous one stays until
+   * then. A load still running is cancelled.
    */
-  buildmesh(): Promise<void> {
+  loadTexture(): Promise<void> {
     const generation = ++this.textureGeneration
     this.textureController.abort()
     this.textureController = new AbortController()
-    const load = this.applyMaterial(generation)
+    const load = this.applyTexture(generation)
     this.textureLoad = load
     return load
   }
@@ -263,40 +240,38 @@ export class Tile {
   }
 
   /**
-   * Applies the map's material options again (`map.setMaterial()`), keeping
-   * the texture. A texture still loading takes them on when it arrives.
+   * Makes the material again with the map's options (`map.setMaterial()`),
+   * keeping the texture. A texture still loading takes them on when it
+   * arrives.
    */
   restyle() {
-    this.styleGeneration++
     const { mesh } = this
     if (mesh.material === placeholderMaterial) return
     const old = mesh.material
-    const map = 'map' in old && old.map instanceof Texture ? old.map : null
-    mesh.material = createQuadTextureMaterial(map, this.map.materialOptions)
-    old.dispose() // not its texture, which the new material uses
+    mesh.material = this.createMaterial(this.texture)
+    old.dispose()
   }
 
-  private async applyMaterial(generation: number) {
-    const style = this.styleGeneration
+  private createMaterial(texture: Texture | null): Material {
+    const options = this.map.materialOptions
+    const create = options.create ?? createTerrainMaterial
+    return create({ texture, tile: this, options })
+  }
+
+  private async applyTexture(generation: number) {
     try {
-      let material = await this.buildMaterial()
+      const texture = await this.loadImagery()
       if (this.disposed || generation !== this.textureGeneration) {
-        disposeMaterial(material)
+        texture?.dispose()
         return
       }
-      // restyled meanwhile (e.g. setSource() then setMaterial()): the
-      // options of now, on the texture just loaded
-      if (style !== this.styleGeneration) {
-        const restyled = createQuadTextureMaterial(
-          material.map,
-          this.map.materialOptions
-        )
-        material.dispose()
-        material = restyled
-      }
-      const old = this.mesh.material
+      // made now: with the options of now
+      const material = this.createMaterial(texture)
+      const old = { material: this.mesh.material, texture: this.texture }
       this.mesh.material = material
-      if (old !== placeholderMaterial) disposeMaterial(old)
+      this.texture = texture
+      if (old.material !== placeholderMaterial) old.material.dispose()
+      if (old.texture !== texture) old.texture?.dispose()
     } catch (error) {
       const current = generation === this.textureGeneration
       if (!this.disposed && current && !isAbortError(error))
@@ -312,25 +287,19 @@ export class Tile {
   async fetch() {
     const { elevation } = this.map
     const { signal } = this.abortController
-    const legacy = this.legacyElevation()
     const loaded = await loadWithFallback(
       { z: this.z, x: this.x, y: this.y, signal },
-      legacy ? this.z : elevation.maxZoom,
-      legacy
-        ? () => loadImageData(this.url(), signal)
-        : (tile) => elevation.load(tile)
+      elevation.maxZoom,
+      (tile) => elevation.load(tile)
     )
     if (!loaded) {
       throw new Error(`No elevation tile at ${this.key()} or its ancestors`)
     }
     if (this.disposed) return this
-    this.computeElevation(
-      loaded.data,
-      legacy ? decodeTerrarium : elevation.decode
-    )
+    this.computeElevation(loaded.data, elevation.decode)
     if (loaded.z < this.z) this.cropElevation(loaded.region)
     this.buildGeometry()
-    void this.buildmesh()
+    void this.loadTexture()
     return this
   }
 
@@ -416,8 +385,8 @@ export class Tile {
    * `seamY` / `seamX` tell whether the edge is stitched to a neighbour.
    */
   resolveSeams(cache: Partial<Record<string, Tile>>) {
-    const south = cache[this.keyNeighY()]
-    const east = cache[this.keyNeighX()]
+    const south = cache[Utils.getTileKey(this.z, this.x, this.y + 1)]
+    const east = cache[Utils.getTileKey(this.z, this.x + 1, this.y)]
 
     this.seamY = south?.loaded === true
     this.seamX = east?.loaded === true
@@ -427,22 +396,19 @@ export class Tile {
     this.updateGeometry()
   }
 
-  /** `baseURL` was changed: it wins over the map's elevation source. */
-  private legacyElevation() {
-    return this.baseURL !== TERRARIUM_URL
-  }
-
   /** Aborts pending requests and releases GPU resources. */
   dispose() {
     this.disposed = true
     this.abortController.abort()
     this.textureController.abort()
 
+    this.texture?.dispose()
+    this.texture = null
     if (!this._mesh) return
     this._mesh.removeFromParent()
     this._mesh.geometry.dispose()
     if (this._mesh.material !== placeholderMaterial) {
-      disposeMaterial(this._mesh.material)
+      this._mesh.material.dispose()
     }
   }
 }

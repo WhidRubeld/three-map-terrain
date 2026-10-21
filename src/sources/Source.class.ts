@@ -36,13 +36,33 @@ export type SourceProps =
   | ({ api: 'mapbox' | 'maptiler'; token: string } & TileSourceOptions)
   | CustomSourceProps
 
-type TileUrlBuilder = (z: number, x: number, y: number) => string
+interface Preset {
+  url: (z: number, x: number, y: number, token: string) => string
+  attribution: string
+}
 
-const ATTRIBUTIONS: Record<MapSupportedApi, string> = {
-  osm: '© OpenStreetMap contributors',
-  eox: 'Sentinel-2 cloudless by EOX IT Services GmbH (contains modified Copernicus Sentinel data 2016)',
-  mapbox: '© Mapbox © OpenStreetMap contributors © Maxar',
-  maptiler: '© MapTiler © OpenStreetMap contributors'
+const PRESETS: Record<MapSupportedApi, Preset> = {
+  osm: {
+    url: (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`,
+    attribution: '© OpenStreetMap contributors'
+  },
+  // cf. https://tiles.maps.eox.at/wmts/1.0.0/WMTSCapabilities.xml
+  eox: {
+    url: (z, x, y) =>
+      `https://tiles.maps.eox.at/wmts?layer=s2cloudless_3857&style=default&tilematrixset=g&Service=WMTS&Request=GetTile&Version=1.0.0&Format=image%2Fjpeg&TileMatrix=${z}&TileCol=${x}&TileRow=${y}`,
+    attribution:
+      'Sentinel-2 cloudless by EOX IT Services GmbH (contains modified Copernicus Sentinel data 2016)'
+  },
+  mapbox: {
+    url: (z, x, y, token) =>
+      `https://api.mapbox.com/v4/mapbox.satellite/${z}/${x}/${y}@2x.jpg80?access_token=${token}`,
+    attribution: '© Mapbox © OpenStreetMap contributors © Maxar'
+  },
+  maptiler: {
+    url: (z, x, y, token) =>
+      `https://api.maptiler.com/tiles/satellite/${z}/${x}/${y}.jpg?key=${token}`,
+    attribution: '© MapTiler © OpenStreetMap contributors'
+  }
 }
 
 /**
@@ -50,25 +70,17 @@ const ATTRIBUTIONS: Record<MapSupportedApi, string> = {
  * function — or `{ api: 'none' }` for no imagery at all.
  */
 export class Source {
-  api: MapSupportedApi | 'custom' | 'none'
-  token = ''
-  supportedApis: Record<MapSupportedApi, TileUrlBuilder>
+  readonly api: MapSupportedApi | 'custom' | 'none'
   /** Deepest zoom of the imagery; deeper tiles are cut out of ancestors. */
-  maxZoom: number
-  attribution: string
+  readonly maxZoom: number
+  readonly attribution: string
 
+  private readonly token: string = ''
   private readonly url: TileUrl | undefined
   private readonly subdomains: Subdomains | undefined
   private readonly customLoad: CustomSourceProps['load']
 
   constructor(props: SourceProps) {
-    this.supportedApis = {
-      osm: this.mapUrlOSM.bind(this),
-      mapbox: this.mapUrlMapbox.bind(this),
-      eox: this.mapUrlSentinel2Cloudless.bind(this),
-      maptiler: this.mapUrlmapTiler.bind(this)
-    }
-
     if (props.api === 'none') {
       this.api = 'none'
       this.attribution = ''
@@ -82,37 +94,20 @@ export class Source {
       this.customLoad = props.load
       this.attribution = props.attribution ?? ''
     } else {
-      if (!Object.hasOwn(this.supportedApis, props.api)) {
+      if (!Object.hasOwn(PRESETS, props.api)) {
         throw new Error(`Unknown source api: ${props.api}`)
       }
       this.api = props.api
       if ('token' in props) this.token = props.token
-      this.attribution = props.attribution ?? ATTRIBUTIONS[props.api]
+      this.attribution = props.attribution ?? PRESETS[props.api].attribution
     }
     this.maxZoom = ('maxZoom' in props ? props.maxZoom : undefined) ?? Infinity
   }
 
-  mapUrlOSM(z: number, x: number, y: number) {
-    return `https://tile.openstreetmap.org/${z}/${x}/${y}.png`
-  }
-
-  mapUrlMapbox(z: number, x: number, y: number) {
-    return `https://api.mapbox.com/v4/mapbox.satellite/${z}/${x}/${y}@2x.jpg80?access_token=${this.token}`
-  }
-
-  mapUrlSentinel2Cloudless(z: number, x: number, y: number) {
-    // cf. https://tiles.maps.eox.at/wmts/1.0.0/WMTSCapabilities.xml
-    return `https://tiles.maps.eox.at/wmts?layer=s2cloudless_3857&style=default&tilematrixset=g&Service=WMTS&Request=GetTile&Version=1.0.0&Format=image%2Fjpeg&TileMatrix=${z}&TileCol=${x}&TileRow=${y}`
-  }
-
-  mapUrlmapTiler(z: number, x: number, y: number) {
-    return `https://api.maptiler.com/tiles/satellite/${z}/${x}/${y}.jpg?key=${this.token}`
-  }
-
   /** URL of a texture tile; `''` without one (`none`, or only a `load` function). */
-  mapUrl(z: number, x: number, y: number) {
+  tileUrl(z: number, x: number, y: number): string {
     if (this.api === 'none') return ''
-    if (this.api !== 'custom') return this.supportedApis[this.api](z, x, y)
+    if (this.api !== 'custom') return PRESETS[this.api].url(z, x, y, this.token)
     return this.url === undefined
       ? ''
       : expandTileUrl(this.url, z, x, y, this.subdomains)
@@ -123,7 +118,7 @@ export class Source {
     if (this.api === 'none') return null
     if (this.customLoad) return this.customLoad(tile)
     try {
-      return await loadImage(this.mapUrl(tile.z, tile.x, tile.y), tile.signal)
+      return await loadImage(this.tileUrl(tile.z, tile.x, tile.y), tile.signal)
     } catch (error) {
       if (isNotFound(error)) return null
       throw error
