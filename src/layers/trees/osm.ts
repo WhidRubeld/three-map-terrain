@@ -1,13 +1,14 @@
 // OpenStreetMap trees: Overpass API JSON → single trees and woods.
 
 import { parseLength } from '../features'
-import { type OverpassElement, polygonsOf } from '../osm'
+import { type OverpassElement, overpassQl, polygonsOf } from '../osm'
 import type { TreeFeature } from './features'
 
 /**
- * Trees from an Overpass API `out body geom` response: `natural=tree`
- * nodes (with their `height`), and woods — `natural=wood`,
- * `landuse=forest` — as areas to fill.
+ * Trees from an Overpass API `out body geom` response: nodes — `natural=tree`,
+ * with their `height` — as single trees, and woods — `natural=wood`,
+ * `landuse=forest` — as areas to fill; their `kind` is the `natural` tag
+ * (or `landuse`).
  */
 export function treesFromOverpass(response: unknown): TreeFeature[] {
   const elements =
@@ -23,7 +24,7 @@ export function treesFromOverpass(response: unknown): TreeFeature[] {
           id,
           geometry: { type: 'Point', coordinates: [element.lon, element.lat] },
           height: parseLength(tags.height),
-          kind: 'tree',
+          kind: tags.natural ?? 'tree',
           properties: tags
         }
       ]
@@ -44,19 +45,20 @@ export function treesFromOverpass(response: unknown): TreeFeature[] {
   })
 }
 
-/** The Overpass QL query for the trees and woods in a bounding box. */
-export function overpassTreesQuery([
-  west,
-  south,
-  east,
-  north
-]: readonly number[]) {
-  const bbox = `(${south},${west},${north},${east})`
-  return (
-    `[out:json][timeout:60];(` +
-    `node["natural"="tree"]${bbox};` +
-    `way["natural"="wood"]${bbox};relation["natural"="wood"]["type"="multipolygon"]${bbox};` +
-    `way["landuse"="forest"]${bbox};relation["landuse"="forest"]["type"="multipolygon"]${bbox};` +
-    `);out body geom qt;`
-  )
+/**
+ * The Overpass QL query for the trees and woods in a bounding box — and
+ * the elements of `more` selectors, e.g. `'way["natural"="scrub"]'`.
+ */
+export function overpassTreesQuery(
+  bbox: readonly number[],
+  more: readonly string[] = []
+) {
+  return overpassQl(bbox, [
+    'node["natural"="tree"]',
+    'way["natural"="wood"]',
+    'relation["natural"="wood"]["type"="multipolygon"]',
+    'way["landuse"="forest"]',
+    'relation["landuse"="forest"]["type"="multipolygon"]',
+    ...more
+  ])
 }

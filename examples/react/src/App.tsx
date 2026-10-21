@@ -3,7 +3,14 @@ import './App.css'
 import { MapControls, PerspectiveCamera } from '@react-three/drei'
 import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { useEffect, useMemo, useState } from 'react'
-import { type Material, MeshBasicMaterial, Raycaster } from 'three'
+import {
+  type Material,
+  Matrix4,
+  MeshBasicMaterial,
+  Quaternion,
+  Raycaster,
+  Vector3
+} from 'three'
 import {
   type BuildingFeature,
   Buildings,
@@ -11,13 +18,16 @@ import {
   type ImageryProcessor,
   Map,
   type ModelFormat,
+  openMapTilesTreeProperties,
   ROAD_KINDS,
   type RoadFeature,
   Roads,
   type SourceProps,
   type TerrainMaterialOptions,
   TerrainBase,
+  treeShapes,
   Trees,
+  type TreesOptions,
   Water
 } from 'three-map-terrain'
 
@@ -36,6 +46,29 @@ const lausanne = { lat: 46.515, lon: 6.632 }
 let parts: Readonly<Record<string, Material>> = {}
 const byPart = (part: string): Material | undefined => parts[part]
 const HIDDEN = new MeshBasicMaterial({ visible: false })
+
+const bush = new Matrix4()
+const [position, rotation, scale] = [
+  new Vector3(),
+  new Quaternion(),
+  new Vector3()
+]
+
+/** Scrub as bushes — the trees' crown, 2 to 4 m high, wider — woods as trees. */
+const plant: TreesOptions['plant'] = (ctx, spot, feature, tree) => {
+  if (feature.kind !== 'scrub') {
+    tree()
+    return
+  }
+  const height = 2 + 2 * spot.random
+  const across = 0.7 * height * ctx.unitsPerMeter
+  bush.compose(
+    position.set(spot.x, spot.y, spot.z + 0.4 * height * ctx.zScale),
+    rotation,
+    scale.set(across, across, 0.5 * height * ctx.zScale)
+  )
+  ctx.instances('shrubs', treeShapes().crown).add(bush)
+}
 
 const PLACES = {
   alps: {
@@ -76,14 +109,24 @@ const PLACES = {
           material: byPart
         })
       )
-      // the lake and the Flon, the woods of the ravines — not in the river,
-      // on the roads or in the houses the woods of the data take in
+      // the lake and the Flon, the woods of the ravines and their scrub —
+      // not in the river, on the roads or in the houses the woods of the
+      // data take in
       const water = map.addLayer(
         new Water({ source: { api: 'openfreemap' }, material: byPart })
       )
       map.addLayer(
         new Trees({
-          source: { api: 'openfreemap' },
+          source: {
+            api: 'openfreemap',
+            // the woods, and scrub (in OpenMapTiles' grass)
+            properties: (p, layer) =>
+              p.subclass === 'scrub' || p.subclass === 'shrubbery'
+                ? { kind: 'scrub' }
+                : openMapTilesTreeProperties(p, layer)
+          },
+          spacing: (_zoom, feature) => (feature.kind === 'scrub' ? 5 : 9),
+          plant,
           avoid: [water, roads, buildings],
           material: byPart
         })
@@ -136,7 +179,7 @@ const LOOKS = {
     source: SWISSIMAGE,
     material: { color: '#ffffff', wireframe: false, process: gray },
     // the photo has its water and trees
-    parts: { water: HIDDEN, crowns: HIDDEN, trunks: HIDDEN },
+    parts: { water: HIDDEN, crowns: HIDDEN, trunks: HIDDEN, shrubs: HIDDEN },
     background: 0x161616,
     light: { ambient: 1.4, sun: 2.4 }
   },

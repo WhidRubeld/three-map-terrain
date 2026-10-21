@@ -1,6 +1,6 @@
 // A colored model: the layers' parts each in a color of its own — on the
-// beige terrain, white buildings, gray roads; the water and the trees keep
-// their own blue and green.
+// beige terrain, white buildings, gray roads, olive bushes; the water and
+// the trees keep their own blue and green.
 
 import { LineBasicMaterial, type Material, MeshLambertMaterial } from 'three'
 
@@ -16,7 +16,7 @@ const draped = {
   polygonOffsetUnits: -4
 }
 
-/** Materials by part, for `Buildings` and `Roads`. */
+/** Materials by part, for `Buildings`, `Roads` and the bushes of `Trees`. */
 export const COLORED: Readonly<Record<string, Material>> = {
   walls: new MeshLambertMaterial({ color: '#f7f4ee', ...underEdges }),
   roofs: new MeshLambertMaterial({ color: '#fbfaf7', ...underEdges }),
@@ -25,5 +25,6 @@ export const COLORED: Readonly<Record<string, Material>> = {
   surface: new MeshLambertMaterial({ color: '#9d9b97', ...draped }),
   rails: new MeshLambertMaterial({ color: '#7d7872', ...draped }),
   deck: new MeshLambertMaterial({ color: '#9d9b97' }),
-  structure: new MeshLambertMaterial({ color: '#d8d1c4' })
+  structure: new MeshLambertMaterial({ color: '#d8d1c4' }),
+  shrubs: new MeshLambertMaterial({ color: '#8f9a55' })
 }

@@ -88,3 +88,19 @@ export function polygonsOf(element: OverpassElement): Position[][][] {
   }
   return polygons
 }
+
+/**
+ * The Overpass QL query for the elements of `selectors` (`way["building"]`)
+ * in a bounding box `[west, south, east, north]`, with their geometry.
+ */
+export function overpassQl(
+  [west, south, east, north]: readonly number[],
+  selectors: readonly string[]
+) {
+  const bbox = `(${south},${west},${north},${east})`
+  return (
+    `[out:json][timeout:60];(` +
+    selectors.map((selector) => `${selector}${bbox};`).join('') +
+    `);out body geom qt;`
+  )
+}

@@ -65,7 +65,7 @@ export interface FeatureSourceOptions {
   attribution?: string
 }
 
-/** Overrides of the schema for vector tiles it does not know. */
+/** Overrides of the schema: for vector tiles it does not know, or to read more. */
 export interface VectorTileReadingProps<P> {
   /** Layers holding the features; by default the schema's. */
   layers?: string | readonly string[]
@@ -75,13 +75,23 @@ export interface VectorTileReadingProps<P> {
 
 export type FeatureSourceProps<F, P> =
   /** A basemap preset; layers using the same one share its tiles. */
-  | ({ api: 'openfreemap' | 'versatiles' } & FeatureSourceOptions)
+  | ({ api: 'openfreemap' | 'versatiles' } & VectorTileReadingProps<P> &
+      FeatureSourceOptions)
   | ({
       api: 'maptiler' | 'mapbox' | 'protomaps'
       token: string
-    } & FeatureSourceOptions)
+    } & VectorTileReadingProps<P> &
+      FeatureSourceOptions)
   /** OpenStreetMap through the Overpass API: every tag, slow. */
-  | ({ api: 'overpass'; endpoint?: string } & FeatureSourceOptions)
+  | ({
+      api: 'overpass'
+      endpoint?: string
+      /**
+       * The Overpass QL query of a bounding box `[west, south, east,
+       * north]`; by default the schema's — whose `more` adds selectors.
+       */
+      query?: (bbox: readonly number[]) => string
+    } & FeatureSourceOptions)
   /** Vector tiles of your own — shared with other layers when they get the same `tiles`. */
   | ({
       api?: undefined
@@ -145,10 +155,11 @@ export class TileFeatureSource<F, P> implements FeatureSource<F> {
       this.minZoom = props.minZoom ?? 14
       this.maxZoom = props.maxZoom ?? 14
       this.attribution = props.attribution ?? overpass.attribution
+      const query = props.query ?? schema.overpass.query
       this.loader = async (tile) =>
         schema.overpass.parse(
           await overpass.query(
-            schema.overpass.query(Utils.tile2bbox([tile.x, tile.y, tile.z])),
+            query(Utils.tile2bbox([tile.x, tile.y, tile.z])),
             tile.signal
           )
         )

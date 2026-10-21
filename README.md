@@ -35,7 +35,7 @@ Elevation and imagery from any source, OpenStreetMap buildings standing on the t
 - **Terrain from real elevation** — [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/), [Mapterhorn](https://mapterhorn.com), Mapbox, MapTiler or your own, at any zoom, as a grid of tiles around a location.
 - **Buildings** — OpenStreetMap buildings from [OpenFreeMap](https://openfreemap.org), VersaTiles, MapTiler, Mapbox, Protomaps or the Overpass API, or any data you load ([Overture Maps](https://overturemaps.org) in an example), standing on the rendered terrain.
 - **Roads and bridges** — roads and railways lying exactly on the terrain, cut along its triangles; bridges as decks on piers spanning valleys, joined across tiles; tunnels left out.
-- **Water and trees** — lakes, the sea and rivers lying on the terrain, islands left land; woods filled with trees (a trunk and a crown, instanced), single trees where they stand.
+- **Water and trees** — lakes, the sea and rivers lying on the terrain, islands left land; woods filled with trees (a trunk and a crown, instanced) or what you plant — bushes in scrub —, single trees where they stand.
 - **Your own layers** — `FeatureLayer` loads the tiles of any source and keeps your geometry in step with the terrain; `TileContext` drapes polygons and lines on it, extrudes them or places your models. The built-in layers are made of it, and you can replace or extend their geometry.
 - **Any look** — every part of a layer takes your material, with UVs in meters so that textures repeat at true size; the terrain takes a material factory (PBR, shaders, node materials) and a `process` for its imagery's pixels. The built-in look — a color, lights, wireframe — is a starting point the layers share.
 - **Any source** — every source takes a preset, a `{z}/{x}/{y}` URL template, a TileJSON or your own `load`; a basemap tile is loaded once for all the layers reading it; tiles missing or beyond a source's zoom are cut out of their ancestors.
@@ -224,8 +224,50 @@ map.focus = camera.position // or controls.target: followed as it moves
 - **Woods** — `landcover` `wood` from the basemaps, `natural=wood` and `landuse=forest` from Overpass — are filled with trees on a grid of `spacing` meters (default 9), jittered: anchored to the map, so that they never move when a tile is drawn again and never double at tile edges. **Single trees** (points: `natural=tree`, or yours) stand where they are.
 - **Clear ground.** Woods in the data are coarse areas: they take in the rivers, roads and houses crossing them. `avoid` lists the layers whose ground stays clear of trees — water, roads, buildings, yours: a tree stands only where none of them drew, at least `clearance` meters (default 2) from it. A tile's trees are planted once those layers have drawn it and its neighbours; when one of them draws a tile again later, the trees there are planted again.
 - **A tree** is a trunk and a crown — a prism and an ellipsoid, 8 and 20 triangles, the crown shaded round — standing on the rendered surface, `height` meters high (from the source, or between `heights`, default 8–16 m). They are copies of one geometry each, an `InstancedMesh` per tile (at most `maxPerTile`, default 12 000): picking returns the tree or its wood, `highlight()` draws its copies over them; in wireframe they are outlined. Models without instancing (STL, OBJ, USDZ) get every copy.
-- **Fewer on a wide map.** `spacing` can be a function of the terrain's zoom: `spacing: (zoom) => (zoom < 15 ? 14 : 9)`.
+- **Fewer on a wide map.** `spacing` can be a function of the terrain's zoom — and of the wood: `spacing: (zoom) => (zoom < 15 ? 14 : 9)`. Where woods overlap, a spot of the grid is planted once, by the first.
 - **Parts.** `crowns` (green, `CROWN_COLOR`, unless the look gives a color), `trunks` (brown) — in their materials' colors: `trees.setMaterial({ color: '#8a8a8a' })` or materials of yours recolor them in place. Trees need a zoom of 14 or more (`minZoom`).
+- **What grows is yours.** The layer plants — where, how dense, clear of `avoid`, never twice; `plant(ctx, spot, feature, tree)` decides what stands at each spot, by the feature's `kind` or `properties`: `tree(height?)`, the trunk and crown, copies of your own in parts you name, or nothing. The basemaps' woods are all the layer reads by default; read more with the source's `properties` (or Overpass `query`, [below](#buildings-roads-water-trees--a-provider-read-through-a-schema)) — scrub as bushes:
+
+```ts
+import { Matrix4, MeshLambertMaterial, Quaternion, Vector3 } from 'three'
+import {
+  openMapTilesTreeProperties,
+  treeShapes,
+  Trees
+} from 'three-map-terrain'
+
+const bush = new Matrix4()
+const olive = new MeshLambertMaterial({ color: '#8f9a55' })
+
+new Trees({
+  source: {
+    api: 'openfreemap',
+    // the woods, and scrub: OpenMapTiles has it under grass
+    properties: (p, layer) =>
+      p.subclass === 'scrub'
+        ? { kind: 'scrub' }
+        : openMapTilesTreeProperties(p, layer)
+  },
+  spacing: (zoom, feature) => (feature.kind === 'scrub' ? 5 : 9),
+  plant(ctx, spot, feature, tree) {
+    if (feature.kind !== 'scrub') {
+      tree()
+      return
+    }
+    // a bush: the trees' crown, low and wide, in a part of its own
+    const across = 2 * ctx.unitsPerMeter
+    bush.compose(
+      new Vector3(spot.x, spot.y, spot.z + 1.2 * ctx.zScale),
+      new Quaternion(),
+      new Vector3(across, across, 1.5 * ctx.zScale)
+    )
+    ctx.instances('shrubs', treeShapes().crown).add(bush)
+  },
+  material: (part) => (part === 'shrubs' ? olive : undefined)
+})
+```
+
+A spot is `{ x, y, z, random }`: where, in the tile's coordinates, on the rendered ground, and a number in [0, 1) that stays the same — for heights, sizes, species. Your parts take the crowns' color unless you give them a material; they are picked as their wood, highlighted and exported like the trees.
 
 ### Diorama base
 
@@ -516,6 +558,19 @@ new RoadSource({
 })
 ```
 
+A preset reads the layer's features by default — the woods of the trees, the buildings, roads and water. Give it `properties` (and `layers`) to read more, starting from the schema's own reader — `openMapTilesTreeProperties` and the others are exported — and Overpass a `query`, the layer's with `more` selectors:
+
+```ts
+new TreeSource({
+  api: 'overpass',
+  query: (bbox) =>
+    overpassTreesQuery(bbox, [
+      'way["natural"="scrub"]',
+      'relation["natural"="scrub"]["type"="multipolygon"]'
+    ])
+}) // kind: 'scrub', from the natural tag
+```
+
 Or anything else with `load`: return the features of a tile — buildings as GeoJSON-like polygons, whole (each is drawn by the tile its center is in) or clipped to the tile; roads as lines, whole or clipped (pieces of a bridge with the same `id` are joined):
 
 ```ts
@@ -543,11 +598,11 @@ The [basic example](examples/basic/src/overture.ts) loads the [Overture Maps](ht
 
 ## Examples
 
-| Example                                                      | Stack                         | What it shows                                                                                                                                                                                                                                                                    |
-| ------------------------------------------------------------ | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [React](examples/react)                                      | React Three Fiber, drei, Vite | The [live example](https://whidrubeld.github.io/three-map-terrain/): the Alps with imagery; Lausanne with buildings, roads and bridges, water, trees and a base in four looks switched at runtime — one colored by part, one textured; picking, highlighting, GLB and STL export |
-| [Basic](examples/basic)                                      | three.js, webpack             | San Francisco: Overture buildings from a custom PMTiles source and OpenFreeMap roads on a toned-down map, a base, picking, export                                                                                                                                                |
-| [**GPX Terrain**](https://github.com/whidrubeld/gpx-terrain) | React, R3F, TanStack Store    | [A full app](https://whidrubeld.github.io/gpx-terrain/) on the library: GPX tracks draped on terrain, profile, playback, picking, imagery and wireframe at runtime                                                                                                               |
+| Example                                                      | Stack                         | What it shows                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [React](examples/react)                                      | React Three Fiber, drei, Vite | The [live example](https://whidrubeld.github.io/three-map-terrain/): the Alps with imagery; Lausanne with buildings, roads and bridges, water, trees, bushes in scrub and a base in four looks switched at runtime — one colored by part, one textured; picking, highlighting, GLB and STL export |
+| [Basic](examples/basic)                                      | three.js, webpack             | San Francisco: Overture buildings from a custom PMTiles source and OpenFreeMap roads on a toned-down map, a base, picking, export                                                                                                                                                                 |
+| [**GPX Terrain**](https://github.com/whidrubeld/gpx-terrain) | React, R3F, TanStack Store    | [A full app](https://whidrubeld.github.io/gpx-terrain/) on the library: GPX tracks draped on terrain, profile, playback, picking, imagery and wireframe at runtime                                                                                                                                |
 
 <table>
   <tr>
@@ -662,7 +717,7 @@ Options: `source` (`WaterSource` or its props), `material`, `build`, `widths` (m
 
 ### `new Trees({ source, ...options })`
 
-Options: `source` (`TreeSource` or its props), `material`, `build`, `avoid` (layers whose ground stays clear, `[]`), `clearance` (`2` m from it), `spacing` (`9` m between the trees of a wood, or `(zoom) => meters`), `heights` (`[8, 16]` m), `maxPerTile` (`12000`), `highlightColor`, `minZoom` (`14`). A `TreeFeature` is `{ id?, geometry, height?, kind?, properties }` with a GeoJSON `Point` / `MultiPoint` (trees) or `Polygon` / `MultiPolygon` (woods). Parts: `crowns`, `trunks` (instanced).
+Options: `source` (`TreeSource` or its props), `material`, `build`, `plant` (`(ctx, spot, feature, tree) => void`: [what stands at a spot](#trees)), `avoid` (layers whose ground stays clear, `[]`), `clearance` (`2` m from it), `spacing` (`9` m between the trees of a wood, or `(zoom, feature) => meters`), `heights` (`[8, 16]` m), `maxPerTile` (`12000`), `highlightColor`, `minZoom` (`14`). A `TreeFeature` is `{ id?, geometry, height?, kind?, properties }` with a GeoJSON `Point` / `MultiPoint` (trees) or `Polygon` / `MultiPolygon` (woods). Parts: `crowns`, `trunks` (instanced), and yours. `treeShapes()` gives the shared `trunk` and `crown` geometries — never dispose them.
 
 ### `new FeatureLayer({ source, build?, material?, highlightColor?, minZoom?, name? })`
 
@@ -694,7 +749,7 @@ All take the props shown in [Sources](#sources); `map`, `Buildings`, `Roads` and
 - `buildingsFromVectorTile`, `readBuildings`, `openMapTilesProperties`, `mapboxStreetsProperties`, `protomapsProperties`, `shortbreadProperties`, `overtureProperties` — buildings from vector tiles, by schema; `buildingsFromOverpass`, `overpassQuery`, `osmBuildingAttributes`, `LEVEL_HEIGHT` — from OpenStreetMap.
 - `roadsFromVectorTile`, `readRoads`, `openMapTilesRoadProperties`, `mapboxStreetsRoadProperties`, `protomapsRoadProperties`, `shortbreadRoadProperties`, `roadKind`, `ROAD_KINDS`, `ROAD_WIDTHS`, `LINK_WIDTH` — roads from vector tiles; `roadsFromOverpass`, `overpassRoadsQuery`, `osmRoadAttributes`, `LANE_WIDTH` — from OpenStreetMap.
 - `waterFromVectorTile`, `readWater`, `openMapTilesWaterProperties` (and the Mapbox, Protomaps, Shortbread ones), `WATERWAY_WIDTHS`, `WATER_COLOR`; `waterFromOverpass`, `overpassWaterQuery` — water.
-- `treesFromVectorTile`, `readTrees`, `openMapTilesTreeProperties` (and the others), `CROWN_COLOR`, `TRUNK_COLOR`; `treesFromOverpass`, `overpassTreesQuery` — trees.
+- `treesFromVectorTile`, `readTrees`, `openMapTilesTreeProperties` (and the others), `CROWN_COLOR`, `TRUNK_COLOR`, `treeShapes`; `treesFromOverpass`, `overpassTreesQuery` — trees.
 - `parseLength`, `toNumber`, `clipRect`, `isRing`, `Position`, `Ring` — reading features.
 - `decodeVectorTile`, `gunzip` — the vector tile (MVT) decoder.
 - `exportModel`, `MODEL_TYPES`, `expandTileUrl`.
@@ -706,6 +761,14 @@ All take the props shown in [Sources](#sources); `map`, `Buildings`, `Roads` and
 Tiles are fetched with CORS. Network errors, HTTP 408/425/429/5xx and bodies that cannot be decoded (tile servers occasionally send truncated images with status 200) are retried up to three times with backoff, bypassing the HTTP cache. A texture that still cannot be decoded is drawn as far as it arrived; an elevation tile never is, since partial heights would be bogus terrain. A missing tile (404) falls back to its ancestors, up to six levels — the browser still logs the 404. Vector tiles that are missing are empty.
 
 ## Upgrading
+
+### To 3.2
+
+Nothing breaks; worth knowing:
+
+- **Overlapping woods plant a spot once.** Two woods covering the same ground — `natural=wood` and `landuse=forest` often do — no longer stand two trees on every spot of the grid: fewer copies, the same picture.
+- Single trees from Overpass have the `kind` of their `natural` tag (`'tree'` for the trees the layer asks for).
+- The Overpass queries (`overpassQuery`, `overpassRoadsQuery`, `overpassWaterQuery`, `overpassTreesQuery`) take `more` selectors; sources with a preset `api` take `properties` and `layers`, with `overpass` a `query`.
 
 ### To 3.1
 

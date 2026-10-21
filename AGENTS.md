@@ -77,7 +77,7 @@ examples/basic            plain three.js + webpack: San Francisco, Overture
 examples/react            React Three Fiber + drei + Vite; the live example
                           (GitHub Pages, deployed from master): Alps, Lausanne
                           with all layers in four looks (colored.ts, textured.ts:
-                          materials per part)
+                          materials per part), scrub as bushes (Trees `plant`)
 docs/                     README images (WebP) of the examples: `yarn screenshots`
 scripts/screenshots.mjs   renders them from the built examples (Chrome + cwebp)
 .skills/                  agent skills (symlinked as .claude/skills)
@@ -123,7 +123,11 @@ depends on the published package. After a release, bump it there.
   last lets go; layers decoded lazily by name), `Overpass` (one query at a
   time per endpoint, across layers) or a `load` — through the layer's
   `FeatureSchema` (layer names + `properties` per `VectorSchema`, an
-  Overpass query + parser). `loadWithFallback` loads a tile, or — beyond `maxZoom`, or
+  Overpass query + parser). Props override the reading — `layers` and
+  `properties` with any vector tiles, presets included; `query` with
+  Overpass (the layers' `overpass*Query(bbox, more)` add selectors, built
+  by `overpassQl` in `layers/osm.ts`) — so reading more is the user's call,
+  not a new built-in. `loadWithFallback` loads a tile, or — beyond `maxZoom`, or
   when it is missing (404 → `null`) — its nearest ancestor (≤ 6 levels) and
   the tile's `region` in it: elevation is cropped and bilinearly upsampled
   (`Tile.cropElevation`), textures are cut out with `drawImage`. Children
@@ -341,7 +345,9 @@ depends on the published package. After a release, bump it there.
   (each tile plants only inside source ∩ terrain tile); points are single
   trees. A wood's edges are indexed by grid row (`rowsOf`, cached per
   polygon and cell): a point tests only its row's edges. `spacing` may be
-  a function of the zoom. `avoid` (any `GroundCover`, i.e. FeatureLayers)
+  a function of the zoom and the wood (cells differ per feature). A grid
+  spot is claimed once per tile (`claim`, per cell size): overlapping woods
+  plant it once, the first wins. `avoid` (any `GroundCover`, i.e. FeatureLayers)
   keeps trees off what other layers drew: `covers(x, y, margin)` (map
   units) asks the `Footprint` of the tile and its 8 neighbours (`footprint.ts`: the faces' triangles from above in a grid of
   about 4 a cell, walls skipped, built lazily, dropped on every redraw).
@@ -354,7 +360,13 @@ depends on the published package. After a release, bump it there.
   `color` attributes, sized by its height (crown 62 % of it, radius 24 %);
   the colors are the parts' materials (`partColor`), copies have no
   `instanceColor`; `maxPerTile` caps a tile. Nothing is planted while both
-  parts are hidden (`ctx.visible`).
+  parts are hidden (`ctx.visible`) — unless `plant` is given: the layer
+  decides where (grid, `avoid`, clipping, cap), `plant(ctx, spot, feature,
+tree)` what stands there — `tree(height?)` (the trunk and crown, their
+  copies made lazily), copies in parts of its own, or nothing. Shapes,
+  sizes and species stay out of the library (bushes are in the React
+  example); `treeShapes()` is public for reuse. Overpass nodes' `kind` is
+  their `natural` tag.
 - **TerrainBase**: rebuilt from all placed tiles on every tile event — walls
   along sides without a placed neighbour, a floor per tile, `depth` meters
   below the lowest vertex; in wireframe an outline.

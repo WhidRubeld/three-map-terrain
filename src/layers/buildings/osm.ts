@@ -6,6 +6,7 @@ import { parseLength, toNumber } from '../features'
 import {
   joinRings,
   type OverpassElement,
+  overpassQl,
   pointInRing,
   polygonsOf
 } from '../osm'
@@ -81,13 +82,19 @@ export function buildingsFromOverpass(response: unknown): BuildingFeature[] {
     }))
 }
 
-/** The Overpass QL query for the buildings in a bounding box. */
-export function overpassQuery([west, south, east, north]: readonly number[]) {
-  const bbox = `(${south},${west},${north},${east})`
-  return (
-    `[out:json][timeout:60];(` +
-    `way["building"]${bbox};relation["building"]["type"="multipolygon"]${bbox};` +
-    `way["building:part"]${bbox};relation["building:part"]["type"="multipolygon"]${bbox};` +
-    `);out body geom qt;`
-  )
+/**
+ * The Overpass QL query for the buildings in a bounding box — and the
+ * elements of `more` selectors.
+ */
+export function overpassQuery(
+  bbox: readonly number[],
+  more: readonly string[] = []
+) {
+  return overpassQl(bbox, [
+    'way["building"]',
+    'relation["building"]["type"="multipolygon"]',
+    'way["building:part"]',
+    'relation["building:part"]["type"="multipolygon"]',
+    ...more
+  ])
 }
