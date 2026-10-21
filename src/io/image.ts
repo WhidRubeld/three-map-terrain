@@ -3,7 +3,8 @@
 import { fetchResponse, readBody, retry, TransientError } from './fetch'
 import type { TileImageSource } from '../sources/Source.class'
 
-export type Canvas2D = CanvasDrawImage & CanvasImageData
+export type Canvas2D =
+  CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
 
 export type DecodedImage = ImageBitmap | HTMLImageElement
 

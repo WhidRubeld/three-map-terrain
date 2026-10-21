@@ -15,12 +15,21 @@ What it shows ([src/App.tsx](src/App.tsx)):
   surface (`map.getTerrainPositionSync`).
 - **Lausanne** — from Lake Geneva up to the cathedral, true to scale
   (`exaggeration: 1`, `baseAltitude: 372`), Mapterhorn elevation,
-  OpenFreeMap buildings with their edges and a `TerrainBase`, set up once.
-  Three looks switched at runtime with `map.setSource` / `map.setMaterial`
-  — plain (no imagery), aerial (swisstopo from a URL template, in
-  grayscale), wireframe — which the buildings and the base take on.
-  `?place=lausanne&look=aerial` opens one directly.
-- Picking a building (`buildings.pickIntersection(event)`) and highlighting it.
+  OpenFreeMap buildings with their edges, roads and railways (`Roads`,
+  footpaths left out with `kinds`) whose bridges span the Flon valley, and
+  a `TerrainBase`, set up once. Four looks switched at runtime with
+  `map.setSource` / `map.setMaterial` — plain (no imagery), aerial
+  (swisstopo from a URL template, in grayscale by a `process` of its
+  pixels), textured, wireframe — which the layers take on.
+  `?place=lausanne&look=textured` opens one directly.
+- **Textured** ([src/textured.ts](src/textured.ts)) — the layers' parts
+  with materials of their own (`material: (part) => …`): canvas textures
+  of asphalt with markings, railway tracks and facades, repeating at true
+  size since the UVs are in meters. The look picks them per part; the
+  others fall back to the map's look.
+- Picking a building (`buildings.pickIntersection(event)`) or a road
+  (`roads.pick` with the event's ray, never one behind the terrain), and
+  highlighting it.
 - **Download GLB / STL** — `map.export()`: the terrain, imagery, buildings
   and base as a model file.
 - The credits of the sources in use, from `map.attributions`.

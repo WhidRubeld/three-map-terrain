@@ -30,7 +30,10 @@ export interface ModelOptions {
   lines?: boolean
   /** Factor from scene units to the file's units, e.g. meters; default 1. */
   scale?: number
-  /** Leaves out the objects (with their children) it returns `false` for. */
+  /**
+   * Leaves out the objects (with their children) it returns `false` for, as
+   * well as those with `userData.export === false`.
+   */
   filter?: (object: Object3D) => boolean
 }
 
@@ -80,8 +83,11 @@ export async function exportModel(
   format: ModelFormat,
   { textures = true, lines = false, scale = 1, filter }: ModelOptions = {}
 ): Promise<Blob> {
+  // objects marked `userData.export = false`, e.g. highlights, stay out
   const keep = (child: Object3D) =>
-    (lines || !isLine(child)) && (filter?.(child) ?? true)
+    child.userData.export !== false &&
+    (lines || !isLine(child)) &&
+    (filter?.(child) ?? true)
   const copy = copyTree(object, keep)
   copy.position.set(0, 0, 0)
   copy.quaternion.identity()

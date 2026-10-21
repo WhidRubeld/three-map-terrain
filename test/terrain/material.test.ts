@@ -8,11 +8,9 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  createQuadTextureMaterial,
-  defaultTextureOptions,
-  disposeMaterial,
-  loadQuadTexture,
-  QuadTextureMaterial
+  createTerrainMaterial,
+  defaultMaterialOptions,
+  loadQuadTexture
 } from '../../src'
 import {
   bitmaps,
@@ -57,41 +55,48 @@ describe('loadQuadTexture', () => {
     for (const bitmap of bitmaps) expect(bitmap.close).toHaveBeenCalled()
   })
 
-  it('applies the filter to the stitched pixels, not as a canvas filter', async () => {
-    // the fake canvas reads transparent black: inverted, it turns white
-    await loadQuadTexture(['nw', 'sw', 'ne', 'se'], undefined, 'invert(1)')
-    const [canvas] = FakeOffscreenCanvas.instances
+  it('lets process draw on the stitched canvas before it becomes a texture', async () => {
+    const order: string[] = []
+    const process = vi.fn((context: unknown, width: number, height: number) => {
+      const [canvas] = FakeOffscreenCanvas.instances
+      order.push(`process after ${canvas.draws.length} draws`)
+      expect([width, height]).toEqual([512, 512])
+      expect(context).toBeDefined()
+    })
 
-    // Safari has no canvas filter: the context's is never used
-    for (const draw of canvas.draws) expect(draw.filter).toBeUndefined()
-    expect(canvas.contextSettings).toEqual({ willReadFrequently: true })
-    expect(canvas.reads).toEqual([[0, 0, 512, 512]])
-    expect(canvas.puts).toHaveLength(1)
-    const [{ data, x, y }] = canvas.puts
-    expect([x, y, data.length]).toEqual([0, 0, 512 * 512 * 4])
-    expect([...data.subarray(0, 8)]).toEqual([
-      255, 255, 255, 0, 255, 255, 255, 0
-    ])
+    const texture = await loadQuadTexture(
+      ['nw', 'sw', 'ne', 'se'],
+      undefined,
+      process
+    )
+
+    expect(order).toEqual(['process after 4 draws'])
+    expect(texture.image).toBe(FakeOffscreenCanvas.instances[0])
+    // processors mostly read the pixels
+    expect(FakeOffscreenCanvas.instances[0].contextSettings).toEqual({
+      willReadFrequently: true
+    })
   })
 
-  it('reads no pixels without a filter, or with one that changes nothing', async () => {
+  it('waits for an async process, and drops the result once aborted', async () => {
+    const controller = new AbortController()
+    const process = vi.fn(async () => {
+      await Promise.resolve()
+      controller.abort()
+    })
+
+    await expect(
+      loadQuadTexture(['nw', 'sw', 'ne', 'se'], controller.signal, process)
+    ).rejects.toThrow()
+    expect(process).toHaveBeenCalledOnce()
+  })
+
+  it('asks for no pixel reads without a process', async () => {
     await loadQuadTexture(['nw', 'sw', 'ne', 'se'])
-    await loadQuadTexture(['nw', 'sw', 'ne', 'se'], undefined, 'grayscale(0)')
-
-    for (const canvas of FakeOffscreenCanvas.instances) {
-      expect(canvas.contextSettings).toBeUndefined()
-      expect([canvas.reads, canvas.puts]).toEqual([[], []])
-    }
-  })
-
-  it('ignores an invalid filter with a warning', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    await loadQuadTexture(['nw', 'sw', 'ne', 'se'], undefined, 'blur(2px)')
     const [canvas] = FakeOffscreenCanvas.instances
 
-    expect(canvas.draws).toHaveLength(4)
-    expect(canvas.puts).toEqual([])
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('blur(2px)'))
+    expect(canvas.contextSettings).toBeUndefined()
+    expect([canvas.reads, canvas.puts]).toEqual([[], []])
   })
 
   it('forwards the abort signal to every request', async () => {
@@ -182,37 +187,42 @@ describe('loadQuadTexture', () => {
   })
 })
 
-describe('createQuadTextureMaterial', () => {
+describe('createTerrainMaterial', () => {
   it('creates a lit Lambert material by default', () => {
-    const map = new Texture()
-    const material = createQuadTextureMaterial(map)
+    const texture = new Texture()
+    const material = createTerrainMaterial({ texture, options: {} })
 
     expect(material).toBeInstanceOf(MeshLambertMaterial)
-    expect(material.map).toBe(map)
+    expect(material.map).toBe(texture)
     expect(material.fog).toBe(true)
     expect(material.wireframe).toBe(false)
   })
 
   it('creates a plain material in a color, without imagery', () => {
-    const material = createQuadTextureMaterial(null, { color: '#e8e2d6' })
+    const material = createTerrainMaterial({
+      texture: null,
+      options: { color: '#e8e2d6' }
+    })
 
     expect(material.map).toBeNull()
     expect(material.color.equals(new Color('#e8e2d6'))).toBe(true)
   })
 
   it('tints the imagery with the color', () => {
-    const map = new Texture()
-    const material = createQuadTextureMaterial(map, { color: 0x808080 })
+    const texture = new Texture()
+    const material = createTerrainMaterial({
+      texture,
+      options: { color: 0x808080 }
+    })
 
-    expect(material.map).toBe(map)
+    expect(material.map).toBe(texture)
     expect(material.color.equals(new Color(0x808080))).toBe(true)
   })
 
   it('creates an unlit material when lights are disabled', () => {
-    const material = createQuadTextureMaterial(new Texture(), {
-      lights: false,
-      wireframe: true,
-      fog: false
+    const material = createTerrainMaterial({
+      texture: new Texture(),
+      options: { lights: false, wireframe: true, fog: false }
     })
 
     expect(material).toBeInstanceOf(MeshBasicMaterial)
@@ -221,43 +231,17 @@ describe('createQuadTextureMaterial', () => {
   })
 
   it('never mutates the default options', () => {
-    createQuadTextureMaterial(new Texture(), { lights: false })
+    createTerrainMaterial({
+      texture: new Texture(),
+      options: { lights: false }
+    })
 
-    expect(defaultTextureOptions).toEqual({
+    expect(defaultMaterialOptions).toEqual({
       lights: true,
       wireframe: false,
       fog: true,
-      color: 0xffffff,
-      filter: 'none'
+      color: 0xffffff
     })
-    expect(Object.isFrozen(defaultTextureOptions)).toBe(true)
-  })
-})
-
-describe('QuadTextureMaterial', () => {
-  it('loads the stitched texture into a material', async () => {
-    const material = await QuadTextureMaterial(['a', 'b', 'c', 'd'], {
-      lights: false,
-      filter: 'sepia(1)'
-    })
-
-    expect(material).toBeInstanceOf(MeshBasicMaterial)
-    const [canvas] = FakeOffscreenCanvas.instances
-    expect(material.map?.image).toBe(canvas)
-    expect(canvas.puts).toHaveLength(1) // filtered
-  })
-})
-
-describe('disposeMaterial', () => {
-  it('disposes the material and its map', () => {
-    const map = new Texture()
-    const material = new MeshLambertMaterial({ map })
-    const disposeMap = vi.spyOn(map, 'dispose')
-    const dispose = vi.spyOn(material, 'dispose')
-
-    disposeMaterial(material)
-
-    expect(disposeMap).toHaveBeenCalled()
-    expect(dispose).toHaveBeenCalled()
+    expect(Object.isFrozen(defaultMaterialOptions)).toBe(true)
   })
 })

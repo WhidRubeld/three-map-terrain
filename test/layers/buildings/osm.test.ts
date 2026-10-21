@@ -5,8 +5,8 @@ import {
   osmBuildingAttributes,
   overpassQuery,
   parseLength
-} from '../../src'
-import { joinRings, pointInRing } from '../../src/buildings/osm'
+} from '../../../src'
+import { joinRings, pointInRing } from '../../../src/layers/buildings/osm'
 
 const point = (lon: number, lat: number) => ({ lat, lon })
 const squareWay = (x0: number, y0: number, x1: number, y1: number) => [

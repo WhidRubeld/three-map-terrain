@@ -32,6 +32,12 @@ It runs `e2e/render.spec.ts` against the playground for `renderer=webgl` and
   in the map's color and are picked by a click;
 - terrain without imagery (`api=none`) loads no texture and is drawn in
   `color`, buildings in the same tone;
+- the imagery `process` (`gray=1`) draws on the stitched canvas: the four
+  quadrants come out as the Rec. 709 luma of their colors;
+- roads from a mocked OpenFreeMap tile lie on the terrain in a shade of the
+  map's color without a pixel of the terrain fighting through (WebGL and
+  WebGPU: the polygon offset), a bridge becomes a deck, a tunnel is not
+  drawn, and a click picks the road (`lastRoad`);
 - `setSource()` + `setMaterial()` in one go (a look switch) ends in the
   second's style: wireframe lines in the new color;
 - `map.export('glb')` writes a GLB with the stitched texture embedded.
@@ -62,25 +68,37 @@ Query parameters:
 | `wireframe`          | `1`                                        | —        | `wireframe` material option                                        |
 | `api`                | `eox`, `osm`, `swisstopo`, `none`          | `eox`    | texture source (`swisstopo`: a `url` template; `none`: no imagery) |
 | `color`              | hex without `#`                            | —        | `material.color` (a tint, or the plain terrain)                    |
-| `filter`             | CSS color functions                        | —        | `material.filter`, e.g. `grayscale(1)`                             |
 | `elevation`          | `aws`, `mapterhorn`, …                     | `aws`    | elevation source                                                   |
 | `buildings`          | `openfreemap`, `versatiles`, `overpass`, … | —        | the `Buildings` layer; `token=…` for keyed ones                    |
 | `edges`              | `1`                                        | —        | buildings' `edges`                                                 |
+| `roads`              | `openfreemap`, `versatiles`, `overpass`, … | —        | the `Roads` layer (bridges, tunnels)                               |
+| `gray`               | `1`                                        | —        | a grayscale `process` of the imagery (the playground's own)        |
 | `zoom`, `lat`, `lon` | numbers                                    | Alps, 11 | another place or zoom: drawn true to scale (`exaggeration=…`)      |
 | `base`               | meters                                     | `0`      | `baseAltitude`                                                     |
 | `nTiles`             | integer                                    | `3`      | grid size                                                          |
 | `segments`           | integer                                    | `100`    | `tileSegments` (try `40` with `wireframe=1`)                       |
 | `view`               | `orbit`, `top`                             | `orbit`  | perspective + MapControls, or orthographic top view                |
 
-`window.__playground` exposes `{ map, buildings, revision, backend, ready, texturedTiles(), lastPick, lastBuilding, freeze() }` — e.g. `__playground.map.setMaterial({ wireframe: true })` or `await __playground.map.export('glb')` from the console.
+`window.__playground` exposes `{ map, buildings, roads, camera, controls, revision, backend, ready, texturedTiles(), lastPick, lastBuilding, lastRoad, freeze() }` — e.g. `__playground.map.setMaterial({ wireframe: true })` or `await __playground.map.export('glb')` from the console.
 
 Buildings and looks, with real data:
 
 - `?zoom=15&lat=46.515&lon=6.632&elevation=mapterhorn&buildings=openfreemap&edges=1&api=none&color=f2ede5&base=372`
   — Lausanne as a plain model: buildings on the slopes (never floating,
   never buried, the walls reaching the ground), courtyards open, the city
-  cut cleanly at the grid edge. `api=swisstopo&filter=grayscale(1)` for the
-  aerial look, `wireframe=1&segments=48` for lines (buildings as edges).
+  cut cleanly at the grid edge. `api=swisstopo&gray=1` for the aerial look,
+  `wireframe=1&segments=48` for lines (buildings as edges, roads as center
+  lines).
+- Add `&roads=openfreemap`: roads lie on the slopes in a darker shade —
+  never floating, never sunk, no flicker, also near tile seams after every
+  tile has loaded. The bridges over the Flon valley (Pont Chauderon around
+  46.5207, 6.6262; Grand-Pont; Pont Bessières) are decks on piers, level
+  with the streets at their ends; tunnels leave no trace. To see the decks,
+  aim the camera from the console: `p = __playground; t = await
+p.map.getTerrainPosition({ lat: 46.5206, lon: 6.6262 });
+p.controls.target.set(t.x, t.y, t.z + 10); p.camera.position.set(t.x + 120,
+t.y - 150, t.z + 40)` — and temporarily recolor the `roads deck` /
+  `roads structure` materials to tell them apart.
 - Clicking a building highlights it and shows its height (`lastBuilding`).
 - Switch looks at runtime from the console (`setSource`, `setMaterial`)
   several times, back and forth: the terrain, buildings and base must
@@ -123,13 +141,19 @@ Same checklist as above. The React example runs in `StrictMode`, so
 `init → clean → init` happens on mount — there must be exactly 9 tiles and no
 errors about aborted requests.
 
-- React (`?place=lausanne&look=plain|aerial|wireframe`): switch the looks
-  back and forth (e.g. wireframe → plain → wireframe, and through aerial) —
-  every look must be complete each time; the footer credits follow. A click
-  on a building highlights it and shows its height; on the terrain, the
+- React (`?place=lausanne&look=plain|aerial|textured|wireframe`): switch
+  the looks back and forth (e.g. wireframe → textured → plain, and through
+  aerial) — every look must be complete each time, the textured one with
+  its materials on every part and none left behind in the others; the
+  footer credits follow. In textured, up close: windows a floor (3 m)
+  apart on the walls, dashed center lines along the roads, tracks on the
+  railways — textures at true size. A click on a building highlights it and
+  shows its height; on a road, its kind (and bridge); on the terrain, the
   yellow sphere sits on the surface. Rotate to see the base's section.
-- Basic (San Francisco): Overture buildings on a grayscale map with a base;
-  a click names the building (Overture `@name`).
+- Basic (San Francisco): Overture buildings and OpenFreeMap roads (the
+  freeways' bridges over the flat downtown rise from their ends) on a
+  toned-down map with a base; a click names the building (Overture
+  `@name`).
 - In both, "Download GLB / STL" must save files; check a GLB with the
   Khronos glTF validator (`npx gltf-validator file.glb`, or its npm API):
   0 errors, the textures embedded.

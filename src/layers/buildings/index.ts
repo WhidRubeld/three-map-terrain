@@ -11,15 +11,13 @@ export {
   mapboxStreetsProperties,
   openMapTilesProperties,
   overtureProperties,
-  type Position,
   protomapsProperties,
-  type Ring,
+  readBuildings,
   shortbreadProperties,
   type VectorTileBuildingsOptions
 } from './features'
 export {
   buildingsFromOverpass,
   osmBuildingAttributes,
-  overpassQuery,
-  parseLength
+  overpassQuery
 } from './osm'

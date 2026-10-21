@@ -17,8 +17,10 @@ import {
 import { MapControls } from 'three/addons/controls/MapControls.js'
 import {
   Buildings,
+  type ImageryProcessor,
   Map,
   type ModelFormat,
+  Roads,
   TerrainBase
 } from 'three-map-terrain'
 
@@ -48,20 +50,30 @@ const sun = new DirectionalLight(0xffffff, 2.8)
 sun.position.set(-1e4, -6e3, 1e4)
 scene.add(sun)
 
+// the map's pixels toned down to the buildings: gray, softer, brighter
+const tone: ImageryProcessor = (context, { width, height }) => {
+  const image = context.getImageData(0, 0, width, height)
+  const { data } = image
+  for (let i = 0; i < data.length; i += 4) {
+    const luma = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]
+    data[i] = data[i + 1] = data[i + 2] = ((luma - 128) * 0.8 + 128) * 1.12
+  }
+  context.putImageData(image, 0, 0)
+}
+
 // San Francisco at zoom 15, true to scale: the OpenStreetMap map in the
 // buildings' tone, AWS elevation (the default), Overture buildings from a
-// custom source, and a base that makes the terrain a solid block
+// custom source, OpenFreeMap roads with the freeways' bridges, and a base
+// that makes the terrain a solid block
 const location = { lat: 37.7955, lon: -122.403 }
 const map = new Map({
   source: { api: 'osm' },
   location,
   options: { zoom: 15, exaggeration: 1 },
-  material: {
-    color: '#f4f4f4',
-    filter: 'grayscale(1) contrast(0.8) brightness(1.12)'
-  }
+  material: { color: '#f4f4f4', process: tone }
 })
 const buildings = map.addLayer(new Buildings({ source: overture, edges: true }))
+map.addLayer(new Roads({ source: { api: 'openfreemap' } }))
 map.addLayer(new TerrainBase())
 scene.add(map.terrain)
 

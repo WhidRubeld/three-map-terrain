@@ -12,8 +12,11 @@ What it shows ([src/index.ts](src/index.ts)):
   package and turned into buildings by `buildingsFromVectorTile` with the
   built-in `overtureProperties`. Any data the library has no preset for
   plugs in the same way.
-- The OpenStreetMap map toned down to the buildings (`material.filter`),
-  buildings with their `edges`, and a `TerrainBase`.
+- The OpenStreetMap map toned down to the buildings by a few lines of
+  `material.process` — gray, softer, brighter, drawn on its pixels —
+  buildings with their `edges`, OpenFreeMap roads (`Roads`: the freeways'
+  bridges rise from their ends over the flat downtown), and a
+  `TerrainBase`.
 - A click: the building under the pointer (`buildings.pick`), highlighted
   with its Overture name and height — or the geolocation of the terrain
   (`map.pick`).

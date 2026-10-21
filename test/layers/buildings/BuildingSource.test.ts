@@ -5,9 +5,9 @@ import {
   BuildingSource,
   type BuildingSourceProps,
   OVERPASS_ENDPOINT
-} from '../../src'
-import { HttpError } from '../../src/io/fetch'
-import { encodeVectorTile } from '../support/mvt-encoder'
+} from '../../../src'
+import { HttpError } from '../../../src/io/fetch'
+import { encodeVectorTile } from '../../support/mvt-encoder'
 
 const { loadArrayBuffer, loadJson } = vi.hoisted(() => ({
   loadArrayBuffer:
@@ -24,8 +24,8 @@ const { loadArrayBuffer, loadJson } = vi.hoisted(() => ({
     >()
 }))
 
-vi.mock('../../src/io/fetch', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/io/fetch')>()),
+vi.mock('../../../src/io/fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/io/fetch')>()),
   loadArrayBuffer,
   loadJson
 }))
@@ -87,7 +87,8 @@ describe('BuildingSource', () => {
 
       const buildings = await source.load(tile)
 
-      expect(loadArrayBuffer).toHaveBeenCalledWith(url, signal)
+      // one shared request per tile: the source's own signal
+      expect(loadArrayBuffer).toHaveBeenCalledWith(url, expect.any(AbortSignal))
       expect(buildings).toHaveLength(1)
       expect([source.minZoom, source.maxZoom]).toEqual(zooms)
       expect(source.attribution).toContain('OpenStreetMap')
@@ -126,7 +127,7 @@ describe('BuildingSource', () => {
     // relative tile URLs are resolved against the TileJSON
     expect(loadArrayBuffer).toHaveBeenCalledWith(
       'https://host/data/tiles/14/8530/5766.pbf',
-      signal
+      expect.any(AbortSignal)
     )
   })
 
@@ -155,7 +156,7 @@ describe('BuildingSource', () => {
 
     expect(loadArrayBuffer).toHaveBeenCalledWith(
       'https://a.my/14/8530/5766.mvt',
-      signal
+      expect.any(AbortSignal)
     )
     expect(building.height).toBe(33)
     expect([
@@ -261,9 +262,9 @@ describe('BuildingSource', () => {
         new BuildingSource({
           api: 'osmbuildings'
         } as unknown as BuildingSourceProps)
-    ).toThrow('Unknown building source api: osmbuildings')
+    ).toThrow('Unknown BuildingSource api: osmbuildings')
     expect(() => new BuildingSource({})).toThrow(
-      'BuildingSource needs an api, a url, a tilejson or a load function'
+      'BuildingSource needs an api, tiles, a url, a tilejson or a load function'
     )
   })
 })

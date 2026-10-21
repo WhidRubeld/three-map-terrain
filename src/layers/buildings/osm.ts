@@ -1,31 +1,8 @@
 // OpenStreetMap buildings: tags → heights, Overpass API JSON → features.
 
-import type { BuildingAttributes, BuildingFeature, Position } from './features'
-import { isColor, LEVEL_HEIGHT, ringAnchor, toNumber } from './features'
-
-const FEET = 0.3048
-const INCHES = 0.0254
-
-/**
- * Parses an OSM length (`height`, `min_height`): `12`, `12.5 m`, `12,5`,
- * `40 ft`, `40'6"`; the first of `;`-separated values. Meters.
- */
-export function parseLength(value: unknown): number | undefined {
-  if (typeof value === 'number')
-    return Number.isFinite(value) ? value : undefined
-  if (typeof value !== 'string') return undefined
-  const text = value.split(';')[0].trim().replace(',', '.')
-
-  const imperial = /^(\d+(?:\.\d+)?)\s*'(?:\s*(\d+(?:\.\d+)?)\s*")?$/.exec(text)
-  if (imperial) {
-    return Number(imperial[1]) * FEET + Number(imperial.at(2) ?? 0) * INCHES
-  }
-  const match = /^(-?\d+(?:\.\d+)?)\s*(m|ft|feet)?$/i.exec(text)
-  if (!match) return undefined
-  const number = Number(match[1])
-  const unit = match.at(2)?.toLowerCase()
-  return unit === undefined || unit === 'm' ? number : number * FEET
-}
+import type { BuildingAttributes, BuildingFeature } from './features'
+import { isColor, LEVEL_HEIGHT, ringAnchor } from './features'
+import { parseLength, type Position, toNumber } from '../features'
 
 /** Height, min height and color of an OSM building or part from its tags. */
 export function osmBuildingAttributes(

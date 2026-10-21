@@ -142,6 +142,21 @@ describe('exportModel', () => {
     expect(original.position.x).toBe(500)
   })
 
+  it('leaves out objects marked userData.export = false, e.g. highlights', async () => {
+    const original = scene()
+    const [box] = original.children as [Mesh]
+    const highlight = new Mesh(
+      new BoxGeometry(1, 1, 1),
+      new MeshLambertMaterial()
+    )
+    highlight.userData.export = false
+    box.add(highlight)
+
+    const gltf = await glbJson(await exportModel(original, 'glb'))
+
+    expect(gltf.meshes).toHaveLength(1)
+  })
+
   it('drops textures when asked to, and exports placeholder materials', async () => {
     const textured = new Mesh(
       new BoxGeometry(),

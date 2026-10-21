@@ -11,10 +11,7 @@ import {
   type ElevationSourceProps
 } from '../sources/ElevationSource.class'
 import { isAbortError } from '../io/fetch'
-import {
-  defaultTextureOptions,
-  type QuadTextureMaterialOptions
-} from './quad-texture-material'
+import { defaultMaterialOptions, type TerrainMaterialOptions } from './material'
 import { Source, type SourceProps } from '../sources/Source.class'
 import { Tile } from './Tile.class'
 import { Utils } from '../geo/Utils.class'
@@ -52,7 +49,12 @@ export interface MapProps {
   elevation?: ElevationSource | ElevationSourceProps
   location: { lat: number; lon: number }
   options?: Partial<MapOptions>
-  material?: Partial<QuadTextureMaterialOptions>
+  /**
+   * How the terrain is drawn: the look (`color`, `lights`, `wireframe`,
+   * `fog`), a `process` for the imagery, or your own material factory
+   * (`create`).
+   */
+  material?: Partial<TerrainMaterialOptions>
 }
 
 /**
@@ -68,6 +70,11 @@ export interface MapLayer {
   detach?(map: Map): void
   /** A tile has its elevation, its seams are stitched and it is in `map.terrain`. */
   tileLoaded?(tile: Tile): void
+  /**
+   * The heights of a placed tile changed: its edges were stitched to a
+   * neighbour that loaded. Geometry lying on the surface follows.
+   */
+  tileChanged?(tile: Tile): void
   /** A loaded tile is about to be disposed (`map.clean()`). */
   tileRemoved?(tile: Tile): void
   /** `map.setMaterial()` changed the style, which layers may follow. */
@@ -101,7 +108,7 @@ export interface TileGrid {
 /** Calls a layer hook; a failing layer must not break the terrain. */
 function notify(
   layer: MapLayer,
-  hook: 'tileLoaded' | 'tileRemoved',
+  hook: 'tileLoaded' | 'tileChanged' | 'tileRemoved',
   tile: Tile
 ) {
   try {
@@ -121,7 +128,7 @@ export const defaultMapOptions: Readonly<MapOptions> = Object.freeze({
 })
 
 export class Map {
-  materialOptions: QuadTextureMaterialOptions
+  materialOptions: TerrainMaterialOptions
   source: Source
   elevation: ElevationSource
   geoLocation: { lat: number; lon: number }
@@ -132,8 +139,6 @@ export class Map {
   center: { x: number; y: number }
   /** `true` once `init()` has loaded the initial grid. */
   ready = false
-
-  defaultOptions: MapOptions = defaultMapOptions
 
   private loading: Promise<void> | undefined
   private loads: Record<string, Promise<Tile | undefined>> = {}
@@ -152,13 +157,13 @@ export class Map {
         ? elevation
         : new ElevationSource(elevation)
     this.geoLocation = location
-    this.materialOptions = { ...defaultTextureOptions, ...material }
+    this.materialOptions = { ...defaultMaterialOptions, ...material }
     this.options = this.getOptions(options)
     this.center = this.getCenter()
   }
 
   getOptions(providedOptions: Partial<MapOptions> = {}): MapOptions {
-    const options = { ...this.defaultOptions, ...providedOptions }
+    const options = { ...defaultMapOptions, ...providedOptions }
     options.tileSegments = Math.max(
       1,
       Math.min(256, Math.round(options.tileSegments))
@@ -265,22 +270,23 @@ export class Map {
     this.source = source instanceof Source ? source : new Source(source)
     // from no imagery to no imagery: nothing to reload
     if (previous.api === 'none' && this.source.api === 'none') return
-    for (const tile of this.placedTiles()) void tile.buildmesh()
+    for (const tile of this.placedTiles()) void tile.loadTexture()
   }
 
   /**
-   * Changes the material options of the terrain — color, lights, wireframe,
-   * fog, filter — and of the layers that follow it (buildings, base). Only a
-   * new `filter` reloads the imagery.
+   * Changes the material options of the terrain — the look, `process`,
+   * `create` — and of the layers that follow its look (buildings, roads,
+   * base). The materials are made again on the same textures; only a new
+   * `process` reloads the imagery.
    */
-  setMaterial(options: Partial<QuadTextureMaterialOptions>) {
+  setMaterial(options: Partial<TerrainMaterialOptions>) {
     const previous = this.materialOptions
     this.materialOptions = { ...previous, ...options }
     const reload =
-      this.materialOptions.filter !== previous.filter &&
+      this.materialOptions.process !== previous.process &&
       this.source.api !== 'none'
     for (const tile of this.placedTiles()) {
-      if (reload) void tile.buildmesh()
+      if (reload) void tile.loadTexture()
       else tile.restyle()
     }
     for (const layer of this.mapLayers) {
@@ -523,9 +529,16 @@ export class Map {
     if (this.tileCache[tile.key()] !== tile) return undefined
 
     tile.setPosition(this.center)
-    this.stitchAround(tile)
+    const changed = this.stitchAround(tile)
     this.terrain.add(tile.mesh)
-    for (const layer of this.mapLayers) notify(layer, 'tileLoaded', tile)
+    for (const layer of this.mapLayers) {
+      notify(layer, 'tileLoaded', tile)
+      for (const neighbour of changed) {
+        if (neighbour !== tile && neighbour.mesh.parent === this.terrain) {
+          notify(layer, 'tileChanged', neighbour)
+        }
+      }
+    }
     return tile
   }
 
@@ -535,8 +548,9 @@ export class Map {
    * neighbours (its own seams) and with its west, north and north-west
    * neighbours (their seams). A tile copies its edges from its east/south
    * neighbours, so those are stitched first: descending `x + y` order.
+   * Returns the tiles whose heights it changed.
    */
-  private stitchAround({ x, y }: Tile) {
+  private stitchAround({ x, y }: Tile): Set<Tile> {
     const tiles = [
       this.cachedTile(x, y),
       this.cachedTile(x - 1, y),
@@ -557,6 +571,7 @@ export class Map {
       this.syncCorner(cx, cy, touched)
     }
     for (const tile of touched) tile.updateGeometry()
+    return new Set([...tiles, ...touched])
   }
 
   /**

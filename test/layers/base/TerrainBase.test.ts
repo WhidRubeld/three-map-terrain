@@ -10,20 +10,18 @@ import {
 } from 'three'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { Map, TerrainBase } from '../../src'
-import { terrariumPixels } from '../support/helpers'
+import { Map, TerrainBase } from '../../../src'
+import { terrariumPixels } from '../../support/helpers'
 
 const { loadImageData } = vi.hoisted(() => ({ loadImageData: vi.fn() }))
 
-vi.mock('../../src/io/image', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/io/image')>()),
+vi.mock('../../../src/io/image', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/io/image')>()),
   loadImageData
 }))
 
-vi.mock('../../src/terrain/quad-texture-material', async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import('../../src/terrain/quad-texture-material')
-  >()),
+vi.mock('../../../src/terrain/material', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/terrain/material')>()),
   loadQuadTexture: vi.fn(() => Promise.resolve(new Texture()))
 }))
 

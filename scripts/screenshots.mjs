@@ -54,16 +54,35 @@ const turn = async (page) => {
   }
 }
 
+/** Lowers the camera over the city and comes close: facades and markings. */
+const closeUp = async (page) => {
+  await page.mouse.move(700, 500)
+  await page.mouse.down({ button: 'right' })
+  await page.mouse.move(700, 380, { steps: 12 })
+  await page.mouse.up({ button: 'right' })
+  await page.mouse.move(760, 560)
+  for (let i = 0; i < 8; i++) {
+    await page.mouse.wheel(0, -350)
+    await page.waitForTimeout(120)
+  }
+}
+
 const SCENES = [
   // the README's hero: the live example
   { name: 'hero', example: 'react', click: [770, 520] },
-  // its Lausanne, one map in three looks
+  // its Lausanne, one map in four looks; the textured one up close
   ...['plain', 'aerial', 'wireframe'].map((look) => ({
     name: `lausanne-${look}`,
     example: 'react',
     query: `?place=lausanne&look=${look}`,
     prepare: turn
   })),
+  {
+    name: 'lausanne-textured',
+    example: 'react',
+    query: '?place=lausanne&look=textured',
+    prepare: closeUp
+  },
   // San Francisco, Overture buildings; a click stops the rotation
   { name: 'basic', example: 'basic', click: [860, 320] }
 ]

@@ -1,11 +1,14 @@
 import {
+  Box3,
   type BufferGeometry,
   Color,
+  LineBasicMaterial,
   LineSegments,
   MeshBasicMaterial,
   MeshLambertMaterial,
   MeshStandardMaterial,
   type Mesh,
+  type Object3D,
   Raycaster,
   Texture,
   Vector3
@@ -22,20 +25,18 @@ import {
   type Tile,
   type TileRequest,
   Utils
-} from '../../src'
-import { terrariumPixels } from '../support/helpers'
+} from '../../../src'
+import { terrariumPixels } from '../../support/helpers'
 
 const { loadImageData } = vi.hoisted(() => ({ loadImageData: vi.fn() }))
 
-vi.mock('../../src/io/image', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/io/image')>()),
+vi.mock('../../../src/io/image', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/io/image')>()),
   loadImageData
 }))
 
-vi.mock('../../src/terrain/quad-texture-material', async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import('../../src/terrain/quad-texture-material')
-  >()),
+vi.mock('../../../src/terrain/material', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/terrain/material')>()),
   // no canvas in Node: a texture stands in for the stitched imagery
   loadQuadTexture: vi.fn(() => Promise.resolve(new Texture()))
 }))
@@ -173,15 +174,56 @@ const rayDown = (map: Map, fx: number, fy: number) => {
   )
 }
 
-const meshes = (layer: Buildings) =>
-  layer.group.children as Mesh<BufferGeometry, MeshLambertMaterial>[]
+/** The objects of a part of the buildings — `walls`, `roofs`, `floors`, `edges` — one per tile. */
+const part = <T extends Object3D = Mesh<BufferGeometry, MeshLambertMaterial>>(
+  layer: Buildings,
+  name: string
+) =>
+  layer.group.children.filter((object) =>
+    object.name.startsWith(`buildings ${name} `)
+  ) as T[]
+
+/** The faces of the buildings: walls first. */
+const meshes = (layer: Buildings) => [
+  ...part(layer, 'walls'),
+  ...part(layer, 'roofs'),
+  ...part(layer, 'floors')
+]
+
+/** Bounds of the faces, in the tiles' local coordinates. */
+const bounds = (layer: Buildings) => {
+  const box = new Box3()
+  for (const mesh of meshes(layer)) {
+    if (mesh.geometry.boundingBox) box.union(mesh.geometry.boundingBox)
+  }
+  return box
+}
+
+/** The highlight overlays: their color and bounds. */
+const highlights = (layer: Buildings) =>
+  layer.group.children.flatMap((object) =>
+    object.children.map((overlay) => {
+      const { geometry, material } = overlay as Mesh<
+        BufferGeometry,
+        MeshLambertMaterial | LineBasicMaterial
+      >
+      geometry.computeBoundingBox()
+      return {
+        color: material.color.getHex(),
+        lines: overlay instanceof LineSegments,
+        box: geometry.boundingBox ?? new Box3()
+      }
+    })
+  )
 
 describe('Buildings', () => {
   it('adds one group under map.terrain, outside map.pick', async () => {
     const { map, layer } = await setup([box(0.3, 0.3, 0.05, { height: 20 })])
 
     expect(layer.group.parent).toBe(map.terrain)
-    expect(meshes(layer)).toHaveLength(1)
+    // one tile: its walls and roofs
+    expect(part(layer, 'walls')).toHaveLength(1)
+    expect(part(layer, 'roofs')).toHaveLength(1)
     // map.pick sees the terrain, not the roofs
     const hit = map.pick(rayDown(map, 0.325, 0.325))
     expect(hit?.alt).toBeCloseTo(groundZ(map, 0.325, 0.325) / zScale, 3)
@@ -213,22 +255,21 @@ describe('Buildings', () => {
   it('keeps part of a low building above the ground on a slope', async () => {
     // 1 m high, much less than the slope across a 0.2-tile footprint
     const { map, layer } = await setup([box(0.2, 0.2, 0.2, { height: 1 })])
-    const { boundingBox } = meshes(layer)[0].geometry
     const high = groundZ(map, 0.4, 0.4)
 
-    expect(boundingBox?.max.z).toBeCloseTo(high + 1 * zScale, 3)
+    expect(bounds(layer).max.z).toBeCloseTo(high + 1 * zScale, 3)
   })
 
   it('lifts parts with a min height and gives them a floor', async () => {
     const { map, layer } = await setup([
       box(0.3, 0.3, 0.05, { height: 30, minHeight: 10 })
     ])
-    const { geometry } = meshes(layer)[0]
     const low = Math.min(groundZ(map, 0.3, 0.3), groundZ(map, 0.35, 0.35))
 
-    expect(geometry.boundingBox?.min.z).toBeCloseTo(low + 10 * zScale, 3)
-    expect(geometry.boundingBox?.max.z).toBeCloseTo(low + 30 * zScale, 3)
-    const normal = geometry.getAttribute('normal')
+    expect(bounds(layer).min.z).toBeCloseTo(low + 10 * zScale, 3)
+    expect(bounds(layer).max.z).toBeCloseTo(low + 30 * zScale, 3)
+    const [floor] = part(layer, 'floors')
+    const normal = floor.geometry.getAttribute('normal')
     const facingDown = Array.from({ length: normal.count }, (_, i) =>
       normal.getZ(i)
     ).filter((z) => z === -1)
@@ -243,10 +284,7 @@ describe('Buildings', () => {
 
     expect(layer.count).toBe(1)
     const low = Math.min(groundZ(map, 0.3, 0.3), groundZ(map, 0.35, 0.35))
-    expect(meshes(layer)[0].geometry.boundingBox?.max.z).toBeCloseTo(
-      low + 12 * zScale,
-      3
-    )
+    expect(bounds(layer).max.z).toBeCloseTo(low + 12 * zScale, 3)
   })
 
   it('draws each building once, in the tile its center lies in', async () => {
@@ -259,10 +297,10 @@ describe('Buildings', () => {
     ])
 
     expect(layer.count).toBe(2)
-    expect(meshes(layer)).toHaveLength(2)
+    expect(part(layer, 'roofs')).toHaveLength(2)
     const east = Utils.getTileKey(ZOOM, center.x + 1, center.y)
-    const owner = meshes(layer).find(
-      (mesh) => mesh.name === `buildings ${east}`
+    const owner = part(layer, 'roofs').find(
+      (mesh) => mesh.name === `buildings roofs ${east}`
     )
     expect(owner).toBeDefined()
     expect(map.tileCache[east].mesh.position.toArray()).toEqual(
@@ -355,40 +393,53 @@ describe('Buildings', () => {
     expect(layer.pickIntersection(onTerrain)).toBeUndefined()
   })
 
-  it('highlights a building by feature or id, and restores it', async () => {
+  it('highlights a building by feature or id over it, and clears it', async () => {
     const first = box(0.3, 0.3, 0.05, { id: 1 })
     const second = box(0.5, 0.5, 0.05, { id: 2 })
     const { map, layer } = await setup([first, second], {
       material: { color: 0x808080 }
     })
-    const colors = meshes(layer)[0].geometry.getAttribute('color')
-    const colorAt = (fx: number, fy: number) => {
-      const hit = layer.pick(rayDown(map, fx, fy))
-      const raycaster = rayDown(map, fx, fy)
-      const [intersection] = raycaster.intersectObjects(layer.group.children)
-      if (!hit || !intersection.face) throw new Error('no building there')
-      const v = intersection.face.a
-      return new Color(colors.getX(v), colors.getY(v), colors.getZ(v))
+    const over = (fx: number, fy: number) => {
+      const point = scenePoint(map, fx, fy)
+      const tile = map.tileCache[Utils.getTileKey(ZOOM, center.x, center.y)]
+      point.sub(tile.mesh.position)
+      return highlights(layer).filter(
+        ({ box }) =>
+          point.x >= box.min.x &&
+          point.x <= box.max.x &&
+          point.y >= box.min.y &&
+          point.y <= box.max.y
+      )
     }
-    const gray = new Color(0x808080)
-    const red = new Color(0xff0000)
-    // colors are stored as float32
-    const same = (a: Color, b: Color) =>
-      Math.max(Math.abs(a.r - b.r), Math.abs(a.g - b.g), Math.abs(a.b - b.b)) <
-      1e-6
 
     layer.highlight(first, 0xff0000)
-    expect(same(colorAt(0.325, 0.325), red)).toBe(true)
-    expect(same(colorAt(0.525, 0.525), gray)).toBe(true)
+    expect(over(0.325, 0.325).map(({ color }) => color)).toEqual([
+      0xff0000, 0xff0000
+    ]) // over its walls and roof
+    expect(over(0.525, 0.525)).toEqual([])
 
     layer.highlight(2)
-    expect(same(colorAt(0.325, 0.325), gray)).toBe(true)
-    expect(
-      same(colorAt(0.525, 0.525), new Color(layer.options.highlightColor))
-    ).toBe(true)
+    expect(over(0.325, 0.325)).toEqual([])
+    expect(over(0.525, 0.525)[0].color).toBe(
+      new Color(layer.options.highlightColor).getHex()
+    )
 
     layer.highlight()
-    expect(same(colorAt(0.525, 0.525), gray)).toBe(true)
+    expect(highlights(layer)).toEqual([])
+    // the buildings keep their own colors throughout
+    const colors = part(layer, 'roofs')[0].geometry.getAttribute('color')
+    expect(colors.getX(0)).toBeCloseTo(new Color(0x808080).r, 6)
+  })
+
+  it('never picks the overlay, always the building', async () => {
+    const building = box(0.3, 0.3, 0.05, { id: 'b', height: 20 })
+    const { map, layer } = await setup([building])
+    layer.highlight('b')
+
+    const raycaster = rayDown(map, 0.325, 0.325)
+    const hits = raycaster.intersectObjects(layer.group.children, true)
+    expect(hits.every(({ object }) => object.parent === layer.group)).toBe(true)
+    expect(layer.pick(raycaster)?.feature).toBe(building)
   })
 
   it('highlights buildings of tiles loaded later', async () => {
@@ -400,19 +451,15 @@ describe('Buildings', () => {
     await map.addTileSegment(center.x + 2, center.y)
     await layer.whenReady()
 
-    const [mesh] = meshes(layer)
-    const colors = mesh.geometry.getAttribute('color')
-    expect(
-      new Color(colors.getX(0), colors.getY(0), colors.getZ(0)).equals(
-        new Color(0x00ff00)
-      )
-    ).toBe(true)
+    expect(highlights(layer).map(({ color }) => color)).toEqual([
+      0x00ff00, 0x00ff00
+    ])
   })
 
   it('draws feature colors when asked to', async () => {
     const red = box(0.3, 0.3, 0.05, { color: '#ff0000' })
     const { layer } = await setup([red], { featureColors: true })
-    const colors = meshes(layer)[0].geometry.getAttribute('color')
+    const colors = part(layer, 'walls')[0].geometry.getAttribute('color')
 
     expect(
       new Color(colors.getX(0), colors.getY(0), colors.getZ(0)).equals(
@@ -471,19 +518,21 @@ describe('Buildings', () => {
 
     map.setMaterial({ color: '#336699', wireframe: true })
 
-    const [mesh, lines] = layer.group.children as [
-      Mesh<BufferGeometry, MeshLambertMaterial>,
-      LineSegments
-    ]
-    expect(mesh.visible).toBe(false)
-    expect(lines).toBeInstanceOf(LineSegments)
-    // still highlighted
-    const colors = lines.geometry.getAttribute('color')
-    expect([colors.getX(0), colors.getY(0), colors.getZ(0)]).toEqual([1, 0, 0])
+    const [walls] = part(layer, 'walls')
+    const [edges] = part<LineSegments>(layer, 'edges')
+    // the faces are hidden by their material: still there to pick
+    expect(walls.material.visible).toBe(false)
+    expect(edges.material).toBeInstanceOf(LineBasicMaterial)
+    expect((edges.material as LineBasicMaterial).visible).toBe(true)
+    const colors = edges.geometry.getAttribute('color')
+    expect(colors.getX(0)).toBeCloseTo(new Color('#336699').r, 6)
+    // still highlighted, on the lines
+    expect(highlights(layer)).toMatchObject([{ color: 0xff0000, lines: true }])
     expect(layer.count).toBe(1)
 
     map.setMaterial({ wireframe: false })
-    expect(layer.group.children).toHaveLength(1)
+    expect(part(layer, 'edges')).toEqual([])
+    expect(part(layer, 'walls')[0].material.visible).toBe(true)
   })
 
   it('takes the style of the terrain by default', async () => {
@@ -491,15 +540,15 @@ describe('Buildings', () => {
       color: '#d0c8b8',
       lights: false
     })
-    const [mesh] = meshes(layer)
-    const colors = mesh.geometry.getAttribute('color')
+    const [walls] = part(layer, 'walls')
+    const colors = walls.geometry.getAttribute('color')
 
-    expect(mesh.material).toBeInstanceOf(MeshBasicMaterial)
+    expect(walls.material).toBeInstanceOf(MeshBasicMaterial)
     expect(
       new Color(colors.getX(0), colors.getY(0), colors.getZ(0)).getHexString()
     ).toBe('d0c8b8')
     // no lines unless wireframe or edges
-    expect(layer.group.children).toHaveLength(1)
+    expect(part(layer, 'edges')).toEqual([])
   })
 
   it('draws the edges in wireframe, the faces still pickable', async () => {
@@ -507,13 +556,13 @@ describe('Buildings', () => {
     const { map, layer } = await setup([building], {}, ZOOM, {
       wireframe: true
     })
-    const [mesh, lines] = layer.group.children as [Mesh, LineSegments]
+    const [roofs] = part(layer, 'roofs')
+    const [edges] = part<LineSegments>(layer, 'edges')
 
-    expect(mesh.visible).toBe(false)
-    expect(lines).toBeInstanceOf(LineSegments)
-    expect(lines.visible).toBe(true)
+    expect(roofs.material.visible).toBe(false)
+    expect((edges.material as LineBasicMaterial).visible).toBe(true)
     // a box: 4 walls × (top, bottom, corner) segments
-    expect(lines.geometry.getAttribute('position').count).toBe(4 * 3 * 2)
+    expect(edges.geometry.getAttribute('position').count).toBe(4 * 3 * 2)
     expect(layer.pick(rayDown(map, 0.325, 0.325))?.feature).toBe(building)
   })
 
@@ -522,14 +571,12 @@ describe('Buildings', () => {
       edges: true,
       material: { color: 0xffffff }
     })
-    const [mesh, lines] = layer.group.children as [
-      Mesh<BufferGeometry, MeshLambertMaterial>,
-      LineSegments
-    ]
-    const lineColors = lines.geometry.getAttribute('color')
+    const [walls] = part(layer, 'walls')
+    const [edges] = part<LineSegments>(layer, 'edges')
+    const lineColors = edges.geometry.getAttribute('color')
 
-    expect(mesh.visible).toBe(true)
-    expect(mesh.material.polygonOffset).toBe(true)
+    expect(walls.material.visible).toBe(true)
+    expect(walls.material.polygonOffset).toBe(true)
     expect(lineColors.getX(0)).toBeCloseTo(0.62, 6)
   })
 
@@ -550,8 +597,8 @@ describe('Buildings', () => {
     }
     const segments = async (sides: number) => {
       const { layer } = await setup([polygon(sides)], { edges: true })
-      const lines = layer.group.children[1] as LineSegments
-      return lines.geometry.getAttribute('position').count / 2
+      const [edges] = part<LineSegments>(layer, 'edges')
+      return edges.geometry.getAttribute('position').count / 2
     }
 
     expect(await segments(16)).toBe(16 * 3)
@@ -561,11 +608,11 @@ describe('Buildings', () => {
   it('resolves intersections with the edges too', async () => {
     const building = box(0.3, 0.3, 0.05, { height: 20 })
     const { layer } = await setup([building], { edges: true })
-    const lines = layer.group.children[1] as LineSegments
+    const [edges] = part<LineSegments>(layer, 'edges')
 
     expect(
       layer.pickIntersection({
-        object: lines,
+        object: edges,
         index: 0,
         point: new Vector3(),
         face: null
@@ -576,12 +623,11 @@ describe('Buildings', () => {
   it('highlights the edges too', async () => {
     const building = box(0.3, 0.3, 0.05, { id: 'b' })
     const { layer } = await setup([building], {}, ZOOM, { wireframe: true })
-    const lines = layer.group.children[1] as LineSegments
-    const colors = lines.geometry.getAttribute('color')
 
     layer.highlight('b', 0x00ff00)
 
-    expect([colors.getX(0), colors.getY(0), colors.getZ(0)]).toEqual([0, 1, 0])
+    // the hidden faces get none
+    expect(highlights(layer)).toMatchObject([{ color: 0x00ff00, lines: true }])
   })
 
   it('follows the map material options, or takes a material', async () => {
@@ -593,8 +639,19 @@ describe('Buildings', () => {
 
     const material = new MeshStandardMaterial()
     const custom = await setup([box(0.3, 0.3, 0.05)], { material })
-    expect(meshes(custom.layer)[0].material).toBe(material)
+    for (const mesh of meshes(custom.layer))
+      expect(mesh.material).toBe(material)
     expect(material.vertexColors).toBe(true)
+
+    // a material per part; the look's for the others
+    const roofs = new MeshStandardMaterial({ color: 0x884422 })
+    const perPart = await setup([box(0.3, 0.3, 0.05)], {
+      material: (name) => (name === 'roofs' ? roofs : undefined)
+    })
+    expect(part(perPart.layer, 'roofs')[0].material).toBe(roofs)
+    expect(part(perPart.layer, 'walls')[0].material).toBeInstanceOf(
+      MeshLambertMaterial
+    )
   })
 
   it('removes the buildings of cleaned tiles', async () => {

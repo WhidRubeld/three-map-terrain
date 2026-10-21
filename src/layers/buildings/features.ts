@@ -2,15 +2,18 @@
 
 import { Color } from 'three'
 
-import { decodeVectorTile, gunzip, type VectorTileValue } from '../io/mvt'
+import { gunzip, type VectorTileValue } from '../../io/mvt'
+import { VectorTileData } from '../../sources/vector-tiles'
+import {
+  clipRect,
+  isRing,
+  type Position,
+  type Ring,
+  ringArea,
+  toNumber
+} from '../features'
 
 export type BuildingId = string | number
-
-/** A GeoJSON position: `[lon, lat]` in degrees (further values are ignored). */
-export type Position = readonly number[]
-
-/** A ring of positions; it may or may not repeat its first position. */
-export type Ring = readonly Position[]
 
 /** GeoJSON `Polygon` / `MultiPolygon`: each polygon is an outer ring, then its holes. */
 export type BuildingGeometry =
@@ -58,13 +61,6 @@ export interface VectorTileBuildingsOptions {
 
 /** Meters per level, for heights given as a number of floors. */
 export const LEVEL_HEIGHT = 3
-
-export const toNumber = (value: unknown): number | undefined => {
-  const number = typeof value === 'string' ? Number(value) : value
-  return typeof number === 'number' && Number.isFinite(number)
-    ? number
-    : undefined
-}
 
 /** Center of a ring's bounding box. */
 export function ringAnchor(ring: Ring): Position {
@@ -127,58 +123,6 @@ export const overtureProperties: BuildingProperties = (p) => {
   }
 }
 
-/** Signed area of a flat `[x0, y0, x1, y1, …]` ring (shoelace). */
-function ringArea(ring: readonly number[]) {
-  let area = 0
-  for (let i = 0, j = ring.length - 2; i < ring.length; j = i, i += 2) {
-    area += (ring[j] - ring[i]) * (ring[j + 1] + ring[i + 1])
-  }
-  return area / 2
-}
-
-export const isRing = (ring: readonly number[]) =>
-  ring.length >= 6 && ringArea(ring) !== 0
-
-/** Sutherland–Hodgman against one side of the tile square. */
-function clipSide(
-  ring: readonly number[],
-  inside: (x: number, y: number) => boolean,
-  cross: (ax: number, ay: number, bx: number, by: number) => [number, number]
-) {
-  const out: number[] = []
-  for (let i = 0; i < ring.length; i += 2) {
-    const j = (i + ring.length - 2) % ring.length
-    const [ax, ay, bx, by] = [ring[j], ring[j + 1], ring[i], ring[i + 1]]
-    const aIn = inside(ax, ay)
-    const bIn = inside(bx, by)
-    if (bIn) {
-      if (!aIn) out.push(...cross(ax, ay, bx, by))
-      out.push(bx, by)
-    } else if (aIn) {
-      out.push(...cross(ax, ay, bx, by))
-    }
-  }
-  return out
-}
-
-/** Clips a flat ring to a rectangle (Sutherland–Hodgman). */
-export function clipRect(
-  ring: readonly number[],
-  minX: number,
-  minY: number,
-  maxX: number,
-  maxY: number
-): number[] {
-  const atX = (x: number) => (ax: number, ay: number, bx: number, by: number) =>
-    [x, ay + ((by - ay) * (x - ax)) / (bx - ax)] as [number, number]
-  const atY = (y: number) => (ax: number, ay: number, bx: number, by: number) =>
-    [ax + ((bx - ax) * (y - ay)) / (by - ay), y] as [number, number]
-  let clipped = clipSide(ring, (x) => x >= minX, atX(minX))
-  clipped = clipSide(clipped, (x) => x <= maxX, atX(maxX))
-  clipped = clipSide(clipped, (_, y) => y >= minY, atY(minY))
-  return clipSide(clipped, (_, y) => y <= maxY, atY(maxY))
-}
-
 /** Clips a ring to `[0, extent]²`: buffered geometry would be drawn twice. */
 export const clipRing = (ring: readonly number[], extent: number) =>
   clipRect(ring, 0, 0, extent, extent)
@@ -212,18 +156,26 @@ export function classifyRings(rings: readonly number[][]): number[][][] {
 export async function buildingsFromVectorTile(
   data: ArrayBuffer | Uint8Array,
   tile: { readonly z: number; readonly x: number; readonly y: number },
+  options: VectorTileBuildingsOptions = {}
+): Promise<BuildingFeature[]> {
+  return readBuildings(new VectorTileData(await gunzip(data)), tile, options)
+}
+
+/** `buildingsFromVectorTile` for a tile already decoded. */
+export function readBuildings(
+  data: VectorTileData,
+  tile: { readonly z: number; readonly x: number; readonly y: number },
   {
     layers = 'building',
     properties = openMapTilesProperties
   }: VectorTileBuildingsOptions = {}
-): Promise<BuildingFeature[]> {
+): BuildingFeature[] {
   const names = typeof layers === 'string' ? [layers] : layers
-  const decoded = decodeVectorTile(await gunzip(data), names)
   const scale = 2 ** tile.z
   const buildings: BuildingFeature[] = []
 
   for (const name of names) {
-    const layer = decoded[name] as (typeof decoded)[string] | undefined
+    const layer = data.layer(name)
     if (!layer) continue
     const { extent } = layer
     const toPosition = (px: number, py: number): Position => {

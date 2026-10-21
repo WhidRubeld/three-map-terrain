@@ -1,14 +1,30 @@
-import type { BuildingId, Buildings, GeoLocation, Map } from '../src'
+import type { Camera } from 'three'
+import type { MapControls } from 'three/addons/controls/MapControls.js'
+
+import type {
+  BuildingId,
+  Buildings,
+  GeoLocation,
+  Map,
+  RoadId,
+  RoadKind,
+  Roads
+} from '../src'
 
 /** Debug handle exposed as `window.__playground` (used by the e2e tests). */
 export interface Playground {
   map: Map
   /** The buildings layer (`?buildings=…`). */
   buildings: Buildings | undefined
+  /** The roads layer (`?roads=…`). */
+  roads: Roads | undefined
   /** three.js `REVISION` actually loaded */
   revision: string
   /** `webgl`, `webgpu`, or `webgpu (webgl2 backend)` */
   backend: string
+  camera: Camera
+  /** Orbit controls; `undefined` in the top view. */
+  controls: MapControls | undefined
   /** Resolves once `map.init()` has finished. */
   ready: Promise<void>
   /** Number of tiles whose placeholder was replaced by the stitched texture. */
@@ -18,6 +34,10 @@ export interface Playground {
   /** The building of the last click (`buildings.pick`). */
   lastBuilding:
     { id?: BuildingId; height?: number; lat: number; lon: number } | undefined
+  /** The road of the last click (`roads.pick`). */
+  lastRoad:
+    | { id?: RoadId; kind: RoadKind; bridge: boolean; lat: number; lon: number }
+    | undefined
   /**
    * Stops the render loop after one last frame. With software rendering
    * (SwiftShader on GPU-less CI) every frame takes long enough to starve

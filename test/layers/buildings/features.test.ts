@@ -9,13 +9,13 @@ import {
   overtureProperties,
   protomapsProperties,
   Utils
-} from '../../src'
+} from '../../../src'
 import {
   classifyRings,
   clipRing,
   ringAnchor
-} from '../../src/buildings/features'
-import { encodeVectorTile } from '../support/mvt-encoder'
+} from '../../../src/layers/buildings/features'
+import { encodeVectorTile } from '../../support/mvt-encoder'
 
 const tile = { z: 14, x: 8530, y: 5766 }
 const [west, south, east, north] = Utils.tile2bbox([tile.x, tile.y, tile.z])

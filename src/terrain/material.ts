@@ -5,22 +5,29 @@ import {
   MeshBasicMaterial,
   MeshLambertMaterial,
   SRGBColorSpace,
-  Texture
+  type Texture
 } from 'three'
 
-import { applyColorFilter, colorFilter } from './color-filter'
-import { createCanvas2D, loadImage, releaseImage } from '../io/image'
+import {
+  type Canvas2D,
+  createCanvas2D,
+  loadImage,
+  releaseImage
+} from '../io/image'
 import type { TileImageSource } from '../sources/Source.class'
 import { type TileRegion, WHOLE_TILE } from '../sources/tile-source'
+import type { Tile } from './Tile.class'
 
 /**
- * How a surface is drawn. The terrain (the map's `material`) and the
- * buildings (their `material`, by default the map's) share these options.
+ * The look of a surface — the terrain's (the map's `material`) and, by
+ * default, its layers': a starting point for the built-in materials. For
+ * any other look, give the terrain a material factory (`create`) and the
+ * layers their own materials.
  */
 export interface MaterialOptions {
   /** `true` → lit `MeshLambertMaterial`, `false` → unlit `MeshBasicMaterial` */
   lights: boolean
-  /** Draw lines: the terrain's triangles, the buildings' edges. */
+  /** Draw lines: the terrain's triangles, the layers' edges. */
   wireframe: boolean
   fog: boolean
   /**
@@ -31,25 +38,60 @@ export interface MaterialOptions {
   color?: ColorRepresentation
 }
 
-export interface QuadTextureMaterialOptions extends MaterialOptions {
+/** A 2D canvas context: what `process` draws on. */
+export type Context2D = Canvas2D
+
+/**
+ * Draws on a tile's imagery once its four children are stitched, before it
+ * becomes a texture — on the CPU: tone it (`getImageData` /
+ * `putImageData`), blend in a hillshade, render your own data into it.
+ */
+export type ImageryProcessor = (
+  context: Context2D,
+  info: {
+    readonly width: number
+    readonly height: number
+    /** The terrain tile. */
+    readonly z: number
+    readonly x: number
+    readonly y: number
+  }
+) => void | Promise<void>
+
+/** What a terrain tile's material is made of. */
+export interface TerrainMaterialInput {
   /**
-   * A CSS filter of color functions for the imagery, e.g. `'grayscale(1)'`
-   * or `'saturate(0.4) brightness(1.1)'`, to tone it down to the buildings:
-   * `grayscale`, `sepia`, `saturate`, `hue-rotate`, `invert`, `opacity`,
-   * `brightness`, `contrast`. The library applies it to the pixels, so it
-   * looks the same in every browser (Safari has no canvas filters).
-   * `'none'` by default; an invalid filter is ignored with a warning.
+   * The tile's imagery: its four children at zoom + 1 stitched into one
+   * sRGB texture (`NW | NE / SW | SE`, matching the mesh UVs), or `null`
+   * without imagery. The tile owns and disposes it.
    */
-  filter?: string
+  texture: Texture | null
+  tile: Tile
+  /** The map's material options. */
+  options: TerrainMaterialOptions
 }
 
-export const defaultTextureOptions: Readonly<QuadTextureMaterialOptions> =
+/**
+ * Makes the material of a terrain tile — any material: PBR maps, a
+ * `ShaderMaterial`, a node material for `WebGPURenderer`. Called again for
+ * every texture and every `setMaterial()`; the material is the tile's,
+ * disposed when replaced (the imagery texture is not: the tile owns it).
+ */
+export type TerrainMaterialFactory = (input: TerrainMaterialInput) => Material
+
+export interface TerrainMaterialOptions extends MaterialOptions {
+  /** Draws on the stitched imagery before it becomes a texture. */
+  process?: ImageryProcessor
+  /** Makes the material; by default `createTerrainMaterial`, the look. */
+  create?: TerrainMaterialFactory
+}
+
+export const defaultMaterialOptions: Readonly<TerrainMaterialOptions> =
   Object.freeze({
     lights: true,
     wireframe: false,
     fog: true,
-    color: 0xffffff,
-    filter: 'none'
+    color: 0xffffff
   })
 
 /** Texture URLs of the four child tiles, in `[NW, SW, NE, SE]` order. */
@@ -79,8 +121,6 @@ export type QuadTextureInputs = readonly [
 
 export type QuadTextureCanvas = HTMLCanvasElement | OffscreenCanvas
 
-export type TileMaterial = MeshLambertMaterial | MeshBasicMaterial
-
 const isRejected = (
   result: PromiseSettledResult<unknown>
 ): result is PromiseRejectedResult => result.status === 'rejected'
@@ -99,8 +139,12 @@ const isRejected = (
 export async function loadQuadTexture(
   inputs: QuadTextureInputs,
   signal?: AbortSignal,
-  /** A CSS filter of color functions, e.g. `'grayscale(1)'` */
-  filter = 'none'
+  /** Draws on the stitched canvas (its context, width, height). */
+  process?: (
+    context: Context2D,
+    width: number,
+    height: number
+  ) => void | Promise<void>
 ): Promise<CanvasTexture<QuadTextureCanvas>> {
   const results = await Promise.allSettled(
     inputs.map((input) =>
@@ -126,11 +170,11 @@ export async function loadQuadTexture(
       )
     const width = Math.max(...tiles.map((tile) => size(tile, 'width')))
     const height = Math.max(...tiles.map((tile) => size(tile, 'height')))
-    const steps = colorFilter(filter)
     const { canvas, context } = createCanvas2D(
       width * 2,
       height * 2,
-      steps.length > 0 ? { willReadFrequently: true } : undefined
+      // processors mostly read the pixels
+      process ? { willReadFrequently: true } : undefined
     )
 
     const draw = ({ image, region }: QuadTextureTile, x: number, y: number) => {
@@ -155,10 +199,9 @@ export async function loadQuadTexture(
     draw(ne, width, 0)
     draw(sw, 0, height)
     draw(se, width, height)
-    if (steps.length > 0) {
-      const pixels = context.getImageData(0, 0, width * 2, height * 2)
-      applyColorFilter(pixels.data, steps)
-      context.putImageData(pixels, 0, 0)
+    if (process) {
+      await process(context, width * 2, height * 2)
+      signal?.throwIfAborted()
     }
 
     const texture = new CanvasTexture<QuadTextureCanvas>(canvas)
@@ -172,36 +215,23 @@ export async function loadQuadTexture(
   }
 }
 
-/** The terrain material: with the stitched imagery as `map`, or plain (`null`). */
-export function createQuadTextureMaterial(
-  map: Texture | null,
-  options: Partial<MaterialOptions> = {}
-): TileMaterial {
+/**
+ * The built-in terrain material, from the look: lit or unlit, with the
+ * imagery as its `map` tinted by `color` (or plain in `color` without
+ * imagery), in wireframe if asked.
+ */
+export function createTerrainMaterial({
+  texture,
+  options
+}: Pick<TerrainMaterialInput, 'texture'> & {
+  options: Partial<MaterialOptions>
+}): MeshLambertMaterial | MeshBasicMaterial {
   const { lights, wireframe, fog, color } = {
-    ...defaultTextureOptions,
+    ...defaultMaterialOptions,
     ...options
   }
-  const parameters = { map, color: color ?? 0xffffff, wireframe, fog }
+  const parameters = { map: texture, color: color ?? 0xffffff, wireframe, fog }
   return lights
     ? new MeshLambertMaterial(parameters)
     : new MeshBasicMaterial(parameters)
-}
-
-export async function QuadTextureMaterial(
-  inputs: QuadTextureInputs,
-  options: Partial<QuadTextureMaterialOptions> = {},
-  signal?: AbortSignal
-): Promise<TileMaterial> {
-  return createQuadTextureMaterial(
-    await loadQuadTexture(inputs, signal, options.filter),
-    options
-  )
-}
-
-/** Disposes a material together with its `map` texture. */
-export function disposeMaterial(material: Material) {
-  if ('map' in material && material.map instanceof Texture) {
-    material.map.dispose()
-  }
-  material.dispose()
 }

@@ -12,10 +12,10 @@ import {
   Vector3
 } from 'three'
 
-import { Utils } from '../geo/Utils.class'
-import type { Map, MapLayer } from './Map.class'
-import type { MaterialOptions } from './quad-texture-material'
-import type { Tile } from './Tile.class'
+import { Utils } from '../../geo/Utils.class'
+import type { Map, MapLayer } from '../../terrain/Map.class'
+import type { MaterialOptions } from '../../terrain/material'
+import type { Tile } from '../../terrain/Tile.class'
 
 export interface TerrainBaseOptions {
   /** Meters the base reaches below the lowest point of the terrain. */

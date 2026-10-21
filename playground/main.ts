@@ -19,12 +19,14 @@ import { MapControls } from 'three/addons/controls/MapControls.js'
 import type { WebGPURenderer } from 'three/webgpu'
 
 import {
-  type BuildingSourceApi,
   type BuildingSourceProps,
   Buildings,
   type ElevationApi,
   type ElevationSourceProps,
+  type ImageryProcessor,
   Map,
+  type RoadSourceProps,
+  Roads,
   type SourceProps
 } from '../src'
 import type { Playground } from './types'
@@ -35,7 +37,9 @@ const lights = params.get('lights') !== '0'
 const wireframe = params.get('wireframe') === '1'
 const api = params.get('api') ?? 'eox'
 const elevationApi = (params.get('elevation') ?? 'aws') as ElevationApi
-const buildingsApi = params.get('buildings') as BuildingSourceApi | null
+// openfreemap, versatiles, overpass, maptiler, mapbox, protomaps
+const buildingsApi = params.get('buildings')
+const roadsApi = params.get('roads')
 // for the presets that need one (mapbox, maptiler, protomaps)
 const token = params.get('token') ?? ''
 const nTiles = Number(params.get('nTiles') ?? 3)
@@ -54,10 +58,21 @@ const zoom = Number(params.get('zoom') ?? 11)
 const alps = !params.has('lat') && !params.has('lon') && zoom === 11
 const tileSize = 600
 
-// a hex color without '#' (e.g. color=e9e4da), and a CSS filter for imagery
+// a hex color without '#' (e.g. color=e9e4da); gray=1 tones the imagery
 const color = params.has('color') ? `#${params.get('color') ?? ''}` : undefined
-const filter = params.get('filter') ?? undefined
+const gray = params.get('gray') === '1'
 const edges = params.get('edges') === '1'
+
+/** Imagery in grayscale (Rec. 709 luma), drawn on its stitched canvas. */
+const grayscale: ImageryProcessor = (context, { width, height }) => {
+  const pixels = context.getImageData(0, 0, width, height)
+  const { data } = pixels
+  for (let i = 0; i < data.length; i += 4) {
+    const luma = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]
+    data[i] = data[i + 1] = data[i + 2] = luma
+  }
+  context.putImageData(pixels, 0, 0)
+}
 
 const imagery: SourceProps =
   api === 'none' || api === 'osm'
@@ -119,7 +134,7 @@ const map = new Map({
     lights,
     wireframe,
     ...(color ? { color } : {}),
-    ...(filter ? { filter } : {})
+    ...(gray ? { process: grayscale } : {})
   }
 })
 const buildings = buildingsApi
@@ -128,6 +143,11 @@ const buildings = buildingsApi
         source: { api: buildingsApi, token } as BuildingSourceProps,
         edges
       })
+    )
+  : undefined
+const roads = roadsApi
+  ? map.addLayer(
+      new Roads({ source: { api: roadsApi, token } as RoadSourceProps })
     )
   : undefined
 scene.add(map.terrain)
@@ -217,10 +237,11 @@ const status = [
   ...(buildingsApi
     ? [`buildings ${buildingsApi}${edges ? ' + edges' : ''}`]
     : []),
+  ...(roadsApi ? [`roads ${roadsApi}`] : []),
   `lights ${lights ? 'on' : 'off'}`,
   ...(wireframe ? ['wireframe'] : []),
   ...(color ? [color] : []),
-  ...(filter ? [filter] : [])
+  ...(gray ? ['gray'] : [])
 ].join(' · ')
 if (info) info.textContent = `${status} · click the terrain`
 const credits = document.querySelector('#credits')
@@ -254,9 +275,27 @@ renderer.domElement.addEventListener('click', (event) => {
     lon: building.lon
   }
   if (building) {
+    roads?.highlight()
     if (info) {
       const height = building.feature.height
       info.textContent = `${status} · building ${String(building.feature.id ?? '')} · ${height === undefined ? '?' : Math.round(height)} m`
+    }
+    return
+  }
+
+  const road = roads?.pick(raycaster)
+  roads?.highlight(road?.feature)
+  playground.lastRoad = road && {
+    id: road.feature.id,
+    kind: road.feature.kind,
+    bridge: road.feature.bridge === true,
+    lat: road.lat,
+    lon: road.lon
+  }
+  if (road) {
+    if (info) {
+      const { kind, bridge, id } = road.feature
+      info.textContent = `${status} · ${kind}${bridge ? ' bridge' : ''} ${String(id ?? '')}`
     }
     return
   }
@@ -275,11 +314,15 @@ renderer.domElement.addEventListener('click', (event) => {
 const playground: Playground = {
   map,
   buildings,
+  roads,
+  camera,
+  controls,
   revision: REVISION,
   backend,
   ready,
   lastPick: undefined,
   lastBuilding: undefined,
+  lastRoad: undefined,
   // tiles past the placeholder: textured, or plain without imagery
   texturedTiles: () =>
     Object.values(map.tileCache).filter(
