@@ -1,4 +1,4 @@
-import{C as e,D as t,E as n,i as r,p as i,r as a}from"./index-Bbry8jzD.js";var o=class{parse(o){let s=``,c=0,l=0,u=0,d=new t,f=new a,p=new t,m=new n,h=[];function g(e){let t=0,n=0,r=0,a=e.geometry,o=new i,f=a.getAttribute(`position`),g=a.getAttribute(`normal`),_=a.getAttribute(`uv`),v=a.getIndex();if(s+=`o `+e.name+`
+import{F as e,P as t,d as n,f as r,j as i,x as a}from"./index-BrA0zPZl.js";var o=class{parse(o){let s=``,c=0,l=0,u=0,d=new e,f=new n,p=new e,m=new t,h=[];function g(e){let t=0,n=0,r=0,i=e.geometry,o=new a,f=i.getAttribute(`position`),g=i.getAttribute(`normal`),_=i.getAttribute(`uv`),v=i.getIndex();if(s+=`o `+e.name+`
 `,e.material&&e.material.name&&(s+=`usemtl `+e.material.name+`
 `),f!==void 0)for(let n=0,r=f.count;n<r;n++,t++)d.fromBufferAttribute(f,n),d.applyMatrix4(e.matrixWorld),s+=`v `+d.x+` `+d.y+` `+d.z+`
 `;if(_!==void 0)for(let e=0,t=_.count;e<t;e++,r++)m.fromBufferAttribute(_,e),s+=`vt `+m.x+` `+m.y+`
@@ -9,7 +9,7 @@ import{C as e,D as t,E as n,i as r,p as i,r as a}from"./index-Bbry8jzD.js";var o
 `,i!==void 0)for(let n=0,r=i.count;n<r;n++,t++)d.fromBufferAttribute(i,n),d.applyMatrix4(e.matrixWorld),s+=`v `+d.x+` `+d.y+` `+d.z+`
 `;if(r===`Line`){s+=`l `;for(let e=1,t=i.count;e<=t;e++)s+=c+e+` `;s+=`
 `}if(r===`LineSegments`)for(let e=1,t=e+1,n=i.count;e<n;e+=2,t=e+1)s+=`l `+(c+e)+` `+(c+t)+`
-`;c+=t}function v(t){let n=0,i=t.geometry,a=i.getAttribute(`position`),o=i.getAttribute(`color`);if(s+=`o `+t.name+`
-`,a!==void 0){for(let i=0,c=a.count;i<c;i++,n++)d.fromBufferAttribute(a,i),d.applyMatrix4(t.matrixWorld),s+=`v `+d.x+` `+d.y+` `+d.z,o!==void 0&&(f.fromBufferAttribute(o,i),r.workingToColorSpace(f,e),s+=` `+f.r+` `+f.g+` `+f.b),s+=`
+`;c+=t}function v(e){let t=0,n=e.geometry,a=n.getAttribute(`position`),o=n.getAttribute(`color`);if(s+=`o `+e.name+`
+`,a!==void 0){for(let n=0,c=a.count;n<c;n++,t++)d.fromBufferAttribute(a,n),d.applyMatrix4(e.matrixWorld),s+=`v `+d.x+` `+d.y+` `+d.z,o!==void 0&&(f.fromBufferAttribute(o,n),r.workingToColorSpace(f,i),s+=` `+f.r+` `+f.g+` `+f.b),s+=`
 `;s+=`p `;for(let e=1,t=a.count;e<=t;e++)s+=c+e+` `;s+=`
-`}c+=n}return o.traverse(function(e){e.isMesh===!0&&g(e),e.isLine===!0&&_(e),e.isPoints===!0&&v(e)}),s}};export{o as OBJExporter};
+`}c+=t}return o.traverse(function(e){e.isMesh===!0&&g(e),e.isLine===!0&&_(e),e.isPoints===!0&&v(e)}),s}};export{o as OBJExporter};
