@@ -13,18 +13,17 @@ import {
   type ElevationPixels,
   type ElevationSourceProps,
   Map,
-  loadQuadTexture,
   Source,
   type SourceProps,
   Tile,
   type TileRequest
 } from '../../src'
+import { loadTextureGrid } from '../../src/terrain/texture'
 import { raycastZ, terrariumPixels } from '../support/helpers'
 
-vi.mock('../../src/terrain/material', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/terrain/material')>()),
+vi.mock('../../src/terrain/texture', () => ({
   // no canvas in Node: a texture stands in for the stitched imagery
-  loadQuadTexture: vi.fn(() => Promise.resolve(new Texture()))
+  loadTextureGrid: vi.fn(() => Promise.resolve(new Texture()))
 }))
 
 const createMap = (
@@ -368,8 +367,8 @@ describe('Tile', () => {
     } as unknown as ImageBitmap
     const childLoaders = async (tile: Tile) => {
       await tile.loadImagery()
-      const [inputs] = vi.mocked(loadQuadTexture).mock.calls.at(-1) ?? []
-      if (!inputs) throw new Error('loadQuadTexture was not called')
+      const [inputs] = vi.mocked(loadTextureGrid).mock.calls.at(-1) ?? []
+      if (!inputs) throw new Error('loadTextureGrid was not called')
       return Promise.all(
         inputs.map((input) =>
           typeof input === 'string' ? Promise.resolve(input) : input()
@@ -395,6 +394,35 @@ describe('Tile', () => {
         image,
         region: { left: 0, top: 0, size: 1 }
       })
+    })
+
+    it('loads its own imagery tile, or sixteen, by imageryZoomOffset', async () => {
+      const tiles = async (imageryZoomOffset: number) => {
+        const load = vi.fn((_tile: TileRequest) => Promise.resolve(image))
+        const map = new Map({
+          source: { load },
+          location: { lat: 46.57634, lon: 7.9904 },
+          options: { tileSegments: 4, imageryZoomOffset }
+        })
+        await childLoaders(new Tile(map, 11, 10, 20))
+        return load.mock.calls.map(
+          ([{ z, x, y }]) => `${String(z)}/${String(x)}/${String(y)}`
+        )
+      }
+
+      expect(await tiles(0)).toEqual(['11/10/20'])
+      // column by column from the west, each from the north
+      const sixteen = await tiles(2)
+      expect(sixteen).toHaveLength(16)
+      expect(sixteen.slice(0, 5)).toEqual([
+        '13/40/80',
+        '13/40/81',
+        '13/40/82',
+        '13/40/83',
+        '13/41/80'
+      ])
+      expect(await tiles(9)).toHaveLength(64)
+      expect(await tiles(-2)).toEqual(['11/10/20'])
     })
 
     it('cuts children beyond maxZoom out of one shared ancestor', async () => {
@@ -432,7 +460,7 @@ describe('Tile', () => {
       await tile.loadTexture()
 
       const material = tile.mesh.material as MeshLambertMaterial
-      expect(loadQuadTexture).not.toHaveBeenCalled()
+      expect(loadTextureGrid).not.toHaveBeenCalled()
       expect(material.map).toBeNull()
       expect(material.color.getHex()).toBe(0x336699)
       expect(material.wireframe).toBe(true)
@@ -446,7 +474,7 @@ describe('Tile', () => {
       const tile = new Tile(map, 11, 10, 20)
 
       await tile.loadImagery()
-      const [, , processor] = vi.mocked(loadQuadTexture).mock.calls.at(-1) ?? []
+      const [, , processor] = vi.mocked(loadTextureGrid).mock.calls.at(-1) ?? []
       const context = {} as CanvasRenderingContext2D
       await processor?.(context, 512, 256)
 

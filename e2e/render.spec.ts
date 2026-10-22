@@ -255,6 +255,48 @@ for (const renderer of ['webgl', 'webgpu'] as const) {
   })
 }
 
+test('textures a tile with 4^imageryZoomOffset imagery tiles', async ({
+  page
+}) => {
+  const errors = collectErrors(page)
+  // one tile: its own imagery tile, 1069/723 — the mid-gray of the SE colors
+  const one = await openPlayground(
+    page,
+    'renderer=webgl&view=top&lights=0&nTiles=1&imageryZoomOffset=0'
+  )
+  expect([...one.requests.keys()]).toEqual(['1069/723'])
+  const corners = [
+    tilePoint(page, 0.125, 0.125),
+    tilePoint(page, 0.375, 0.125),
+    tilePoint(page, 0.125, 0.375),
+    tilePoint(page, 0.875, 0.875)
+  ]
+  for (const pixel of await samplePixels(
+    page,
+    await page.locator('canvas').screenshot(),
+    corners
+  )) {
+    expectColor(pixel, QUADRANT_COLORS.se, 2, 'one tile')
+  }
+
+  // sixteen: the colors of the 2 × 2 pattern repeat in each quadrant
+  const sixteen = await openPlayground(
+    page,
+    'renderer=webgl&view=top&lights=0&nTiles=1&imageryZoomOffset=2'
+  )
+  expect(sixteen.requests.size).toBe(16)
+  const [nw, ne, sw, far] = await samplePixels(
+    page,
+    await page.locator('canvas').screenshot(),
+    corners
+  )
+  expectColor(nw, QUADRANT_COLORS.nw, 2, 'nw')
+  expectColor(ne, QUADRANT_COLORS.ne, 2, 'ne')
+  expectColor(sw, QUADRANT_COLORS.sw, 2, 'sw')
+  expectColor(far, QUADRANT_COLORS.se, 2, 'se')
+  expect(errors).toEqual([])
+})
+
 test('click → map.pick returns the geolocation under the pointer', async ({
   page
 }) => {
@@ -336,6 +378,51 @@ test('draws buildings from vector tiles on the terrain and picks them', async ({
   expect(picked).toMatchObject({ id: 99, height: 60 })
   expect(errors).toEqual([])
 })
+
+for (const renderer of ['webgl', 'webgpu'] as const) {
+  test(`hides the layers' tiles beyond maxDistance from the camera (${renderer})`, async ({
+    page
+  }) => {
+    const errors = collectErrors(page)
+    const zoom = 14
+    const center = Utils.position2tile(46.57634, 7.9904, zoom)
+    const [a, b] = [410, 1638]
+    const tile = encodeVectorTile([
+      {
+        name: 'building',
+        features: [
+          {
+            type: 3,
+            properties: { render_height: 60 },
+            geometry: [[a, a, b, a, b, b, a, b]]
+          }
+        ]
+      }
+    ])
+    const query = await rendererQuery(page, renderer)
+    const roof = async (maxDistance: number) => {
+      await openPlayground(
+        page,
+        `${query}&view=top&lights=0&nTiles=1&zoom=${zoom}&buildings=openfreemap&maxDistance=${maxDistance}`,
+        {
+          vectorTiles: (z, x, y) =>
+            z === zoom && x === center.x && y === center.y ? tile : undefined
+        }
+      )
+      const [pixel] = await samplePixels(
+        page,
+        await page.locator('canvas').screenshot(),
+        [tilePoint(page, 0.25, 0.25)]
+      )
+      return pixel
+    }
+
+    // the top view's camera is kilometers above the tile
+    expectColor(await roof(1e7), [255, 255, 255], 2, 'near enough')
+    expectColor(await roof(100), QUADRANT_COLORS.nw, 2, 'too far')
+    expect(errors).toEqual([])
+  })
+}
 
 test('draws terrain without imagery in its color, buildings in tone', async ({
   page

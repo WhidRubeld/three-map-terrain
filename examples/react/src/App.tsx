@@ -128,6 +128,8 @@ const PLACES = {
           spacing: (_zoom, feature) => (feature.kind === 'scrub' ? 5 : 9),
           plant,
           avoid: [water, roads, buildings],
+          // trunks are thinner than a pixel from afar: not drawn there
+          maxDistance: (part) => (part === 'trunks' ? 1200 : undefined),
           material: byPart
         })
       )

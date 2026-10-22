@@ -17,6 +17,7 @@ import {
   type FeatureHit,
   FeatureLayer,
   type GroundCover,
+  type LayerDistance,
   type LayerMaterial
 } from '../FeatureLayer.class'
 import type { Rect, TileContext } from '../TileContext.class'
@@ -75,6 +76,12 @@ export interface TreesOptions {
   maxPerTile: number
   /** Color `highlight()` uses by default. */
   highlightColor: ColorRepresentation
+  /**
+   * Hides the trees of tiles farther than this from the camera, in meters —
+   * or per part: `(part) => (part === 'trunks' ? 800 : 2500)`, trunks
+   * first (crowns hide them from afar). See `FeatureLayer.maxDistance`.
+   */
+  maxDistance?: LayerDistance
   /** Terrain tiles below this zoom get no trees. */
   minZoom: number
 }
@@ -257,6 +264,7 @@ export class Trees extends FeatureLayer<TreeFeature> {
       material: options.material,
       highlightColor: options.highlightColor,
       minZoom: options.minZoom,
+      maxDistance: options.maxDistance,
       name: 'trees'
     })
     this.options = options

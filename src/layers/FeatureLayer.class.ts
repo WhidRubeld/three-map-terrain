@@ -1,6 +1,7 @@
 import {
   type BufferAttribute,
   BufferGeometry,
+  type Camera,
   Color,
   type ColorRepresentation,
   Float32BufferAttribute,
@@ -9,6 +10,7 @@ import {
   type Intersection,
   LineBasicMaterial,
   LineSegments,
+  LOD,
   type Material,
   Matrix4,
   Mesh,
@@ -54,6 +56,13 @@ export type LayerMaterial =
 /** Draws the given features with the layer's own geometry — or all of them. */
 export type DrawFeatures<F> = (features?: readonly F[]) => void
 
+/**
+ * Meters from the camera to a tile beyond which the layer's objects there
+ * are hidden: one distance for every part, or one per part (`undefined`:
+ * always shown).
+ */
+export type LayerDistance = number | ((part: string) => number | undefined)
+
 export interface FeatureLayerOptions<F> {
   /** Where the features come from. */
   source: FeatureSource<F>
@@ -70,6 +79,12 @@ export interface FeatureLayerOptions<F> {
   highlightColor?: ColorRepresentation
   /** Terrain tiles below this zoom get nothing. */
   minZoom?: number
+  /**
+   * Hides the layer's objects on tiles farther than this from the camera,
+   * in meters — fewer triangles to draw on a wide map; a function gives
+   * each part its own, e.g. trunks hidden before crowns. See `maxDistance`.
+   */
+  maxDistance?: LayerDistance
   /** Name of the layer's group. */
   name?: string
 }
@@ -130,6 +145,8 @@ interface TileEntry<F> {
   /** The outlines of copies in wireframe, sharing their matrices. */
   outlines: globalThis.Map<InstancedMesh, InstancedMesh>
   overlays: Object3D[]
+  /** Meters from the camera when last rendered, for `maxDistance`. */
+  meters: number
   done: Promise<void>
 }
 
@@ -138,6 +155,25 @@ const OCCLUSION_TOLERANCE = 0.01
 
 const FOCUS = new Vector3()
 const MATRIX = new Matrix4()
+const CAMERA = new Vector3()
+
+/**
+ * Runs before every render of the scene it is in, with the camera — as
+ * three.js updates an `LOD` (on WebGL and WebGPU): the layer hides what is
+ * too far then.
+ */
+class BeforeRender extends LOD {
+  constructor(private readonly hook?: (camera: Camera) => void) {
+    super()
+    this.name = 'distance'
+    // nothing to show, pick or export
+    this.userData.export = false
+  }
+
+  override update(camera: Camera) {
+    this.hook?.(camera)
+  }
+}
 
 /** Overlays of highlighted features are drawn in front of them. */
 const HIGHLIGHT_OFFSET = { factor: -2, units: -8 }
@@ -216,6 +252,10 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
   private loadingTiles = 0
   private readonly drawer: Drawer
   private readonly drawnListeners = new Set<(tile: Tile) => void>()
+  private distance: LayerDistance | undefined
+  private readonly beforeRender = new BeforeRender((camera) => {
+    this.cull(camera)
+  })
   /** Changes whenever a tile's objects do: `covers()` caches by it. */
   private version = 0
   private coverCache:
@@ -233,6 +273,7 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
     material,
     highlightColor = 0xffb020,
     minZoom = 0,
+    maxDistance,
     name = 'features'
   }: FeatureLayerOptions<F>) {
     this.source = source
@@ -241,6 +282,7 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
     this.highlightColor = highlightColor
     this.minZoom = minZoom
     this.group.name = name
+    this.maxDistance = maxDistance
     // names the layer in warnings: 'buildings' → 'Buildings'
     this.sourceTiles = new SourceTiles(
       name.charAt(0).toUpperCase() + name.slice(1),
@@ -261,6 +303,30 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
     let count = 0
     for (const entry of this.tiles.values()) count += entry.features.length
     return count
+  }
+
+  /**
+   * Meters from the camera beyond which a tile's objects are hidden (see
+   * `LayerDistance`), measured to the nearest point of its terrain every
+   * frame; `undefined` shows them all. Objects of `ctx.add()` are yours to
+   * hide (e.g. three.js `LOD`s). Hidden objects are not picked, but drawn
+   * (in the order of `map.focus`) and exported.
+   */
+  get maxDistance(): LayerDistance | undefined {
+    return this.distance
+  }
+
+  set maxDistance(distance: LayerDistance | undefined) {
+    this.distance = distance
+    const { group, beforeRender } = this
+    if (distance === undefined) {
+      beforeRender.removeFromParent()
+      for (const entry of this.tiles.values()) this.showNear(entry)
+    } else if (beforeRender.parent !== group) {
+      // first: what it hides is not drawn in the same frame
+      group.add(beforeRender)
+      group.children.unshift(group.children.pop() ?? beforeRender)
+    }
   }
 
   // --- MapLayer -----------------------------------------------------------
@@ -307,6 +373,7 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
       instanced: new globalThis.Map<InstancedMesh, number[]>(),
       outlines: new globalThis.Map<InstancedMesh, InstancedMesh>(),
       overlays: [],
+      meters: 0,
       done: Promise.resolve()
     }
     this.tiles.set(tile, entry)
@@ -470,7 +537,10 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
     const targets: Object3D[] = []
     for (const entry of this.tiles.values()) {
       for (const object of entry.objects) {
-        if ((object as Partial<Mesh>).isMesh || entry.custom.has(object)) {
+        if (
+          object.visible &&
+          ((object as Partial<Mesh>).isMesh || entry.custom.has(object))
+        ) {
           targets.push(object)
         }
       }
@@ -871,6 +941,8 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
       this.objects.set(object, entry)
       this.group.add(object)
     }
+    // as far as the camera was
+    this.showNear(entry)
     this.outline(entry)
     this.paint(entry)
     this.drawn(entry.tile)
@@ -933,12 +1005,50 @@ export class FeatureLayer<F> implements MapLayer, GroundCover {
       outline.boundingSphere = mesh.boundingSphere
       outline.position.copy(mesh.position)
       outline.name = `${mesh.name} outline`
+      outline.visible = mesh.visible
       // the copies are picked, and exported
       outline.raycast = () => undefined
       outline.userData.export = false
       entry.outlines.set(mesh, outline)
       this.group.add(outline)
     }
+  }
+
+  /** Hides the parts of the tiles farther from the camera than `maxDistance`. */
+  private cull(camera: Camera) {
+    const { map } = this
+    if (!map || this.distance === undefined) return
+    const { tileSize, zScale, zoom } = map.options
+    const metersPerUnit = Utils.tileWidth(map.geoLocation.lat, zoom) / tileSize
+    // the camera in the terrain's coordinates, where the tiles are
+    const { x, y, z } = map.terrain.worldToLocal(
+      CAMERA.setFromMatrixPosition(camera.matrixWorld)
+    )
+    const scale = (camera as Partial<{ zoom: number }>).zoom ?? 1
+    const half = tileSize / 2
+    for (const entry of this.tiles.values()) {
+      const { position } = entry.tile.mesh
+      const box = entry.tile.geometry.boundingBox
+      const [low, high] = [
+        position.z + (box?.min.z ?? 0),
+        position.z + (box?.max.z ?? 0)
+      ]
+      const dx = Math.max(0, Math.abs(x - position.x) - half) * metersPerUnit
+      const dy = Math.max(0, Math.abs(y - position.y) - half) * metersPerUnit
+      const dz = zScale > 0 ? Math.max(0, z - high, low - z) / zScale : 0
+      entry.meters = Math.hypot(dx, dy, dz) / scale
+      this.showNear(entry)
+    }
+  }
+
+  /** Shows the parts of a tile within their `maxDistance` (all without one). */
+  private showNear(entry: TileEntry<F>) {
+    const { distance } = this
+    for (const [object, { part }] of entry.parts) {
+      const limit = typeof distance === 'function' ? distance(part) : distance
+      object.visible = limit === undefined || entry.meters <= limit
+    }
+    for (const [mesh, outline] of entry.outlines) outline.visible = mesh.visible
   }
 
   private removeObjects(entry: TileEntry<F>) {

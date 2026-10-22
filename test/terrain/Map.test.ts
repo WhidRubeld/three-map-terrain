@@ -20,7 +20,7 @@ import {
   Source,
   type Tile
 } from '../../src'
-import { loadQuadTexture } from '../../src/terrain/material'
+import { loadTextureGrid } from '../../src/terrain/texture'
 import { FakeFileReader } from '../support/browser-fakes'
 import { raycastZ, terrariumPixels } from '../support/helpers'
 
@@ -43,10 +43,9 @@ vi.mock('../../src/io/image', async (importOriginal) => ({
   loadImageData
 }))
 
-vi.mock('../../src/terrain/material', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/terrain/material')>()),
+vi.mock('../../src/terrain/texture', () => ({
   // no canvas in Node: a texture stands in for the stitched imagery
-  loadQuadTexture: vi.fn(() => Promise.resolve(new Texture()))
+  loadTextureGrid: vi.fn(() => Promise.resolve(new Texture()))
 }))
 
 const SIZE = 16
@@ -331,7 +330,7 @@ describe('Map', () => {
       const { map: texture } = materialOf(map)
       const layer = { materialChanged: vi.fn() }
       map.addLayer(layer)
-      vi.mocked(loadQuadTexture).mockClear()
+      vi.mocked(loadTextureGrid).mockClear()
 
       map.setMaterial({ color: 0x808080, wireframe: true })
 
@@ -339,7 +338,7 @@ describe('Map', () => {
       expect(material.map).toBe(texture)
       expect(material.color.getHex()).toBe(0x808080)
       expect(material.wireframe).toBe(true)
-      expect(loadQuadTexture).not.toHaveBeenCalled()
+      expect(loadTextureGrid).not.toHaveBeenCalled()
       expect(layer.materialChanged).toHaveBeenCalledWith(map)
 
       map.setMaterial({ lights: false })
@@ -380,19 +379,19 @@ describe('Map', () => {
       const map = createMap()
       await map.init()
       await map.whenReady()
-      vi.mocked(loadQuadTexture).mockClear()
+      vi.mocked(loadTextureGrid).mockClear()
 
       const process = vi.fn()
       map.setMaterial({ process })
       await map.whenReady()
-      expect(loadQuadTexture).toHaveBeenCalledTimes(9)
-      expect(vi.mocked(loadQuadTexture).mock.calls[0][2]).toBeTypeOf('function')
+      expect(loadTextureGrid).toHaveBeenCalledTimes(9)
+      expect(vi.mocked(loadTextureGrid).mock.calls[0][2]).toBeTypeOf('function')
 
-      vi.mocked(loadQuadTexture).mockClear()
+      vi.mocked(loadTextureGrid).mockClear()
       const custom = new MeshBasicMaterial({ color: 0xff00ff })
       map.setMaterial({ create: () => custom })
       await map.whenReady()
-      expect(loadQuadTexture).not.toHaveBeenCalled()
+      expect(loadTextureGrid).not.toHaveBeenCalled()
       for (const tile of Object.values(map.tileCache)) {
         expect(tile.mesh.material).toBe(custom)
       }
@@ -402,12 +401,12 @@ describe('Map', () => {
   describe('whenReady', () => {
     it('waits for the textures and the layers', async () => {
       let release: (() => void) | undefined
-      vi.mocked(loadQuadTexture).mockImplementationOnce(
+      vi.mocked(loadTextureGrid).mockImplementationOnce(
         () =>
           new Promise((resolve) => {
             release = () => {
               resolve(
-                new Texture() as Awaited<ReturnType<typeof loadQuadTexture>>
+                new Texture() as Awaited<ReturnType<typeof loadTextureGrid>>
               )
             }
           })
@@ -421,7 +420,7 @@ describe('Map', () => {
 
       await map.init()
       await vi.waitFor(() => {
-        expect(loadQuadTexture).toHaveBeenCalledTimes(9)
+        expect(loadTextureGrid).toHaveBeenCalledTimes(9)
       })
       expect(ready).toBe(false)
       release?.()

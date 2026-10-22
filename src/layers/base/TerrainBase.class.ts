@@ -144,7 +144,8 @@ export class TerrainBase implements MapLayer {
 
     let low = Infinity
     for (const tile of tiles) {
-      tile.geometry.computeBoundingBox()
+      // kept up to date by the tile
+      if (!tile.geometry.boundingBox) tile.geometry.computeBoundingBox()
       low = Math.min(low, tile.geometry.boundingBox?.min.z ?? Infinity)
     }
     const bottom = low - this.options.depth * zScale

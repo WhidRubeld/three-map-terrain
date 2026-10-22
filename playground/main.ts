@@ -50,6 +50,11 @@ const treesApi = params.get('trees')
 const token = params.get('token') ?? ''
 const nTiles = Number(params.get('nTiles') ?? 3)
 const tileSegments = Number(params.get('segments') ?? 100)
+const imageryZoomOffset = Number(params.get('imageryZoomOffset') ?? 1)
+// meters from the camera beyond which the layers hide their tiles
+const maxDistance = params.has('maxDistance')
+  ? Number(params.get('maxDistance'))
+  : undefined
 const topView = params.get('view') === 'top'
 // WebGPURenderer with its WebGL2 backend (for software WebGPU adapters in CI)
 const forceWebGL = params.get('forceWebGL') === '1'
@@ -131,6 +136,7 @@ const map = new Map({
   options: {
     nTiles,
     tileSegments,
+    imageryZoomOffset,
     zoom,
     tileSize,
     ...(alps ? {} : { exaggeration: Number(params.get('exaggeration') ?? 1) }),
@@ -147,18 +153,25 @@ const buildings = buildingsApi
   ? map.addLayer(
       new Buildings({
         source: { api: buildingsApi, token } as BuildingSourceProps,
-        edges
+        edges,
+        maxDistance
       })
     )
   : undefined
 const roads = roadsApi
   ? map.addLayer(
-      new Roads({ source: { api: roadsApi, token } as RoadSourceProps })
+      new Roads({
+        source: { api: roadsApi, token } as RoadSourceProps,
+        maxDistance
+      })
     )
   : undefined
 const water = waterApi
   ? map.addLayer(
-      new Water({ source: { api: waterApi, token } as WaterSourceProps })
+      new Water({
+        source: { api: waterApi, token } as WaterSourceProps,
+        maxDistance
+      })
     )
   : undefined
 // clear of the water, roads and buildings shown
@@ -166,7 +179,8 @@ const trees = treesApi
   ? map.addLayer(
       new Trees({
         source: { api: treesApi, token } as TreeSourceProps,
-        avoid: [water, roads, buildings].filter((layer) => layer !== undefined)
+        avoid: [water, roads, buildings].filter((layer) => layer !== undefined),
+        maxDistance
       })
     )
   : undefined
@@ -339,6 +353,7 @@ const playground: Playground = {
   roads,
   water,
   trees,
+  renderer,
   camera,
   controls,
   revision: REVISION,

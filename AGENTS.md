@@ -23,9 +23,12 @@ src/                      library (the only published code, plus dist/)
     Map.class.ts          Map: grid, loading, seams, positions, layers (MapLayer),
                           setSource/setMaterial, whenReady, export
     Tile.class.ts         Tile: elevation → PlaneGeometry, imagery and material, seams
+    grid.ts               (internal) the tile's grid: normals of a region,
+                          bounds, raycast over the cells a ray crosses
     material.ts           MaterialOptions (the look), TerrainMaterialOptions
-                          (process, create), 4 child tiles → one CanvasTexture,
-                          createTerrainMaterial
+                          (process, create), loadQuadTexture, createTerrainMaterial
+    texture.ts            (internal) loadTextureGrid: k × k imagery tiles → one
+                          CanvasTexture
   sources/                where data comes from
     tile-source.ts        TileRequest, URL templates, fallback to ancestors
     Source.class.ts       imagery: presets / url / load / none
@@ -155,9 +158,15 @@ depends on the published package. After a release, bump it there.
   `syncCorner` gives each 4-tile corner one value (the exact pixel of the
   tile whose top-left it is, else the best loaded approximation). The
   "never shows walls or cracks while tiles are still loading" test guards this.
-- **Texture**: each tile is textured with its four children at `zoom + 1`,
-  drawn into one 2×2 canvas (`NW | NE / SW | SE`, `flipY` maps canvas top to
-  north), handed to the map's `process` (CPU: `getImageData`/`putImageData`
+  Normals and bounds come from `grid.ts`, not `computeVertexNormals`: the
+  same area-weighted normals, for the vertices around the rows/columns that
+  changed (`updateGeometry(rows?, columns?)`: a seam refreshes two rows, a
+  corner one vertex's ring) — on 256 segments the full recomputes were
+  ~800 ms of long tasks per 5 × 5 load.
+- **Texture**: each tile is textured with its four children at `zoom + 1`
+  — `4^imageryZoomOffset` tiles at `zoom + imageryZoomOffset` (0–3, default
+  1), `loadTextureGrid`, column by column — drawn into one canvas (2×2:
+  `NW | NE / SW | SE`, `flipY` maps canvas top to north), handed to the map's `process` (CPU: `getImageData`/`putImageData`
   or any drawing; the context is created `willReadFrequently` then) →
   `CanvasTexture` with `SRGBColorSpace`. The tile owns that texture
   (`Tile.texture`) and disposes it; the material is made by the map's
@@ -195,7 +204,11 @@ depends on the published package. After a release, bump it there.
   - `pick(raycaster)` intersects `map.terrain.children` and converts the hit
     with `worldToLocal` + `getLocation`. `Tile.updateGeometry()` must follow
     any height change: it refreshes normals and the bounding box/sphere that
-    raycasting and frustum culling rely on.
+    raycasting and frustum culling rely on. Tile meshes raycast with
+    `raycastGrid` (`mesh.raycast`): the cells under the ray's path through
+    the bounding box, both triangles each — the same intersections as
+    `Mesh.raycast` (tests compare them), falling back to it for geometry
+    that is not an untouched grid.
 - **Lifecycle**: `Tile.dispose()` aborts in-flight requests (`AbortController`)
   and disposes geometry/material/texture; `Map.clean()` disposes every tile.
   Results that arrive after disposal are discarded. The shared placeholder
@@ -272,13 +285,26 @@ depends on the published package. After a release, bump it there.
   - `covers()` caches the 3 × 3 tiles' footprints for the tile of the last
     point (`version` bumps whenever objects change): Trees ask for every
     candidate tree.
+  - `maxDistance` (option and property; meters, or per part): a
+    `BeforeRender` — an `LOD` subclass, first child of `group` while set —
+    is updated by the renderer (WebGL and WebGPU) before each render with
+    the camera; it measures each tile's distance to the camera (the nearest
+    point of its terrain box, horizontal meters and `z / zScale`, divided by
+    `camera.zoom` like `LOD`), stores it (`entry.meters`) and sets the parts'
+    `visible` (outlines follow). A tile drawn again takes the last distance
+    at once. Hidden objects are drawn, exported, never picked; objects of
+    `ctx.add()` are left alone.
 - **Draping** (`drape.ts`, `TileContext.drapeConvex`): a convex polygon in
   grid coordinates (`col`, `row`: cells 1 × 1, rows south) is cut into
   bands, cells and the two triangles of each cell (diagonal
   `col + row = c + r + 1`, as PlaneGeometry and `heightAt`); every piece lies
   in one triangle, so heights and normals sampled there (`TileSurface`,
   same weights as `heightAt`) put it exactly on the mesh. Vertices shared
-  by pieces of one polygon are merged. Lines (`drapePath`) are split at
+  by pieces of one polygon are merged. `cutPolygon` clips into reused
+  scratch arrays: `emit(piece, length)` must read the piece before
+  returning (a test checks it cuts exactly what `clipHalfPlane` step by
+  step does). The builders (`SurfaceBuilder`…) write into growing typed
+  arrays. Lines (`drapePath`) are split at
   every grid crossing (`gridCrossings`). Draped parts need a polygon offset
   (`surface`/`rails` get factor −1, units −4).
 - **Buildings** (`src/layers/buildings/`):
@@ -303,7 +329,9 @@ depends on the published package. After a release, bump it there.
     `@mapbox/vector-tile` on real tiles); int64 values are read in halves.
 - **Roads** (`src/layers/roads/`):
   - Every terrain tile draws the part of each road in it: ribbons
-    (`drapeLine`: a quad per segment, bevels at bends, round caps) clipped
+    (`drapeLine`: a quad per segment, a bevel on the outer side of each
+    bend, half discs beyond the ends — the inner bevel and the other half
+    lie under the ribbon: ~20 % fewer vertices than both) clipped
     to the source tile ∩ terrain tile (so buffered vector tile lines and
     whole `load` features are never drawn twice), into `surface` (roads) or
     `rails`, with center lines in `lines`. Widths by kind (`ROAD_WIDTHS`,
@@ -395,7 +423,8 @@ tree)` what stands there — `tree(height?)` (the trunk and crown, their
 - Every behaviour change needs a unit test; rendering changes need the e2e
   test (and a visual check, see `.skills/verify-rendering`).
 - Unit tests mock `src/io/image` (network/canvas) and
-  `loadQuadTexture` (no canvas in Node), or `src/io/fetch` for vector tiles;
+  `loadTextureGrid` (`src/terrain/texture`, no canvas in Node), or
+  `src/io/fetch` for vector tiles;
   build MVT fixtures with `test/support/mvt-encoder.ts`. Stub browser globals
   with `vi.stubGlobal` (restored automatically), e.g. `FakeFileReader` for
   GLTFExporter.

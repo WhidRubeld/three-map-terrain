@@ -20,9 +20,9 @@ vi.mock('../../../src/io/image', async (importOriginal) => ({
   loadImageData
 }))
 
-vi.mock('../../../src/terrain/material', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../../src/terrain/material')>()),
-  loadQuadTexture: vi.fn(() => Promise.resolve(new Texture()))
+vi.mock('../../../src/terrain/texture', () => ({
+  // no canvas in Node: a texture stands in for the stitched imagery
+  loadTextureGrid: vi.fn(() => Promise.resolve(new Texture()))
 }))
 
 const location = { lat: 46.57634, lon: 7.9904 }

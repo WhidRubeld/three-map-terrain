@@ -26,7 +26,15 @@ export class Footprint {
   private size = 1
 
   constructor(geometries: readonly BufferGeometry[]) {
-    const triangles: number[] = []
+    let total = 0
+    for (const geometry of geometries) {
+      const index = geometry.getIndex()
+      total += Math.floor(
+        (index ? index.count : geometry.getAttribute('position').count) / 3
+      )
+    }
+    const v = new Float64Array(total * 6)
+    let n = 0
     for (const geometry of geometries) {
       const position = geometry.getAttribute('position')
       const index = geometry.getIndex()
@@ -40,48 +48,68 @@ export class Footprint {
         const [cx, cy] = [position.getX(c), position.getY(c)]
         const area = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay)
         if (Math.abs(area) < MIN_AREA) continue
-        triangles.push(ax, ay, bx, by, cx, cy)
+        const k = n++ * 6
+        v[k] = ax
+        v[k + 1] = ay
+        v[k + 2] = bx
+        v[k + 3] = by
+        v[k + 4] = cx
+        v[k + 5] = cy
       }
     }
-    this.triangles = new Float64Array(triangles)
-    const n = triangles.length / 6
+    this.triangles = v.subarray(0, n * 6)
     this.cells = Math.min(
       MAX_CELLS,
       Math.max(MIN_CELLS, Math.ceil(Math.sqrt(n / PER_CELL)))
     )
-    this.start = new Int32Array(this.cells * this.cells + 1)
+    const cells = this.cells
+    this.start = new Int32Array(cells * cells + 1)
     this.items = new Int32Array(0)
     if (n === 0) return
-    const v = this.triangles
-    for (let i = 0; i < v.length; i += 2) {
+    for (let i = 0; i < n * 6; i += 2) {
       this.minX = Math.min(this.minX, v[i])
       this.minY = Math.min(this.minY, v[i + 1])
       this.maxX = Math.max(this.maxX, v[i])
       this.maxY = Math.max(this.maxY, v[i + 1])
     }
     this.size =
-      Math.max(this.maxX - this.minX, this.maxY - this.minY, 1e-9) / this.cells
+      Math.max(this.maxX - this.minX, this.maxY - this.minY, 1e-9) / cells
 
     // the cells every triangle's bounds touch: counted, then listed
-    const span = (t: number, each: (cell: number) => void) => {
+    const bounds = new Int32Array(n * 4)
+    for (let t = 0; t < n; t++) {
       const k = t * 6
-      const i0 = this.cell(Math.min(v[k], v[k + 2], v[k + 4]), this.minX)
-      const i1 = this.cell(Math.max(v[k], v[k + 2], v[k + 4]), this.minX)
-      const j0 = this.cell(Math.min(v[k + 1], v[k + 3], v[k + 5]), this.minY)
-      const j1 = this.cell(Math.max(v[k + 1], v[k + 3], v[k + 5]), this.minY)
-      for (let j = j0; j <= j1; j++) {
-        for (let i = i0; i <= i1; i++) each(j * this.cells + i)
-      }
+      bounds[4 * t] = this.cell(Math.min(v[k], v[k + 2], v[k + 4]), this.minX)
+      bounds[4 * t + 1] = this.cell(
+        Math.max(v[k], v[k + 2], v[k + 4]),
+        this.minX
+      )
+      bounds[4 * t + 2] = this.cell(
+        Math.min(v[k + 1], v[k + 3], v[k + 5]),
+        this.minY
+      )
+      bounds[4 * t + 3] = this.cell(
+        Math.max(v[k + 1], v[k + 3], v[k + 5]),
+        this.minY
+      )
     }
     const counts = this.start
-    for (let t = 0; t < n; t++) span(t, (cell) => counts[cell + 1]++)
+    for (let t = 0; t < n; t++) {
+      for (let j = bounds[4 * t + 2]; j <= bounds[4 * t + 3]; j++) {
+        for (let i = bounds[4 * t]; i <= bounds[4 * t + 1]; i++) {
+          counts[j * cells + i + 1]++
+        }
+      }
+    }
     for (let k = 1; k < counts.length; k++) counts[k] += counts[k - 1]
     this.items = new Int32Array(counts[counts.length - 1])
     const fill = counts.slice(0, -1)
     for (let t = 0; t < n; t++) {
-      span(t, (cell) => {
-        this.items[fill[cell]++] = t
-      })
+      for (let j = bounds[4 * t + 2]; j <= bounds[4 * t + 3]; j++) {
+        for (let i = bounds[4 * t]; i <= bounds[4 * t + 1]; i++) {
+          this.items[fill[j * cells + i]++] = t
+        }
+      }
     }
   }
 
@@ -137,6 +165,15 @@ export class Footprint {
     const by = v[k + 3]
     const cx = v[k + 4]
     const cy = v[k + 5]
+    // farther than the margin from its bounds: neither in it nor near
+    if (
+      x < Math.min(ax, bx, cx) - margin ||
+      x > Math.max(ax, bx, cx) + margin ||
+      y < Math.min(ay, by, cy) - margin ||
+      y > Math.max(ay, by, cy) + margin
+    ) {
+      return false
+    }
     const d1 = (bx - ax) * (y - ay) - (by - ay) * (x - ax)
     const d2 = (cx - bx) * (y - by) - (cy - by) * (x - bx)
     const d3 = (ax - cx) * (y - cy) - (ay - cy) * (x - cx)
@@ -146,15 +183,17 @@ export class Footprint {
     )
     if (inside) return true
     if (margin <= 0) return false
+    const reach = margin * margin
     return (
-      segmentDistance(x, y, ax, ay, bx, by) <= margin ||
-      segmentDistance(x, y, bx, by, cx, cy) <= margin ||
-      segmentDistance(x, y, cx, cy, ax, ay) <= margin
+      squaredDistance(x, y, ax, ay, bx, by) <= reach ||
+      squaredDistance(x, y, bx, by, cx, cy) <= reach ||
+      squaredDistance(x, y, cx, cy, ax, ay) <= reach
     )
   }
 }
 
-function segmentDistance(
+/** The square of a point's distance to a segment. */
+function squaredDistance(
   x: number,
   y: number,
   ax: number,
@@ -169,5 +208,6 @@ function segmentDistance(
     length === 0
       ? 0
       : Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / length))
-  return Math.hypot(x - ax - dx * t, y - ay - dy * t)
+  const [ex, ey] = [x - ax - dx * t, y - ay - dy * t]
+  return ex * ex + ey * ey
 }

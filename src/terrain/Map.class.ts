@@ -37,6 +37,13 @@ export interface MapOptions {
   exaggeration?: number
   /** Altitude in meters drawn at z = 0, e.g. the city's: the scene stays near the origin. */
   baseAltitude?: number
+  /**
+   * Zoom levels the imagery is deeper than the terrain: a tile is textured
+   * with `4^offset` imagery tiles stitched into one — 0: its own (a quarter
+   * of the requests and texture memory), 1 (default): its four children,
+   * 2: sixteen, sharper; at most 3.
+   */
+  imageryZoomOffset?: number
 }
 
 export interface MapProps {
@@ -124,7 +131,8 @@ export const defaultMapOptions: Readonly<MapOptions> = Object.freeze({
   tileSize: 600,
   tileSegments: 100,
   zScale: 0.045,
-  baseAltitude: 0
+  baseAltitude: 0,
+  imageryZoomOffset: 1
 })
 
 export class Map {
@@ -173,6 +181,10 @@ export class Map {
     options.tileSegments = Math.max(
       1,
       Math.min(256, Math.round(options.tileSegments))
+    )
+    options.imageryZoomOffset = Math.max(
+      0,
+      Math.min(3, Math.round(options.imageryZoomOffset ?? 1))
     )
     if (options.exaggeration !== undefined) {
       const { lat } = this.geoLocation
@@ -567,7 +579,8 @@ export class Map {
     tiles.sort((a, b) => b.x + b.y - (a.x + a.y))
     for (const tile of tiles) tile.resolveSeams(this.tileCache)
 
-    const touched = new Set<Tile>()
+    // the corner vertices changed, by tile
+    const touched = new globalThis.Map<Tile, number[]>()
     for (const [cx, cy] of [
       [x, y],
       [x + 1, y],
@@ -576,8 +589,14 @@ export class Map {
     ]) {
       this.syncCorner(cx, cy, touched)
     }
-    for (const tile of touched) tile.updateGeometry()
-    return new Set([...tiles, ...touched])
+    const row = this.options.tileSegments + 1
+    for (const [tile, corners] of touched) {
+      for (const index of corners) {
+        const [r, c] = [Math.floor(index / row), index % row]
+        tile.updateGeometry([r, r], [c, c])
+      }
+    }
+    return new Set([...tiles, ...touched.keys()])
   }
 
   /**
@@ -586,7 +605,11 @@ export class Map {
    * point (the top-left corner of tile `x`, `y`) one value from the best
    * loaded source — the exact pixel of tile `x`, `y` first — in every tile.
    */
-  private syncCorner(x: number, y: number, touched: Set<Tile>) {
+  private syncCorner(
+    x: number,
+    y: number,
+    touched: globalThis.Map<Tile, number[]>
+  ) {
     const n = this.options.tileSegments
     const corners = [
       { tile: this.cachedTile(x, y), index: 0 },
@@ -605,7 +628,7 @@ export class Map {
       const position = tile.geometry.attributes.position
       if (position.getZ(index) === z) continue
       position.setZ(index, z)
-      touched.add(tile)
+      touched.set(tile, [...(touched.get(tile) ?? []), index])
     }
   }
 }

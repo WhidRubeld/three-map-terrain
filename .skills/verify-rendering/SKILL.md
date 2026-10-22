@@ -81,9 +81,11 @@ Query parameters:
 | `base`               | meters                                     | `0`      | `baseAltitude`                                                     |
 | `nTiles`             | integer                                    | `3`      | grid size                                                          |
 | `segments`           | integer                                    | `100`    | `tileSegments` (try `40` with `wireframe=1`)                       |
+| `imageryZoomOffset`  | `0`–`3`                                    | `1`      | imagery tiles per terrain tile: `4^offset`                         |
+| `maxDistance`        | meters                                     | —        | the layers hide tiles farther from the camera                      |
 | `view`               | `orbit`, `top`                             | `orbit`  | perspective + MapControls, or orthographic top view                |
 
-`window.__playground` exposes `{ map, buildings, roads, water, trees, camera, controls, revision, backend, ready, texturedTiles(), lastPick, lastBuilding, lastRoad, freeze() }` — e.g. `__playground.map.setMaterial({ wireframe: true })` or `await __playground.map.export('glb')` from the console.
+`window.__playground` exposes `{ map, buildings, roads, water, trees, renderer, camera, controls, revision, backend, ready, texturedTiles(), lastPick, lastBuilding, lastRoad, freeze() }` — e.g. `__playground.map.setMaterial({ wireframe: true })` or `await __playground.map.export('glb')` from the console.
 
 Buildings and looks, with real data:
 
