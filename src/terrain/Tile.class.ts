@@ -1,4 +1,6 @@
 import {
+  BufferAttribute,
+  BufferGeometry,
   type CanvasTexture,
   type Material,
   MathUtils,
@@ -25,6 +27,21 @@ import { loadTextureGrid } from './texture'
 /** Shown until the tile texture has been loaded. Shared, never disposed. */
 const placeholderMaterial = new MeshNormalMaterial({ wireframe: true })
 
+/**
+ * The grid vertices along the edges of a tile of `n` segments, around it:
+ * the north edge from the west, the east from the north, the south from the
+ * east, the west from the south — each edge's own copy of its corners.
+ */
+function edgeVertices(n: number): number[] {
+  const side = Array.from({ length: n + 1 }, (_, i) => i)
+  return [
+    ...side.map((c) => c),
+    ...side.map((r) => r * (n + 1) + n),
+    ...side.map((c) => n * (n + 1) + n - c),
+    ...side.map((r) => (n - r) * (n + 1))
+  ]
+}
+
 export class Tile {
   readonly map: Map
   readonly x: number
@@ -38,6 +55,8 @@ export class Tile {
   seamY = false
 
   private _mesh: Mesh<PlaneGeometry, Material> | undefined
+  /** Hangs from the edges with the map's `skirt` option, made with the heights. */
+  private skirt: Mesh<BufferGeometry, Material> | undefined
   /** The imagery the material is made from; the tile disposes it. */
   private texture: Texture | null = null
   private readonly abortController = new AbortController()
@@ -189,6 +208,90 @@ export class Tile {
     position.needsUpdate = true
     normal.needsUpdate = true
     gridBounds(geometry)
+    this.updateSkirt()
+  }
+
+  /**
+   * The skirt (the map's `skirt` option): a strip straight down from every
+   * edge, in the tile's material, shaded and textured like the edge. Follows
+   * the edges' heights.
+   */
+  private updateSkirt() {
+    const { skirt = 0, tileSegments: n, zScale } = this.map.options
+    if (skirt <= 0) return
+    if (!this.skirt) {
+      this.skirt = this.createSkirt(n)
+      this.useMaterial(this.mesh.material)
+    }
+    const terrain = this.geometry.attributes
+    const { geometry } = this.skirt
+    const { position, normal, uv } = geometry.attributes
+    const depth = skirt * zScale
+    edgeVertices(n).forEach((vertex, i) => {
+      const [top, bottom] = [2 * i, 2 * i + 1]
+      const x = terrain.position.getX(vertex)
+      const y = terrain.position.getY(vertex)
+      const z = terrain.position.getZ(vertex)
+      position.setXYZ(top, x, y, z)
+      position.setXYZ(bottom, x, y, z - depth)
+      const nx = terrain.normal.getX(vertex)
+      const ny = terrain.normal.getY(vertex)
+      const nz = terrain.normal.getZ(vertex)
+      normal.setXYZ(top, nx, ny, nz)
+      normal.setXYZ(bottom, nx, ny, nz)
+      const [u, v] = [terrain.uv.getX(vertex), terrain.uv.getY(vertex)]
+      uv.setXY(top, u, v)
+      uv.setXY(bottom, u, v)
+    })
+    position.needsUpdate = true
+    normal.needsUpdate = true
+    uv.needsUpdate = true
+    geometry.computeBoundingBox()
+    geometry.computeBoundingSphere()
+  }
+
+  private createSkirt(n: number): Mesh<BufferGeometry, Material> {
+    const count = 4 * (n + 1) * 2
+    const geometry = new BufferGeometry()
+    geometry.setAttribute(
+      'position',
+      new BufferAttribute(new Float32Array(count * 3), 3)
+    )
+    geometry.setAttribute(
+      'normal',
+      new BufferAttribute(new Float32Array(count * 3), 3)
+    )
+    geometry.setAttribute(
+      'uv',
+      new BufferAttribute(new Float32Array(count * 2), 2)
+    )
+    // a quad per segment of an edge (vertices top, bottom, next top, next
+    // bottom), facing out of the tile
+    const index: number[] = []
+    for (let edge = 0; edge < 4; edge++) {
+      for (let i = 0; i < n; i++) {
+        const top = 2 * (edge * (n + 1) + i)
+        index.push(top, top + 2, top + 1, top + 2, top + 3, top + 1)
+      }
+    }
+    geometry.setIndex(index)
+
+    const skirt = new Mesh(geometry, this.mesh.material)
+    skirt.name = 'skirt'
+    // under the surface: no hit of its own, no part of a model
+    skirt.raycast = () => undefined
+    skirt.userData.export = false
+    this.mesh.add(skirt)
+    return skirt
+  }
+
+  /** Puts a material on the tile and its skirt (hidden in wireframe: no cracks to fill). */
+  private useMaterial(material: Material) {
+    this.mesh.material = material
+    if (!this.skirt) return
+    this.skirt.material = material
+    this.skirt.visible = !(material as Partial<{ wireframe: boolean }>)
+      .wireframe
   }
 
   /** The four tiles at zoom + 1 covering this one: NW, SW, NE, SE. */
@@ -274,7 +377,7 @@ export class Tile {
     const { mesh } = this
     if (mesh.material === placeholderMaterial) return
     const old = mesh.material
-    mesh.material = this.createMaterial(this.texture)
+    this.useMaterial(this.createMaterial(this.texture))
     old.dispose()
   }
 
@@ -294,7 +397,7 @@ export class Tile {
       // made now: with the options of now
       const material = this.createMaterial(texture)
       const old = { material: this.mesh.material, texture: this.texture }
-      this.mesh.material = material
+      this.useMaterial(material)
       this.texture = texture
       if (old.material !== placeholderMaterial) old.material.dispose()
       if (old.texture !== texture) old.texture?.dispose()
@@ -438,6 +541,7 @@ export class Tile {
     if (!this._mesh) return
     this._mesh.removeFromParent()
     this._mesh.geometry.dispose()
+    this.skirt?.geometry.dispose()
     if (this._mesh.material !== placeholderMaterial) {
       this._mesh.material.dispose()
     }

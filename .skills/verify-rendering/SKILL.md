@@ -83,9 +83,12 @@ Query parameters:
 | `segments`           | integer                                    | `100`    | `tileSegments` (try `40` with `wireframe=1`)                       |
 | `imageryZoomOffset`  | `0`–`3`                                    | `1`      | imagery tiles per terrain tile: `4^offset`                         |
 | `maxDistance`        | meters                                     | —        | the layers hide tiles farther from the camera                      |
+| `skirt`              | meters                                     | `0`      | the tiles' `skirt`                                                 |
+| `lod`                | zoom levels                                | —        | levels of detail: the map is the middle tile of a coarser `ring`   |
+| `stream`             | tiles                                      | —        | only the tiles within this many of the controls' target            |
 | `view`               | `orbit`, `top`                             | `orbit`  | perspective + MapControls, or orthographic top view                |
 
-`window.__playground` exposes `{ map, buildings, roads, water, trees, renderer, camera, controls, revision, backend, ready, texturedTiles(), lastPick, lastBuilding, lastRoad, freeze() }` — e.g. `__playground.map.setMaterial({ wireframe: true })` or `await __playground.map.export('glb')` from the console.
+`window.__playground` exposes `{ map, ring, buildings, roads, water, trees, renderer, camera, controls, revision, backend, ready, texturedTiles(), lastPick, lastBuilding, lastRoad, freeze() }` — e.g. `__playground.map.setMaterial({ wireframe: true })` or `await __playground.map.export('glb')` from the console.
 
 Buildings and looks, with real data:
 
@@ -109,6 +112,18 @@ t.y - 150, t.z + 40)` — and temporarily recolor the `roads deck` /
 - Switch looks at runtime from the console (`setSource`, `setMaterial`)
   several times, back and forth: the terrain, buildings and base must
   always end in the last style.
+
+Large areas:
+
+- `?lod=2&skirt=400` — the Alps at zoom 11 in the middle of a ring at
+  zoom 9 (`alignTo`, its middle tile removed): one landscape, no step at
+  the edges of the middle. Without `skirt` the edges show slivers of
+  background where the zooms' heights differ (up to ~300 m here); to see
+  them, `s = __playground.map.terrain.parent; s.background.set(0xff00ff);
+s.fog = null` and look low across an edge.
+- `?zoom=15&lat=46.515&lon=6.632&stream=1&buildings=openfreemap&roads=openfreemap`
+  — drag the map: tiles load ahead and are removed behind
+  (`removeTileSegment`), buildings and roads follow, nothing is left over.
 
 Clicking the terrain runs `map.pick` (geolocation + altitude shown in the
 overlay, stored in `lastPick`) and moves the yellow marker there with

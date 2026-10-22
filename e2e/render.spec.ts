@@ -128,6 +128,41 @@ const quadrantStats = (page: Page, png: Buffer) =>
     { base64: png.toString('base64'), background: BACKGROUND }
   )
 
+/** Background pixels in a part of the screen: `[left, top, right, bottom]`, 0…1. */
+const backgroundPixels = (
+  page: Page,
+  png: Buffer,
+  [left, top, right, bottom]: readonly number[]
+) =>
+  page.evaluate(
+    async ({ base64, box, background }) => {
+      const blob = await (await fetch(`data:image/png;base64,${base64}`)).blob()
+      const bitmap = await createImageBitmap(blob)
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('no 2d context')
+      context.drawImage(bitmap, 0, 0)
+      const [x0, y0] = [box[0] * bitmap.width, box[1] * bitmap.height]
+      const { data } = context.getImageData(
+        Math.floor(x0),
+        Math.floor(y0),
+        Math.ceil(box[2] * bitmap.width - x0),
+        Math.ceil(box[3] * bitmap.height - y0)
+      )
+      let count = 0
+      for (let i = 0; i < data.length; i += 4) {
+        const pixel = [data[i], data[i + 1], data[i + 2]]
+        if (pixel.every((c, k) => Math.abs(c - background[k]) <= 2)) count++
+      }
+      return count
+    },
+    {
+      base64: png.toString('base64'),
+      box: [left, top, right, bottom],
+      background: BACKGROUND
+    }
+  )
+
 /** Cosine of the angle between `a - BACKGROUND` and `b - BACKGROUND`. */
 const similarity = (a: readonly number[], b: readonly number[]) => {
   const u = a.map((c, i) => c - BACKGROUND[i])
@@ -420,6 +455,67 @@ for (const renderer of ['webgl', 'webgpu'] as const) {
     // the top view's camera is kilometers above the tile
     expectColor(await roof(1e7), [255, 255, 255], 2, 'near enough')
     expectColor(await roof(100), QUADRANT_COLORS.nw, 2, 'too far')
+    expect(errors).toEqual([])
+  })
+}
+
+for (const renderer of ['webgl', 'webgpu'] as const) {
+  test(`fills the cracks between levels of detail with skirts (${renderer})`, async ({
+    page
+  }) => {
+    const errors = collectErrors(page)
+    const query = await rendererQuery(page, renderer)
+    // zoom 13 in the middle of a ring of zoom 12: the mocked heights of the
+    // two zooms differ by up to 100 m along the edges where they meet
+    const holes = async (skirt: number) => {
+      await openPlayground(
+        page,
+        `${query}&zoom=13&lod=1&segments=32&skirt=${skirt}`
+      )
+      const box = await page.evaluate(async () => {
+        const playground = window.__playground
+        if (!playground?.controls) throw new Error('no playground')
+        const { map, camera, controls } = playground
+        map.terrain.updateMatrixWorld(true)
+        const [first, ...tiles] = Object.values(map.tileCache).map((tile) =>
+          tile.geometry.boundingBox?.clone().applyMatrix4(tile.mesh.matrixWorld)
+        )
+        if (!first) throw new Error('no tiles')
+        for (const tile of tiles) if (tile) first.union(tile)
+        const middle = first.getCenter(camera.position.clone())
+        // low over the ring, from the south; no fog to look like holes
+        controls.target.copy(middle)
+        camera.position.set(middle.x, middle.y - 2000, middle.z + 950)
+        const scene = map.terrain.parent as { fog: unknown } | null
+        if (scene) scene.fog = null
+        await playground.freeze()
+        // the middle on screen, a little beyond its edges: the ring all around
+        const corners = [0, 1, 2, 3, 4, 5, 6, 7].map((i) =>
+          camera.position
+            .clone()
+            .set(
+              i & 1 ? first.max.x : first.min.x,
+              i & 2 ? first.max.y : first.min.y,
+              i & 4 ? first.max.z : first.min.z
+            )
+            .project(camera)
+        )
+        const u = corners.map(({ x }) => (x + 1) / 2)
+        const v = corners.map(({ y }) => (1 - y) / 2)
+        const margin = 0.03
+        return [
+          Math.max(0, Math.min(...u) - margin),
+          Math.max(0, Math.min(...v) - margin),
+          Math.min(1, Math.max(...u) + margin),
+          Math.min(1, Math.max(...v) + margin)
+        ]
+      })
+      const png = await page.locator('canvas').screenshot()
+      return backgroundPixels(page, png, box)
+    }
+
+    expect(await holes(0), 'without skirts').toBeGreaterThan(20)
+    expect(await holes(200), 'with skirts').toBe(0)
     expect(errors).toEqual([])
   })
 }

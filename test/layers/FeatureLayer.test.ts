@@ -189,6 +189,28 @@ describe('FeatureLayer', () => {
     expect(offSurface(map, layer)).toBeLessThan(1e-4)
   })
 
+  it('drops the objects of a removed tile, the rest stay on the surface', async () => {
+    const { map, layer } = await setup([{ id: 'corner', fx: 1, fy: 1 }], {
+      build: drapeSquares(0.6)
+    })
+    const southEast = Utils.getTileKey(ZOOM, center.x + 1, center.y + 1)
+    const tiles = () =>
+      objects(layer, 'surface').map((mesh) => mesh.name.split(' ')[2])
+    expect(tiles()).toContain(southEast)
+    const before = tiles().length
+
+    map.removeTileSegment(center.x + 1, center.y + 1)
+    await layer.whenReady()
+    expect(tiles()).not.toContain(southEast)
+    expect(tiles()).toHaveLength(before - 1)
+    expect(offSurface(map, layer)).toBeLessThan(1e-4)
+
+    await map.addTileSegment(center.x + 1, center.y + 1)
+    await layer.whenReady()
+    expect(tiles()).toContain(southEast)
+    expect(offSurface(map, layer)).toBeLessThan(1e-4)
+  })
+
   it('shades draped shapes like the terrain', async () => {
     const { map, layer } = await setup([{ id: 'a', fx: 0.5, fy: 0.5 }], {
       build: drapeSquares(0.3)

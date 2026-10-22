@@ -123,10 +123,30 @@ describe('TerrainBase', () => {
     expect(base.group.children).toHaveLength(0)
   })
 
+  it('walls the place of a removed tile', async () => {
+    const { map, base } = await setup()
+
+    map.removeTileSegment(map.center.x, map.center.y)
+
+    // the hole's sides are walls of the 4 tiles around it, facing into it
+    expect(faces(base.group.children[0] as Mesh)).toEqual({
+      '0,1,0': 24 + 8,
+      '0,-1,0': 24 + 8,
+      '1,0,0': 24 + 8,
+      '-1,0,0': 24 + 8,
+      '0,0,-1': 16
+    })
+  })
+
   it('is drawn like the terrain, in a darker shade, or as given', async () => {
     const { map, mesh } = await setup(1)
     expect(mesh.material).toBeInstanceOf(MeshLambertMaterial)
     expect(mesh.material.color.r).toBeCloseTo(0.72, 6)
+    // in front of the skirts in its planes
+    expect(mesh.material).toMatchObject({
+      polygonOffset: true,
+      polygonOffsetFactor: -1
+    })
 
     map.setMaterial({ lights: false })
     const restyled = base(map)

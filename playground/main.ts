@@ -13,6 +13,7 @@ import {
   Scene,
   SphereGeometry,
   Vector2,
+  type Vector3,
   WebGLRenderer
 } from 'three'
 import { MapControls } from 'three/addons/controls/MapControls.js'
@@ -30,6 +31,7 @@ import {
   type SourceProps,
   type TreeSourceProps,
   Trees,
+  Utils,
   Water,
   type WaterSourceProps
 } from '../src'
@@ -56,6 +58,13 @@ const maxDistance = params.has('maxDistance')
   ? Number(params.get('maxDistance'))
   : undefined
 const topView = params.get('view') === 'top'
+// meters the tiles' skirts hang down
+const skirt = Number(params.get('skirt') ?? 0)
+// levels of detail: the map is the middle tile of a ring this many zooms
+// coarser — the ring's tile in 2^lod × 2^lod tiles
+const lod = Number(params.get('lod') ?? 0)
+// streaming: only the tiles within this many of the controls' target
+const stream = params.has('stream') ? Number(params.get('stream')) : undefined
 // WebGPURenderer with its WebGL2 backend (for software WebGPU adapters in CI)
 const forceWebGL = params.get('forceWebGL') === '1'
 
@@ -129,31 +138,40 @@ sun.position.set(1e4, 1e4, 1e4)
 scene.add(sun)
 
 // map
-const map = new Map({
-  source: imagery,
-  elevation: { api: elevationApi, token } as ElevationSourceProps,
-  location,
-  options: {
-    nTiles,
-    tileSegments,
-    imageryZoomOffset,
-    zoom,
-    tileSize,
-    ...(alps ? {} : { exaggeration: Number(params.get('exaggeration') ?? 1) }),
-    baseAltitude: Number(params.get('base') ?? 0)
-  },
-  material: {
-    lights,
-    wireframe,
-    ...(color ? { color } : {}),
-    ...(gray ? { process: grayscale } : {})
-  }
-})
+const createMap = (zoom: number, nTiles: number) =>
+  new Map({
+    source: imagery,
+    elevation: { api: elevationApi, token } as ElevationSourceProps,
+    location,
+    options: {
+      nTiles,
+      tileSegments,
+      imageryZoomOffset,
+      zoom,
+      tileSize,
+      ...(alps
+        ? {}
+        : { exaggeration: Number(params.get('exaggeration') ?? 1) }),
+      baseAltitude: Number(params.get('base') ?? 0),
+      skirt
+    },
+    material: {
+      lights,
+      wireframe,
+      ...(color ? { color } : {}),
+      ...(gray ? { process: grayscale } : {})
+    }
+  })
+const map = createMap(zoom, lod > 0 ? 0 : nTiles)
+// the coarser ring around the map: its tiles but the middle one
+const ring = lod > 0 ? createMap(zoom - lod, 0) : undefined
 const buildings = buildingsApi
   ? map.addLayer(
       new Buildings({
         source: { api: buildingsApi, token } as BuildingSourceProps,
         edges,
+        // the grid of init() is not the edge of a map that streams
+        clip: stream === undefined,
         maxDistance
       })
     )
@@ -185,7 +203,21 @@ const trees = treesApi
     )
   : undefined
 scene.add(map.terrain)
-const ready = map.init(() => {
+if (ring) {
+  scene.add(ring.terrain)
+  ring.alignTo(map)
+  const { x, y } = ring.center
+  for (let i = -1; i <= 1; i++) {
+    for (let j = -1; j <= 1; j++) {
+      if (i !== 0 || j !== 0) void ring.addTileSegment(x + i, y + j)
+    }
+  }
+  const k = 2 ** lod
+  for (let i = 0; i < k; i++) {
+    for (let j = 0; j < k; j++) void map.addTileSegment(k * x + i, k * y + j)
+  }
+}
+const ready = Promise.all([map.init(), ring?.whenReady()]).then(() => {
   console.info('Map is ready')
 })
 
@@ -209,7 +241,7 @@ let controls: MapControls | undefined
 
 if (topView) {
   // Straight down, north up: used to verify the NW/NE/SW/SE texture layout
-  const half = (map.options.tileSize * nTiles) / 2
+  const half = (map.options.tileSize * (ring ? 3 * 2 ** lod : nTiles)) / 2
   camera = new OrthographicCamera(-half * aspect, half * aspect, half, -half)
   camera.position.set(0, 0, 1e4)
   camera.far = 2e4
@@ -231,7 +263,8 @@ if (topView) {
     })
   }
 
-  if (alps) {
+  // the Alps' markers lie outside the middle of a ring
+  if (alps && !ring) {
     const marker = new Mesh(
       new SphereGeometry(8, 24, 12),
       new MeshBasicMaterial({ color: 0xf04040 })
@@ -245,6 +278,29 @@ if (topView) {
       .getTerrainPosition({ lat: 46.6242, lon: 8.0414 })
       .then(placeOnGround)
   }
+}
+
+// the tiles around the controls' target, the others removed
+if (stream !== undefined && controls && !ring) {
+  const follow = (target: Vector3) => {
+    const local = map.terrain.worldToLocal(target.clone())
+    const { lat, lon } = map.getLocation(local)
+    const { x, y } = Utils.position2tile(lat, lon, map.options.zoom)
+    for (const tile of Object.values(map.tileCache)) {
+      if (Math.max(Math.abs(tile.x - x), Math.abs(tile.y - y)) > stream) {
+        map.removeTileSegment(tile.x, tile.y)
+      }
+    }
+    for (let i = -stream; i <= stream; i++) {
+      for (let j = -stream; j <= stream; j++) {
+        void map.addTileSegment(x + i, y + j)
+      }
+    }
+  }
+  const target = controls.target
+  controls.addEventListener('change', () => {
+    follow(target)
+  })
 }
 
 window.addEventListener('resize', () => {
@@ -274,6 +330,9 @@ const status = [
   ...(roadsApi ? [`roads ${roadsApi}`] : []),
   ...(waterApi ? [`water ${waterApi}`] : []),
   ...(treesApi ? [`trees ${treesApi}`] : []),
+  ...(lod > 0 ? [`lod z${zoom}/z${zoom - lod}`] : []),
+  ...(skirt > 0 ? [`skirt ${skirt} m`] : []),
+  ...(stream !== undefined ? [`stream ${stream}`] : []),
   `lights ${lights ? 'on' : 'off'}`,
   ...(wireframe ? ['wireframe'] : []),
   ...(color ? [color] : []),
@@ -336,11 +395,12 @@ renderer.domElement.addEventListener('click', (event) => {
     return
   }
 
-  const hit = map.pick(raycaster)
+  const hit = map.pick(raycaster) ?? ring?.pick(raycaster)
   playground.lastPick = hit && { lat: hit.lat, lon: hit.lon, alt: hit.alt }
   if (!hit) return
 
-  const ground = map.getTerrainPositionSync(hit)
+  // in the map's tiles only: none of its own in the ring
+  const ground = map.getTerrainPositionSync(hit, { loadTile: !ring })
   if (ground) placeOnGround(ground)
   if (info) {
     info.textContent = `${status} · ${hit.lat.toFixed(5)}, ${hit.lon.toFixed(5)} · ${Math.round(hit.alt)} m`
@@ -349,6 +409,7 @@ renderer.domElement.addEventListener('click', (event) => {
 
 const playground: Playground = {
   map,
+  ring,
   buildings,
   roads,
   water,

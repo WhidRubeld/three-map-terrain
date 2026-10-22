@@ -17,6 +17,8 @@ import type {
 /** Debug handle exposed as `window.__playground` (used by the e2e tests). */
 export interface Playground {
   map: Map
+  /** The coarser ring around the map (`?lod=…`). */
+  ring: Map | undefined
   /** The buildings layer (`?buildings=…`). */
   buildings: Buildings | undefined
   /** The roads layer (`?roads=…`). */
