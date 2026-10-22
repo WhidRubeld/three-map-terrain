@@ -114,11 +114,19 @@ export class TerrainBase implements MapLayer {
         ? new Color(style.color ?? 0xffffff).multiplyScalar(SIDE_SHADE)
         : new Color(material.color)
     const { fog } = style
+    // in front of the tiles' skirts, which hang in the planes of its walls
+    const faces = {
+      color,
+      fog,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1
+    }
     this.material = this.wireframe
       ? new LineBasicMaterial({ color, fog })
       : style.lights
-        ? new MeshLambertMaterial({ color, fog })
-        : new MeshBasicMaterial({ color, fog })
+        ? new MeshLambertMaterial(faces)
+        : new MeshBasicMaterial(faces)
     this.ownMaterial = true
   }
 

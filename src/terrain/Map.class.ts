@@ -1,4 +1,4 @@
-import { Group, type Raycaster, type Vector3 } from 'three'
+import { Group, Matrix4, type Raycaster, type Vector3 } from 'three'
 
 import {
   exportModel,
@@ -44,6 +44,13 @@ export interface MapOptions {
    * 2: sixteen, sharper; at most 3.
    */
   imageryZoomOffset?: number
+  /**
+   * Meters a skirt hangs straight down from every tile's edges, in its
+   * material: it fills the cracks where this map meets another whose edges
+   * lie at other heights — e.g. a coarser map around it (levels of detail,
+   * see `alignTo()`). 0 (default): none. Never picked or exported.
+   */
+  skirt?: number
 }
 
 export interface MapProps {
@@ -82,7 +89,7 @@ export interface MapLayer {
    * neighbour that loaded. Geometry lying on the surface follows.
    */
   tileChanged?(tile: Tile): void
-  /** A loaded tile is about to be disposed (`map.clean()`). */
+  /** A loaded tile is about to be disposed (`map.clean()`, `map.removeTileSegment()`). */
   tileRemoved?(tile: Tile): void
   /** `map.setMaterial()` changed the style, which layers may follow. */
   materialChanged?(map: Map): void
@@ -132,7 +139,8 @@ export const defaultMapOptions: Readonly<MapOptions> = Object.freeze({
   tileSegments: 100,
   zScale: 0.045,
   baseAltitude: 0,
-  imageryZoomOffset: 1
+  imageryZoomOffset: 1,
+  skirt: 0
 })
 
 export class Map {
@@ -216,6 +224,22 @@ export class Map {
   async addTileSegment(x: number, y: number): Promise<void> {
     const tile = this.createTile(x, y)
     if (tile) await this.loadTile(tile)
+  }
+
+  /**
+   * Removes a tile — e.g. one the camera has left far behind, or one that
+   * another map covers in more detail: the layers drop what they drew on
+   * it, a load still running is aborted, its GPU resources are freed. Its
+   * neighbours keep their stitched edges; `addTileSegment()` loads it again.
+   * Returns whether there was such a tile.
+   */
+  removeTileSegment(x: number, y: number): boolean {
+    const tile = this.cachedTile(x, y)
+    if (!tile) return false
+    this.removeTile(tile)
+    Reflect.deleteProperty(this.tileCache, tile.key())
+    Reflect.deleteProperty(this.loads, tile.key())
+    return true
   }
 
   /** The layers added with `addLayer()`, in order. */
@@ -357,12 +381,7 @@ export class Map {
 
   /** Removes all tiles, aborts pending requests and frees GPU resources. */
   clean() {
-    for (const tile of Object.values(this.tileCache)) {
-      if (tile.loaded && tile.mesh.parent === this.terrain) {
-        for (const layer of this.mapLayers) notify(layer, 'tileRemoved', tile)
-      }
-      tile.dispose()
-    }
+    for (const tile of Object.values(this.tileCache)) this.removeTile(tile)
     this.tileCache = {}
     this.loads = {}
     this.loading = undefined
@@ -477,6 +496,40 @@ export class Map {
     return { ...this.getLocation(local), point: hit.point }
   }
 
+  /**
+   * Places `terrain` so that this map lines up with another one: every
+   * place, and every altitude, at the same point of the scene — whatever
+   * the zooms, tile sizes and vertical scales. E.g. a coarser map around a
+   * detailed one (levels of detail: remove the tiles the detailed one
+   * covers, give both a `skirt`), or a second area at another zoom. Sets
+   * the position, rotation and scale of `terrain` from the other's world
+   * transform (and its own parent's, if it has one): call it again after
+   * moving the other map.
+   */
+  alignTo(other: Map) {
+    const [mine, theirs] = [this.frame(), other.frame()]
+    const { zScale, baseAltitude = 0 } = this.options
+    const { zScale: otherZScale, baseAltitude: otherBase = 0 } = other.options
+    const scale = theirs.units / mine.units
+    const transform = new Matrix4()
+      .makeScale(scale, scale, zScale === 0 ? 1 : otherZScale / zScale)
+      .setPosition(
+        (mine.x - theirs.x) * theirs.units,
+        (theirs.y - mine.y) * theirs.units,
+        (baseAltitude - otherBase) * otherZScale
+      )
+
+    other.terrain.updateWorldMatrix(true, false)
+    transform.premultiply(other.terrain.matrixWorld)
+    const parent = this.terrain.parent
+    if (parent) {
+      parent.updateWorldMatrix(true, false)
+      transform.premultiply(parent.matrixWorld.clone().invert())
+    }
+    const { position, quaternion, scale: size } = this.terrain
+    transform.decompose(position, quaternion, size)
+  }
+
   private async loadGrid() {
     this.center = this.getCenter()
     const { x, y } = this.center
@@ -499,6 +552,37 @@ export class Map {
     return Object.values(this.tileCache).filter(
       (tile) => tile.loaded && tile.mesh.parent === this.terrain
     )
+  }
+
+  /** Disposes a tile; layers forget it first if they know it. */
+  private removeTile(tile: Tile) {
+    if (tile.loaded && tile.mesh.parent === this.terrain) {
+      for (const layer of this.mapLayers) notify(layer, 'tileRemoved', tile)
+    }
+    tile.dispose()
+  }
+
+  /**
+   * Where the origin of `terrain` lies on the Web Mercator square (`x` east,
+   * `y` south, 0–1), and how many units of `terrain` the square is wide.
+   */
+  private frame() {
+    const { center } = this
+    const { zoom, tileSize } = this.options
+    // tiles lie on a regular grid around the center tile
+    const origin = Utils.tile2position(
+      zoom,
+      center.x,
+      center.y,
+      center,
+      tileSize
+    )
+    const tiles = 2 ** zoom
+    return {
+      x: (center.x + 0.5 - origin.x / tileSize) / tiles,
+      y: (center.y + 0.5 + origin.y / tileSize) / tiles,
+      units: tileSize * tiles
+    }
   }
 
   private tileIndexAt({ lat, lon }: { lat: number; lon: number }) {

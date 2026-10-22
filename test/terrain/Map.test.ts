@@ -1,5 +1,8 @@
 import {
   BoxGeometry,
+  type BufferGeometry,
+  Group,
+  type Material,
   Mesh,
   MeshBasicMaterial,
   MeshLambertMaterial,
@@ -13,6 +16,7 @@ import {
   defaultMapOptions,
   defaultMaterialOptions,
   ElevationSource,
+  type GeoLocation,
   Map,
   type MapLayer,
   Utils,
@@ -936,6 +940,250 @@ describe('Map', () => {
 
       expect(map.terrain.children).toHaveLength(9)
       expect(error).toHaveBeenCalledWith(new Error('layer bug'))
+    })
+  })
+
+  describe('removeTileSegment', () => {
+    // in tile 1070/723, east of the center tile
+    const east = {
+      lat: location.lat,
+      lon: location.lon + 360 / 2 ** defaultMapOptions.zoom
+    }
+
+    it('removes a tile: the layers drop it, it is freed, it can come back', async () => {
+      const map = createMap()
+      const loaded: string[] = []
+      const removed: string[] = []
+      map.addLayer({
+        tileLoaded: (tile: Tile) => loaded.push(tile.key()),
+        tileRemoved: (tile: Tile) => {
+          // still whole while the layers let go of it
+          expect(tile.loaded).toBe(true)
+          expect(tile.mesh.parent).toBe(map.terrain)
+          removed.push(tile.key())
+        }
+      })
+      await map.init()
+      const tile = tileAt(map, 1070, 723)
+      const dispose = vi.spyOn(tile, 'dispose')
+
+      expect(map.removeTileSegment(1070, 723)).toBe(true)
+      expect(map.removeTileSegment(1070, 723)).toBe(false)
+
+      expect(removed).toEqual(['11/1070/723'])
+      expect(dispose).toHaveBeenCalledOnce()
+      expect(findTile(map, 1070, 723)).toBeUndefined()
+      expect(map.terrain.children).toHaveLength(8)
+      expect(
+        map.getTerrainPositionSync(east, { loadTile: false })
+      ).toBeUndefined()
+      await map.whenReady()
+
+      await map.addTileSegment(1070, 723)
+      expect(loaded.filter((key) => key === '11/1070/723')).toHaveLength(2)
+      const n = map.options.tileSegments
+      expect(edge(tileAt(map, 1069, 723), 'col', n)).toEqual(
+        edge(tileAt(map, 1070, 723), 'col', 0)
+      )
+    })
+
+    it('aborts a tile still loading, which never shows', async () => {
+      const map = createMap()
+      await map.init()
+      const answers: (() => void)[] = []
+      loadImageData.mockImplementation(
+        (url: string) =>
+          new Promise((resolve) => {
+            const { x, y } = tileFromUrl(url)
+            answers.push(() => {
+              resolve(terrariumPixels(SIZE, worldHeight(x, y)))
+            })
+          })
+      )
+      const tileLoaded = vi.fn()
+      const tileRemoved = vi.fn()
+      map.addLayer({ tileRemoved })
+      map.addLayer({ tileLoaded })
+      tileLoaded.mockClear()
+
+      const loading = map.addTileSegment(1071, 723)
+      const tile = tileAt(map, 1071, 723)
+      await vi.waitFor(() => {
+        expect(answers).toHaveLength(1)
+      })
+      map.removeTileSegment(1071, 723)
+      for (const answer of answers) answer()
+      await loading
+
+      expect(tile.loaded).toBe(false)
+      expect(tile.mesh.parent).toBeNull()
+      expect(tileLoaded).not.toHaveBeenCalled()
+      expect(tileRemoved).not.toHaveBeenCalled()
+      expect(map.terrain.children).toHaveLength(9)
+    })
+  })
+
+  describe('skirt', () => {
+    const skirtOf = (tile: Tile) => {
+      const skirt = tile.mesh.getObjectByName('skirt')
+      if (!skirt) throw new Error(`Tile ${tile.key()} has no skirt`)
+      return skirt as Mesh<BufferGeometry, Material>
+    }
+
+    it('has none by default', async () => {
+      const map = createMap()
+      await map.init()
+
+      for (const tile of Object.values(map.tileCache)) {
+        expect(tile.mesh.getObjectByName('skirt')).toBeUndefined()
+      }
+    })
+
+    it('hangs from every edge, following the stitched heights', async () => {
+      const map = createMap({ options: { tileSegments: 8, skirt: 100 } })
+      await map.init()
+      const { tileSize, tileSegments: n, zScale } = map.options
+
+      for (const tile of Object.values(map.tileCache)) {
+        const position = skirtOf(tile).geometry.getAttribute('position')
+        // around the tile: north, east, south, west
+        const heights = [
+          ...edge(tile, 'row', 0),
+          ...edge(tile, 'col', n),
+          ...edge(tile, 'row', n).reverse(),
+          ...edge(tile, 'col', 0).reverse()
+        ]
+        expect(position.count).toBe(2 * heights.length)
+        heights.forEach((z, i) => {
+          const top = new Vector3().fromBufferAttribute(position, 2 * i)
+          const bottom = new Vector3().fromBufferAttribute(position, 2 * i + 1)
+          expect(top.z).toBe(z)
+          expect(Math.max(Math.abs(top.x), Math.abs(top.y))).toBe(tileSize / 2)
+          expect([bottom.x, bottom.y]).toEqual([top.x, top.y])
+          expect(bottom.z).toBeCloseTo(z - 100 * zScale, 4)
+        })
+      }
+    })
+
+    it('faces out of the tile in its material, hidden in wireframe', async () => {
+      const map = createMap({ options: { tileSegments: 4, skirt: 100 } })
+      await map.init()
+      await map.whenReady()
+      const tile = tileAt(map, 1069, 723)
+      const skirt = skirtOf(tile)
+      const position = skirt.geometry.getAttribute('position')
+      const index = skirt.geometry.getIndex()?.array ?? []
+
+      expect(index).toHaveLength(4 * 4 * 6)
+      for (let i = 0; i < index.length; i += 3) {
+        const [a, b, c] = [0, 1, 2].map((k) =>
+          new Vector3().fromBufferAttribute(position, index[i + k])
+        )
+        const normal = b.clone().sub(a).cross(c.clone().sub(a))
+        const middle = a.clone().add(b).add(c)
+        expect(normal.x * middle.x + normal.y * middle.y).toBeGreaterThan(0)
+      }
+      expect(skirt.material).toBe(tile.mesh.material)
+      expect(skirt.visible).toBe(true)
+
+      map.setMaterial({ wireframe: true })
+      expect(skirt.material).toBe(tile.mesh.material)
+      expect(skirt.visible).toBe(false)
+      map.setMaterial({ wireframe: false })
+      expect(skirt.visible).toBe(true)
+    })
+
+    it('is never picked or exported, and is freed with its tile', async () => {
+      vi.stubGlobal('FileReader', FakeFileReader)
+      const map = createMap({
+        source: { api: 'none' },
+        options: { tileSegments: 4, skirt: 100 }
+      })
+      await map.init()
+      const skirt = skirtOf(tileAt(map, 1069, 723))
+      // southwards through the skirt of the center tile's north edge
+      const top = new Vector3().fromBufferAttribute(
+        skirt.geometry.getAttribute('position'),
+        4
+      )
+      const ray = new Raycaster(
+        new Vector3(top.x, 1e4, top.z - 1),
+        new Vector3(0, -1, 0)
+      )
+
+      expect(ray.intersectObject(skirt)).toEqual([])
+      const blob = await map.export('glb')
+      expect(
+        glbJson(new Uint8Array(await blob.arrayBuffer())).meshes
+      ).toHaveLength(9)
+      const dispose = vi.spyOn(skirt.geometry, 'dispose')
+      map.clean()
+      expect(dispose).toHaveBeenCalledOnce()
+    })
+  })
+
+  describe('alignTo', () => {
+    /** Where `map` draws a place, in the world. */
+    const world = (map: Map, where: GeoLocation) => {
+      map.terrain.updateWorldMatrix(true, false)
+      return map.terrain.localToWorld(
+        new Vector3().copy(map.getPosition(where, { loadTile: false }))
+      )
+    }
+
+    /**
+     * Places around the location: corners of tiles at `zoom` (and so at any
+     * deeper one) — inside a tile, positions interpolate the latitude.
+     */
+    const places = (zoom: number) => {
+      const center = Utils.position2tile(location.lat, location.lon, zoom)
+      return [-2, 0, 1, 3].flatMap((i) =>
+        [-1, 0.3, 2.6].map((j) => ({
+          lat: Utils.tile2lat(center.y + i, zoom),
+          lon: Utils.tile2lon(center.x + j, zoom),
+          alt: 1200 + 100 * i
+        }))
+      )
+    }
+
+    it.each([
+      [11, { zoom: 10 }],
+      [11, { zoom: 9, tileSize: 256 }],
+      [9, { zoom: 13, exaggeration: 2, baseAltitude: 500 }]
+    ])(
+      'puts every place where a map at zoom %i draws it: %o',
+      (zoom, options) => {
+        const other = createMap({ options: { zoom } })
+        const map = createMap({ options })
+
+        map.alignTo(other)
+
+        for (const where of places(Math.min(zoom, options.zoom))) {
+          expect(
+            world(map, where).distanceTo(world(other, where))
+          ).toBeLessThan(1e-6)
+        }
+      }
+    )
+
+    it("follows the other map's transform and its own parent's", () => {
+      const other = createMap()
+      other.terrain.position.set(1000, -500, 20)
+      other.terrain.rotation.z = 0.3
+      other.terrain.scale.set(2, 2, 3)
+      const map = createMap({ options: { zoom: 10 } })
+      const parent = new Group()
+      parent.position.set(-70, 40, 5)
+      parent.rotation.z = -0.2
+      parent.add(map.terrain)
+
+      map.alignTo(other)
+
+      for (const where of places(10)) {
+        expect(world(map, where).distanceTo(world(other, where))).toBeLessThan(
+          1e-6
+        )
+      }
     })
   })
 

@@ -42,6 +42,7 @@ Elevation and imagery from any source, OpenStreetMap buildings standing on the t
 - **Picking** — the geolocation under the pointer, the building or road there (never one the terrain hides), highlighted over any material.
 - **Diorama base and export** — `TerrainBase` closes the terrain into a solid block; GLB, glTF, OBJ, STL (3D printing) or USDZ (AR) of everything, in meters.
 - **Seamless while streaming** — tiles are stitched to their neighbours the moment they load, and what lies on them follows: no cracks, no walls, no roads floating or sinking.
+- **Large areas, your way** — tiles loaded ahead of the camera and removed behind it, a detailed middle in coarser rings with skirts closing the steps between them: [streaming and levels of detail](#large-areas) in a few lines, the policy yours.
 - **Fast, and tunable** — layers draw a few tiles at a time between frames, picking tests only the triangles under the ray, and the costs are yours to set: imagery detail, layers hidden beyond a distance, [and more](#performance).
 - **Plain three.js** — built-in materials, no custom shaders: works with `WebGLRenderer` and `WebGPURenderer`, with lights and fog.
 - **Well-behaved** — retries for flaky tile servers, `AbortController` for pending requests, `clean()` frees every GPU resource.
@@ -491,6 +492,7 @@ The library keeps the main thread free on its own: layers draw a few tiles at a 
 | `imageryZoomOffset`                                                 | Imagery requests and texture memory per tile: `4^offset` tiles — `0` a quarter of the default's, `2` four times (sharper)                                                                 |
 | layers' `maxDistance`                                               | Hides a layer's objects on tiles farther than this many meters from the camera, every frame — per part too: `(part) => (part === 'trunks' ? 800 : 2500)`. Drawn and exported all the same |
 | `map.focus`                                                         | Where the layers draw first: `camera.position` or the controls' `target`                                                                                                                  |
+| `removeTileSegment`, `alignTo`                                      | Tiles near the camera only, coarser ones farther away: [Large areas](#large-areas)                                                                                                        |
 | `Roads` `kinds`, `Trees` `spacing`, `maxPerTile`, layers' `minZoom` | Fewer features: e.g. no footpaths, sparser woods on a wide map, no layer below a zoom                                                                                                     |
 | `Buildings` `edges`, `wireframe`, `fillOpacity`                     | Lines are extra draw calls and vertices; a transparent fill is drawn after everything else                                                                                                |
 | `lights: false`                                                     | Unlit `MeshBasicMaterial`s for the terrain and the layers' look                                                                                                                           |
@@ -633,6 +635,65 @@ The [basic example](examples/basic/src/overture.ts) loads the [Overture Maps](ht
   </tr>
 </table>
 
+## Large areas
+
+A `Map` is a grid of tiles at one zoom — a city, a valley, a mountain range, everything on it in full detail. It is not a globe and does not stream on its own: which tiles to show, and how detailed, is your call, and three pieces make the usual policies a few lines — `removeTileSegment`, `alignTo` and `skirt`.
+
+### Streaming
+
+`addTileSegment(x, y)` loads a tile, `removeTileSegment(x, y)` drops it: the layers let go of what they drew there, a load still running is aborted, the GPU memory is freed. The tiles around the point the camera looks at:
+
+```ts
+import { Utils } from 'three-map-terrain'
+
+const radius = 2 // tiles each way
+controls.addEventListener('change', () => {
+  const local = map.terrain.worldToLocal(controls.target.clone())
+  const { lat, lon } = map.getLocation(local)
+  const { x, y } = Utils.position2tile(lat, lon, map.options.zoom)
+  for (const tile of Object.values(map.tileCache)) {
+    if (Math.max(Math.abs(tile.x - x), Math.abs(tile.y - y)) > radius) {
+      map.removeTileSegment(tile.x, tile.y)
+    }
+  }
+  for (let i = -radius; i <= radius; i++) {
+    for (let j = -radius; j <= radius; j++) {
+      void map.addTileSegment(x + i, y + j)
+    }
+  }
+})
+```
+
+Buildings are cut at the edge of the `init()` grid: give them `clip: false` on a map that streams.
+
+### Levels of detail
+
+Maps of different zooms line up with `alignTo()`: every place, at every altitude, lands on the same point of the scene. A detailed middle in a coarser ring — the ring without its middle tile, the middle made of that tile's descendants:
+
+```ts
+// no grid of their own: the tiles are added one by one
+const options = { nTiles: 0, exaggeration: 1, skirt: 300 }
+const detail = new Map({ location, source, options: { ...options, zoom: 13 } })
+const ring = new Map({ location, source, options: { ...options, zoom: 11 } })
+scene.add(detail.terrain, ring.terrain)
+ring.alignTo(detail)
+
+const { x, y } = ring.center
+for (let i = -1; i <= 1; i++) {
+  for (let j = -1; j <= 1; j++) {
+    if (i !== 0 || j !== 0) void ring.addTileSegment(x + i, y + j)
+  }
+}
+// the ring's middle tile: 4 × 4 tiles two zooms deeper
+for (let i = 0; i < 4; i++) {
+  for (let j = 0; j < 4; j++) {
+    void detail.addTileSegment(4 * x + i, 4 * y + j)
+  }
+}
+```
+
+Where the two meet, their edges lie at different heights — each zoom samples the elevation on its own grid: in the Alps, zoom 11 meets zoom 10 up to 170 m apart, zoom 9 up to 330 m. `skirt` hangs a strip of that many meters straight down from every tile's edge, in the tile's material, and the steps close; it is never picked or exported (`TerrainBase` walls stay in front of it). Put the layers on the detailed map, and ask each map about its own area: `getTerrainPosition` loads the tile it needs.
+
 ## API
 
 ### `new Map({ location, source?, elevation?, options?, material? })`
@@ -657,6 +718,7 @@ The [basic example](examples/basic/src/overture.ts) loads the [Overture Maps](ht
 | `exaggeration`      | —       | Vertical exaggeration relative to true scale (`1`: true to scale); when set, it decides `zScale`                                                                          |
 | `baseAltitude`      | `0`     | Altitude in meters drawn at z = 0                                                                                                                                         |
 | `imageryZoomOffset` | `1`     | A tile is textured with `4^offset` imagery tiles stitched into one: `0` its own (a quarter of the requests and memory), `1` its four children, `2` sixteen (sharper); 0–3 |
+| `skirt`             | `0`     | Meters a strip hangs straight down from every tile's edge, in its material: it closes the steps to another map ([levels of detail](#levels-of-detail)); `0`: none         |
 
 **`TerrainMaterialOptions`** (defaults in `defaultMaterialOptions`) — the look (`MaterialOptions`, shared with the layers), and the terrain's own
 
@@ -694,6 +756,8 @@ Positions are in `map.terrain` coordinates: X east, Y north, Z up. Transforms of
 | `attributions`                                                            | `string[]`                              | The credits of the sources and layers in use — show them with the map                                                                                                                     |
 | `bounds`, `grid`                                                          |                                         | The grid as `[west, south, east, north]` in degrees, and in tiles                                                                                                                         |
 | `addTileSegment(x, y)`                                                    | `Promise<void>`                         | Loads one more tile of the grid's zoom                                                                                                                                                    |
+| `removeTileSegment(x, y)`                                                 | `boolean`                               | Removes a tile: the layers let go of it, a pending load is aborted, its resources freed. Whether there was one. [Streaming](#streaming)                                                   |
+| `alignTo(map)`                                                            | `void`                                  | Sets the transform of `terrain` so that this map lines up with another — any zoom, tile size, vertical scale. [Levels of detail](#levels-of-detail)                                       |
 | `clean()`                                                                 | `void`                                  | Removes the tiles, aborts pending requests, disposes geometries, materials and textures. `init()` can be called again                                                                     |
 | `ready`, `options`, `materialOptions`, `tileCache`, `source`, `elevation` |                                         | Whether `init()` finished, the resolved options, the loaded `Tile`s by `z/x/y`, the sources                                                                                               |
 
@@ -783,11 +847,25 @@ Tiles are fetched with CORS. Network errors, HTTP 408/425/429/5xx and bodies tha
 
 ## Upgrading
 
+### To 3.3
+
+Nothing breaks; new for [large areas](#large-areas):
+
+- `map.removeTileSegment(x, y)` removes a tile — layers follow, as on `clean()` (`MapLayer.tileRemoved`).
+- `map.alignTo(other)` lines a map up with another of any zoom.
+- The `skirt` option hangs strips from the tiles' edges. `TerrainBase`'s own material gets a polygon offset, to stay in front of them.
+
+### To 3.2.1
+
+Nothing breaks; a fix for bad building heights:
+
+- **Building heights above 1000 m count as none.** No building reaches them (the tallest stands 828 m): they are data errors — OpenFreeMap's tiles carry a 3331 m apartment block whose `building:levels=9,10` was read as 910 levels. Such a building, or a `minHeight` that high, now stands `defaultHeight` high on the ground; `pick` still returns the source's feature.
+- **Levels of several sections.** Read from Overpass, `building:levels` of several sections (`9;10`, `9,10`) give the highest, `building:min_level` the lowest — before, such a building had no height.
+
 ### To 3.2
 
 Nothing breaks; worth knowing:
 
-- **Building heights above 1000 m count as none.** No building reaches them (the tallest stands 828 m): they are data errors — OpenFreeMap's tiles carry a 3331 m apartment block whose `building:levels=9,10` was read as 910 levels. Such a building, or a `minHeight` that high, now stands `defaultHeight` high on the ground; `pick` still returns the source's feature. Read from Overpass, `building:levels` of several sections (`9;10`, `9,10`) give the highest — before, such a building had none.
 - **Overlapping woods plant a spot once.** Two woods covering the same ground — `natural=wood` and `landuse=forest` often do — no longer stand two trees on every spot of the grid: fewer copies, the same picture.
 - Single trees from Overpass have the `kind` of their `natural` tag (`'tree'` for the trees the layer asks for).
 - The Overpass queries (`overpassQuery`, `overpassRoadsQuery`, `overpassWaterQuery`, `overpassTreesQuery`) take `more` selectors; sources with a preset `api` take `properties` and `layers`, with `overpass` a `query`.
@@ -865,7 +943,7 @@ yarn validate   # typecheck, lint, format check, unit tests, build
 yarn test:e2e   # rendering tests in Chromium (WebGL + WebGPU), tile servers mocked
 ```
 
-The playground takes query parameters: `renderer=webgpu` (`&forceWebGL=1` for its WebGL2 backend), `lights=0`, `wireframe=1`, `segments=40`, `nTiles=5`, `view=top`, `api=osm|swisstopo|none`, `color=e9e4da`, `gray=1` (a `process`), `elevation=mapterhorn`, `buildings=openfreemap&edges=1`, `roads=openfreemap`, `water=openfreemap`, `trees=openfreemap`, `zoom=15&lat=46.515&lon=6.632`, `base=372`. Architecture notes and conventions are in [AGENTS.md](AGENTS.md).
+The playground takes query parameters: `renderer=webgpu` (`&forceWebGL=1` for its WebGL2 backend), `lights=0`, `wireframe=1`, `segments=40`, `nTiles=5`, `view=top`, `api=osm|swisstopo|none`, `color=e9e4da`, `gray=1` (a `process`), `elevation=mapterhorn`, `buildings=openfreemap&edges=1`, `roads=openfreemap`, `water=openfreemap`, `trees=openfreemap`, `zoom=15&lat=46.515&lon=6.632`, `base=372`, `lod=2&skirt=400` (levels of detail), `stream=1`. Architecture notes and conventions are in [AGENTS.md](AGENTS.md).
 
 ## Roadmap
 
@@ -876,6 +954,7 @@ The playground takes query parameters: `renderer=webgpu` (`&forceWebGL=1` for it
 - [x] Roads, railways and bridges
 - [x] A frame for your own layers; materials, geometry and parsing replaceable at every stage
 - [x] Water and trees (prototypes: a trunk and a crown)
+- [x] Large areas: streaming and levels of detail (`removeTileSegment`, `alignTo`, skirts)
 - [ ] Land cover (fields, parks, rock), tree species
 - [ ] Roof shapes (`roof:shape`, from Overpass and Overture)
 - [ ] Pin and direction components

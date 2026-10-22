@@ -215,18 +215,37 @@ depends on the published package. After a release, bump it there.
     `Mesh.raycast` (tests compare them), falling back to it for geometry
     that is not an untouched grid.
 - **Lifecycle**: `Tile.dispose()` aborts in-flight requests (`AbortController`)
-  and disposes geometry/material/texture; `Map.clean()` disposes every tile.
+  and disposes geometry/material/texture; `Map.clean()` disposes every tile,
+  `Map.removeTileSegment()` one (out of `tileCache` and `loads`; its
+  neighbours keep their stitched edges, `addTileSegment` loads it again).
   Results that arrive after disposal are discarded. The shared placeholder
   material is never disposed. `Map.whenReady()` waits for the grid, tiles
   loaded since, textures (`Tile.whenTextured`) and layers' `whenReady`.
+- **Large areas** (README "Large areas"): the library gives the pieces, the
+  policy (which tiles, how detailed) is the user's — no quadtree in the core.
+  - `alignTo(other)` sets `terrain`'s transform from both maps' `frame()`
+    (the origin on the Web Mercator square and the units per square width:
+    exact at tile corners, where a coarse tile's corners are a fine one's;
+    z from the `zScale`s and `baseAltitude`s), composed with the other's
+    world matrix and the inverse of its own parent's.
+  - `skirt` (meters): `Tile.updateSkirt`, from every `updateGeometry` — a
+    child mesh of the tile, a strip straight down from each edge
+    (`edgeVertices`: one loop around, each edge its own corners) with the
+    edge's normals and UVs, in the tile's material (`useMaterial` keeps it
+    in step; hidden in wireframe), `raycast` a no-op, not exported
+    (`userData.export`). Vertical on purpose: slanted under the tile it
+    pokes through slopes falling away from the edge. `TerrainBase`'s own material has a
+    polygon offset so its walls win over the skirts in their planes.
+  - The e2e test puts zoom 13 in a ring of zoom 12 (`?lod=1`): background
+    shows through the edges without skirts, none with them.
 - **Layers** (`MapLayer`): `addLayer` calls `attach`, then `tileLoaded` for
   the placed tiles; `fetchAndPlace` calls `tileLoaded` after stitching and
   adding the mesh, then `tileChanged` for the placed tiles whose heights the
   stitching changed (`stitchAround` returns them: the W/N/NW neighbours and
-  corners); `clean()` calls `tileRemoved` before disposing. Hooks are
-  wrapped (`notify`): a failing layer never breaks the terrain. Layers
-  survive `clean()` (React StrictMode: init → clean → init). Their objects
-  live in groups under `map.terrain`; `map.pick` intersects
+  corners); `clean()` and `removeTileSegment()` call `tileRemoved` before
+  disposing. Hooks are wrapped (`notify`): a failing layer never breaks the
+  terrain. Layers survive `clean()` (React StrictMode: init → clean → init).
+  Their objects live in groups under `map.terrain`; `map.pick` intersects
   `terrain.children` non-recursively, so it never hits them.
 - **FeatureLayer** (`src/layers/`), the frame of `Buildings` and `Roads`:
   - Per terrain tile an entry: its source tiles (`SourceTiles.covering`: at
