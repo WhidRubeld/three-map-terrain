@@ -78,9 +78,14 @@ examples/basic            plain three.js + webpack: San Francisco, Overture
                           buildings via a custom PMTiles source, OpenFreeMap roads,
                           imagery toned with a `process`
 examples/react            React Three Fiber + drei + Vite; the live example
-                          (GitHub Pages, deployed from master): Alps, Lausanne
-                          with all layers in four looks (colored.ts, textured.ts:
-                          materials per part), scrub as bushes (Trees `plant`)
+                          (GitHub Pages, deployed from master), a small tool:
+                          areas picked on an OpenStreetMap map (Picker.tsx:
+                          OpenLayers, lazy; Photon search) or presets (Lausanne,
+                          Alps), layers toggled with add/removeLayer (layers.ts;
+                          scrub as bushes: Trees `plant`), four looks (looks.ts;
+                          colored.ts, textured.ts: materials per part), export;
+                          the view lives in the URL (view.ts: place or lat/lon/
+                          z/n, ex, look, imagery, layers, pick). No Leaflet
 docs/                     README images (WebP) of the examples: `yarn screenshots`
 scripts/screenshots.mjs   renders them from the built examples (Chrome + cwebp)
 .skills/                  agent skills (symlinked as .claude/skills)

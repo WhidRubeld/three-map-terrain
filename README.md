@@ -13,7 +13,7 @@ Elevation and imagery from any source, OpenStreetMap buildings standing on the t
 
 [**Live example**](https://whidrubeld.github.io/three-map-terrain/) · [Quick start](#quick-start) · [Layers](#layers) · [Your own layers](#your-own-layers) · [Materials](#materials) · [Sources](#sources) · [API](#api) · [Upgrading](#upgrading)
 
-<a href="https://whidrubeld.github.io/three-map-terrain/"><img src="docs/hero.webp" alt="The live example: the Bernese Alps from Lake Brienz to the Aletsch Glacier as 3D terrain with satellite imagery; the panel shows the geolocation of a click on the terrain" width="100%"></a>
+<a href="https://whidrubeld.github.io/three-map-terrain/?place=alps"><img src="docs/hero.webp" alt="The live example: the Bernese Alps from Lake Brienz to the Aletsch Glacier as 3D terrain with satellite imagery; the panel shows the geolocation of a click on the terrain" width="100%"></a>
 
 <table>
   <tr>
@@ -26,7 +26,7 @@ Elevation and imagery from any source, OpenStreetMap buildings standing on the t
   </tr>
 </table>
 
-<sub>The live example — [React Three Fiber in one component](examples/react/src/App.tsx): Lausanne from the lake to the cathedral, one map in four looks — plain ([colored](examples/react/src/colored.ts) by part), [textured](examples/react/src/textured.ts) (a few canvas textures on the layers' parts), aerial in grayscale (a `process` of the imagery), wireframe over a light fill.</sub>
+<sub>The live example — [a small tool in React Three Fiber](examples/react): any area of the world, picked on an OpenStreetMap map, its layers switched on and off, one map in four looks — plain ([colored](examples/react/src/colored.ts) by part), [textured](examples/react/src/textured.ts) (a few canvas textures on the layers' parts), aerial in grayscale (a `process` of the imagery), wireframe over a light fill — exported as GLB, STL, OBJ or USDZ. Every view is a link.</sub>
 
 </div>
 
@@ -466,7 +466,7 @@ water.setMaterial(undefined) // the map's look again
 
 Only what a hidden material left out — lines out of wireframe, copies of a hidden part — is drawn when it shows, a few tiles at a time.
 
-The live example's looks are all made this way: aerial and wireframe from the options and a `process` ([App.tsx](examples/react/src/App.tsx)), plain from [a color per part](examples/react/src/colored.ts), textured from [a few canvas textures on the parts](examples/react/src/textured.ts) — and a part hidden where the photo has it already (`new MeshBasicMaterial({ visible: false })`).
+The live example's looks are all made this way: aerial and wireframe from the options and a `process` ([looks.ts](examples/react/src/looks.ts)), plain from [a color per part](examples/react/src/colored.ts), textured from [a few canvas textures on the parts](examples/react/src/textured.ts) — and a part hidden where the photo has it already (`new MeshBasicMaterial({ visible: false })`).
 
 ## Export
 
@@ -616,11 +616,11 @@ The [basic example](examples/basic/src/overture.ts) loads the [Overture Maps](ht
 
 ## Examples
 
-| Example                                                      | Stack                         | What it shows                                                                                                                                                                                                                                                                                     |
-| ------------------------------------------------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [React](examples/react)                                      | React Three Fiber, drei, Vite | The [live example](https://whidrubeld.github.io/three-map-terrain/): the Alps with imagery; Lausanne with buildings, roads and bridges, water, trees, bushes in scrub and a base in four looks switched at runtime — one colored by part, one textured; picking, highlighting, GLB and STL export |
-| [Basic](examples/basic)                                      | three.js, webpack             | San Francisco: Overture buildings from a custom PMTiles source and OpenFreeMap roads on a toned-down map, a base, picking, export                                                                                                                                                                 |
-| [**GPX Terrain**](https://github.com/whidrubeld/gpx-terrain) | React, R3F, TanStack Store    | [A full app](https://whidrubeld.github.io/gpx-terrain/) on the library: GPX tracks draped on terrain, profile, playback, picking, imagery and wireframe at runtime                                                                                                                                |
+| Example                                                      | Stack                         | What it shows                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------ | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [React](examples/react)                                      | React Three Fiber, drei, Vite | The [live example](https://whidrubeld.github.io/three-map-terrain/), a small tool: any area picked on a map (Lausanne and the Alps preset), buildings, roads and bridges, water, trees, bushes in scrub and a base switched on and off, four looks switched at runtime — one colored by part, one textured; picking, highlighting, model export, the view in the URL |
+| [Basic](examples/basic)                                      | three.js, webpack             | San Francisco: Overture buildings from a custom PMTiles source and OpenFreeMap roads on a toned-down map, a base, picking, export                                                                                                                                                                                                                                    |
+| [**GPX Terrain**](https://github.com/whidrubeld/gpx-terrain) | React, R3F, TanStack Store    | [A full app](https://whidrubeld.github.io/gpx-terrain/) on the library: GPX tracks draped on terrain, profile, playback, picking, imagery and wireframe at runtime                                                                                                                                                                                                   |
 
 <table>
   <tr>
