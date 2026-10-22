@@ -25,6 +25,13 @@ export interface GeoLocation {
 
 export interface MapOptions {
   nTiles: number
+  /**
+   * The grid in tiles of `zoom`, inclusive: any rectangle, e.g. around a
+   * track. Replaces the `nTiles × nTiles` square around `location`, which
+   * still sets the coordinates (`center`: the tile at the origin of
+   * `map.terrain`) and need not lie in the grid.
+   */
+  grid?: { minX: number; minY: number; maxX: number; maxY: number }
   zoom: number
   tileSize: number
   tileSegments: number
@@ -110,7 +117,7 @@ export interface MapExportOptions extends Omit<
   layers?: boolean
 }
 
-/** The `nTiles × nTiles` grid of `init()`, as tile coordinates at `zoom`. */
+/** The grid of `init()`, as tile coordinates at `zoom`. */
 export interface TileGrid {
   zoom: number
   minX: number
@@ -194,6 +201,19 @@ export class Map {
       0,
       Math.min(3, Math.round(options.imageryZoomOffset ?? 1))
     )
+    if (options.grid) {
+      const { minX, minY, maxX, maxY } = options.grid
+      if (
+        ![minX, minY, maxX, maxY].every(Number.isInteger) ||
+        minX > maxX ||
+        minY > maxY
+      ) {
+        throw new Error(
+          `The grid needs integer tiles, minX ≤ maxX and minY ≤ maxY: ${JSON.stringify(options.grid)}`
+        )
+      }
+      options.grid = { minX, minY, maxX, maxY }
+    }
     if (options.exaggeration !== undefined) {
       const { lat } = this.geoLocation
       options.zScale =
@@ -204,7 +224,8 @@ export class Map {
   }
 
   /**
-   * Loads an `nTiles × nTiles` grid around `location`.
+   * Loads the tiles of `grid`: `options.grid`, else `nTiles × nTiles`
+   * around `location`.
    * Resolves (and calls `cb`) once every tile has its elevation and the seams
    * are stitched; textures keep streaming in afterwards.
    * Calls made before `clean()` share one load; `clean()` cancels it, and the
@@ -280,9 +301,13 @@ export class Map {
     return [...new Set(credits.filter((credit) => credit !== ''))]
   }
 
-  /** The `nTiles × nTiles` grid of `init()`, in tiles of `zoom`. */
+  /**
+   * The grid of `init()`, in tiles of `zoom`: `options.grid`, else the
+   * `nTiles × nTiles` square around `location`.
+   */
   get grid(): TileGrid {
-    const { zoom, nTiles } = this.options
+    const { zoom, nTiles, grid } = this.options
+    if (grid) return { ...grid, zoom }
     const offset = Math.floor(nTiles / 2)
     const minX = this.center.x - offset
     const minY = this.center.y - offset
@@ -532,14 +557,12 @@ export class Map {
 
   private async loadGrid() {
     this.center = this.getCenter()
-    const { x, y } = this.center
-    const { nTiles } = this.options
-    const tileOffset = Math.floor(nTiles / 2)
+    const { minX, minY, maxX, maxY } = this.grid
 
     const pending: Promise<Tile | undefined>[] = []
-    for (let i = 0; i < nTiles; i++) {
-      for (let j = 0; j < nTiles; j++) {
-        const tile = this.createTile(x + i - tileOffset, y + j - tileOffset)
+    for (let x = minX; x <= maxX; x++) {
+      for (let y = minY; y <= maxY; y++) {
+        const tile = this.createTile(x, y)
         if (tile) pending.push(this.loadTile(tile))
       }
     }

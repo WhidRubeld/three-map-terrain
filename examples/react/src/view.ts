@@ -1,21 +1,27 @@
 // What the page shows, and its URL: an area (a preset place or any other),
 // the relief, the look and the layers. Each preset is one link —
-// `?place=lausanne` — and any other area too: `?lat=…&lon=…&z=14&n=5`;
+// `?place=lausanne` — and any other area too: `?lat=…&lon=…&z=14&w=3&h=2`;
 // the rest is added when it differs from the area's defaults.
 
-import { Utils } from 'three-map-terrain'
+import { type MapOptions, Utils } from 'three-map-terrain'
 
 import { LAYER_NAMES, type LayerName } from './layers'
 import { IMAGERY, type ImageryName, LOOKS, type LookName } from './looks'
 
-/** An `n × n` grid of tiles at `zoom` around a location: `new Map()`'s. */
+/** A grid of `columns × rows` tiles at `zoom` around a location. */
 export interface Area {
+  /** The middle of the grid. */
   lat: number
   lon: number
   zoom: number
-  /** Tiles along a side: 3 or 5. */
-  size: number
+  /** Tiles west to east. */
+  columns: number
+  /** Tiles north to south. */
+  rows: number
 }
+
+/** `new Map()`'s `grid`: the tiles from `minX`, `minY` to `maxX`, `maxY`. */
+export type Grid = NonNullable<MapOptions['grid']>
 
 export interface View {
   area: Area
@@ -27,6 +33,8 @@ export interface View {
 }
 
 export const ZOOMS = { min: 8, max: 16 }
+/** Tiles along a side of an area. */
+export const SIDES = { min: 1, max: 5 }
 export const EXAGGERATIONS = ['1', '1.5', '2', '3']
 
 export const PLACES = {
@@ -34,7 +42,7 @@ export const PLACES = {
     title: 'Lausanne',
     // from Lake Geneva up to the cathedral, true to scale; bridges span
     // the Flon valley
-    area: { lat: 46.515, lon: 6.632, zoom: 15, size: 3 },
+    area: { lat: 46.515, lon: 6.632, zoom: 15, columns: 3, rows: 3 },
     exaggeration: 1,
     look: 'plain',
     imagery: 'swisstopo',
@@ -43,7 +51,7 @@ export const PLACES = {
   alps: {
     title: 'Bernese Alps',
     // from Lake Brienz to the Aletsch Glacier
-    area: { lat: 46.57634, lon: 7.9904, zoom: 11, size: 3 },
+    area: { lat: 46.57634, lon: 7.9904, zoom: 11, columns: 3, rows: 3 },
     exaggeration: 1,
     look: 'textured',
     imagery: 'swisstopo',
@@ -61,20 +69,39 @@ const DEFAULTS: Omit<View, 'area'> = {
   layers: LAYER_NAMES
 }
 
-const tileOf = ({ lat, lon, zoom }: Area) => Utils.position2tile(lat, lon, zoom)
+/** The tiles of an area: `columns × rows` around its middle. */
+export function gridOf({ lat, lon, zoom, columns, rows }: Area): Grid {
+  const minX = Math.round(Utils.long2tile(lon, zoom) - columns / 2)
+  const minY = Math.round(Utils.lat2tile(lat, zoom) - rows / 2)
+  return { minX, minY, maxX: minX + columns - 1, maxY: minY + rows - 1 }
+}
+
+/** The area of a grid of tiles: its middle, its size. */
+export function areaOf({ minX, minY, maxX, maxY }: Grid, zoom: number): Area {
+  return {
+    lat: Utils.tile2lat((minY + maxY + 1) / 2, zoom),
+    lon: Utils.tile2lon((minX + maxX + 1) / 2, zoom),
+    zoom,
+    columns: maxX - minX + 1,
+    rows: maxY - minY + 1
+  }
+}
+
+/** The area on whole tiles: its middle moved to its grid's. */
+export const onTiles = (area: Area) => areaOf(gridOf(area), area.zoom)
+
+export const sameGrid = (a: Grid, b: Grid) =>
+  a.minX === b.minX &&
+  a.minY === b.minY &&
+  a.maxX === b.maxX &&
+  a.maxY === b.maxY
 
 /** The preset place whose grid the area is. */
 export function placeOf(area: Area): PlaceName | undefined {
-  const tile = tileOf(area)
+  const grid = gridOf(area)
   return (Object.keys(PLACES) as PlaceName[]).find((name) => {
     const place = PLACES[name].area
-    const other = tileOf(place)
-    return (
-      place.zoom === area.zoom &&
-      place.size === area.size &&
-      other.x === tile.x &&
-      other.y === tile.y
-    )
+    return place.zoom === area.zoom && sameGrid(gridOf(place), grid)
   })
 }
 
@@ -83,17 +110,20 @@ const defaultsOf = (area: Area): Omit<View, 'area'> => {
   return place ? PLACES[place] : DEFAULTS
 }
 
-/** The area's width in kilometers, to a tenth below 10. */
-export function kilometers({ lat, zoom, size }: Area) {
-  const km = (size * Utils.tileWidth(lat, zoom)) / 1000
-  return km < 10 ? km.toFixed(1) : String(Math.round(km))
+/** The area's width × height in kilometers, to a tenth below 10. */
+export function kilometers({ lat, zoom, columns, rows }: Area) {
+  const km = (tiles: number) => {
+    const km = (tiles * Utils.tileWidth(lat, zoom)) / 1000
+    return km < 10 ? km.toFixed(1) : String(Math.round(km))
+  }
+  return `${km(columns)} × ${km(rows)}`
 }
 
 /** Roughly: swisstopo has photos of Switzerland and a little around it. */
 export const inSwitzerland = ({ lat, lon }: Area) =>
   lat > 45.8 && lat < 47.8 && lon > 5.95 && lon < 10.5
 
-const clamp = (value: number, min: number, max: number) =>
+export const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value))
 
 const oneOf = <T extends string>(
@@ -110,11 +140,17 @@ export function readView(search: string): View {
     return Number.isFinite(value) ? value : undefined
   }
   const base = PLACES[oneOf(params.get('place'), PLACES) ?? 'lausanne'].area
+  // n: a square, as links had it before rectangles
+  const side = (key: string, fallback: number) =>
+    Math.round(
+      clamp(number(key) ?? number('n') ?? fallback, SIDES.min, SIDES.max)
+    )
   const area: Area = {
     lat: clamp(number('lat') ?? base.lat, -85, 85),
     lon: clamp(number('lon') ?? base.lon, -180, 180),
     zoom: Math.round(clamp(number('z') ?? base.zoom, ZOOMS.min, ZOOMS.max)),
-    size: (number('n') ?? base.size) >= 5 ? 5 : 3
+    columns: side('w', base.columns),
+    rows: side('h', base.rows)
   }
   const defaults = defaultsOf(area)
   const layers = params.get('layers')
@@ -142,7 +178,8 @@ export function writeView(view: View, picking: boolean): string {
         ['lat', round(area.lat)],
         ['lon', round(area.lon)],
         ['z', area.zoom],
-        ['n', area.size]
+        ['w', area.columns],
+        ['h', area.rows]
       ]
   if (view.exaggeration !== defaults.exaggeration) {
     params.push(['ex', view.exaggeration])

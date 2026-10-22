@@ -80,6 +80,7 @@ Query parameters:
 | `zoom`, `lat`, `lon` | numbers                                    | Alps, 11 | another place or zoom: drawn true to scale (`exaggeration=…`)      |
 | `base`               | meters                                     | `0`      | `baseAltitude`                                                     |
 | `nTiles`             | integer                                    | `3`      | grid size                                                          |
+| `grid`               | `west,north,east,south`                    | —        | the `grid` option: tiles from the location's tile, e.g. `0,-1,1,1` |
 | `segments`           | integer                                    | `100`    | `tileSegments` (try `40` with `wireframe=1`)                       |
 | `imageryZoomOffset`  | `0`–`3`                                    | `1`      | imagery tiles per terrain tile: `4^offset`                         |
 | `maxDistance`        | meters                                     | —        | the layers hide tiles farther from the camera                      |

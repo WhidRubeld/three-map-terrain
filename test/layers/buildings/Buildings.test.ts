@@ -21,6 +21,7 @@ import {
   type BuildingsOptions,
   type BuildingSourceProps,
   Map,
+  type MapOptions,
   type MaterialOptions,
   type Tile,
   type TileRequest,
@@ -111,7 +112,7 @@ const setup = async (
   }: Partial<Omit<BuildingsOptions, 'source'>> & {
     source?: Partial<BuildingSourceProps>
   } = {},
-  zoom = ZOOM,
+  mapOptions: Partial<MapOptions> = {},
   /** the map's material options */
   mapMaterial: Partial<MaterialOptions> = {}
 ) => {
@@ -123,7 +124,7 @@ const setup = async (
   const map = new Map({
     source: { api: 'eox' },
     location,
-    options: { zoom, tileSegments: 8, zScale },
+    options: { zoom: ZOOM, tileSegments: 8, zScale, ...mapOptions },
     material: mapMaterial
   })
   const layer = map.addLayer(
@@ -370,7 +371,7 @@ describe('Buildings', () => {
   })
 
   it('gives terrain below minZoom no buildings', async () => {
-    const { load, layer } = await setup([box(0.3, 0.3, 0.05)], {}, 12)
+    const { load, layer } = await setup([box(0.3, 0.3, 0.05)], {}, { zoom: 12 })
 
     expect(load).not.toHaveBeenCalled()
     expect(layer.count).toBe(0)
@@ -527,6 +528,23 @@ describe('Buildings', () => {
       expect(layer.count).toBe(0)
     })
 
+    it('cuts at the edge of a grid of any shape', async () => {
+      // 2 × 3 tiles: 0…2 east, 0…3 south in tile units from the center tile
+      const grid = {
+        minX: center.x,
+        minY: center.y,
+        maxX: center.x + 1,
+        maxY: center.y + 2
+      }
+      // -0.05…0.25: across the short north side, inside a 3 × 3 grid
+      const { layer } = await setup([box(0.4, -0.05, 0.3)], {}, { grid })
+      const { tileSize } = layer.map?.options ?? { tileSize: 0 }
+
+      // the center tile's local y of the grid edge: (0.5 - 0) × tileSize
+      expect(layer.count).toBe(1)
+      expect(bounds(layer).max.y).toBeCloseTo(0.5 * tileSize, 6)
+    })
+
     it('keeps buildings whole without clip', async () => {
       const { layer } = await setup([box(1.75, 0.4, 0.3)], { clip: false })
       const [mesh] = meshes(layer)
@@ -587,9 +605,14 @@ describe('Buildings', () => {
   })
 
   it('changes its own look with setMaterial(), the geometry kept', async () => {
-    const { map, layer } = await setup([box(0.3, 0.3, 0.05)], {}, ZOOM, {
-      color: '#d0c8b8'
-    })
+    const { map, layer } = await setup(
+      [box(0.3, 0.3, 0.05)],
+      {},
+      {},
+      {
+        color: '#d0c8b8'
+      }
+    )
     const [walls] = part(layer, 'walls')
     const geometry = walls.geometry
 
@@ -615,10 +638,15 @@ describe('Buildings', () => {
   })
 
   it('takes the style of the terrain by default', async () => {
-    const { layer } = await setup([box(0.3, 0.3, 0.05)], {}, ZOOM, {
-      color: '#d0c8b8',
-      lights: false
-    })
+    const { layer } = await setup(
+      [box(0.3, 0.3, 0.05)],
+      {},
+      {},
+      {
+        color: '#d0c8b8',
+        lights: false
+      }
+    )
     const [walls] = part(layer, 'walls')
 
     expect(walls.material).toBeInstanceOf(MeshBasicMaterial)
@@ -631,9 +659,14 @@ describe('Buildings', () => {
 
   it('draws the edges in wireframe, the faces still pickable', async () => {
     const building = box(0.3, 0.3, 0.05, { height: 20 })
-    const { map, layer } = await setup([building], {}, ZOOM, {
-      wireframe: true
-    })
+    const { map, layer } = await setup(
+      [building],
+      {},
+      {},
+      {
+        wireframe: true
+      }
+    )
     const [roofs] = part(layer, 'roofs')
     const [edges] = part<LineSegments>(layer, 'edges')
 
@@ -699,7 +732,7 @@ describe('Buildings', () => {
 
   it('highlights the edges too', async () => {
     const building = box(0.3, 0.3, 0.05, { id: 'b' })
-    const { layer } = await setup([building], {}, ZOOM, { wireframe: true })
+    const { layer } = await setup([building], {}, {}, { wireframe: true })
 
     layer.highlight('b', 0x00ff00)
 

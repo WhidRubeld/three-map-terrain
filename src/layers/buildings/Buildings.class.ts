@@ -45,7 +45,7 @@ export interface BuildingsOptions {
   /** Outline the solid buildings with their edges, in a darker shade. */
   edges: boolean
   /**
-   * Cut the buildings at the edge of the map's `nTiles × nTiles` grid — and
+   * Cut the buildings at the edge of the map's grid (`map.grid`) — and
    * draw the parts of those outside that reach in — so that the city ends
    * with the terrain. Inside the grid buildings are never cut.
    */

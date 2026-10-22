@@ -32,7 +32,7 @@ Elevation and imagery from any source, OpenStreetMap buildings standing on the t
 
 ## Features
 
-- **Terrain from real elevation** — [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/), [Mapterhorn](https://mapterhorn.com), Mapbox, MapTiler or your own, at any zoom, as a grid of tiles around a location.
+- **Terrain from real elevation** — [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/), [Mapterhorn](https://mapterhorn.com), Mapbox, MapTiler or your own, at any zoom, as a grid of tiles around a location or any rectangle of tiles.
 - **Buildings** — OpenStreetMap buildings from [OpenFreeMap](https://openfreemap.org), VersaTiles, MapTiler, Mapbox, Protomaps or the Overpass API, or any data you load ([Overture Maps](https://overturemaps.org) in an example), standing on the rendered terrain.
 - **Roads and bridges** — roads and railways lying exactly on the terrain, cut along its triangles; bridges as decks on piers spanning valleys, joined across tiles; tunnels left out.
 - **Water and trees** — lakes, the sea and rivers lying on the terrain, islands left land; woods filled with trees (a trunk and a crown, instanced) or what you plant — bushes in scrub —, single trees where they stand.
@@ -488,7 +488,7 @@ The library keeps the main thread free on its own: layers draw a few tiles at a 
 
 | Knob                                                                | What it trades                                                                                                                                                                            |
 | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `nTiles`, `tileSegments`                                            | Terrain triangles: `nTiles² × tileSegments² × 2`. Layers drape along them too — at city zooms 48–64 segments are plenty (100 by default)                                                  |
+| `nTiles` or `grid`, `tileSegments`                                  | Terrain triangles: the grid's tiles × `tileSegments² × 2`. Layers drape along them too — at city zooms 48–64 segments are plenty (100 by default)                                         |
 | `imageryZoomOffset`                                                 | Imagery requests and texture memory per tile: `4^offset` tiles — `0` a quarter of the default's, `2` four times (sharper)                                                                 |
 | layers' `maxDistance`                                               | Hides a layer's objects on tiles farther than this many meters from the camera, every frame — per part too: `(part) => (part === 'trunks' ? 800 : 2500)`. Drawn and exported all the same |
 | `map.focus`                                                         | Where the layers draw first: `camera.position` or the controls' `target`                                                                                                                  |
@@ -618,11 +618,11 @@ The [basic example](examples/basic/src/overture.ts) loads the [Overture Maps](ht
 
 ## Examples
 
-| Example                                                      | Stack                         | What it shows                                                                                                                                                                                                                                                                                                                                                        |
-| ------------------------------------------------------------ | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [React](examples/react)                                      | React Three Fiber, drei, Vite | The [live example](https://whidrubeld.github.io/three-map-terrain/), a small tool: any area picked on a map (Lausanne and the Alps preset), buildings, roads and bridges, water, trees, bushes in scrub and a base switched on and off, four looks switched at runtime — one colored by part, one textured; picking, highlighting, model export, the view in the URL |
-| [Basic](examples/basic)                                      | three.js, webpack             | San Francisco: Overture buildings from a custom PMTiles source and OpenFreeMap roads on a toned-down map, a base, picking, export                                                                                                                                                                                                                                    |
-| [**GPX Terrain**](https://github.com/whidrubeld/gpx-terrain) | React, R3F, TanStack Store    | [A full app](https://whidrubeld.github.io/gpx-terrain/) on the library: GPX tracks draped on terrain, profile, playback, picking, imagery and wireframe at runtime                                                                                                                                                                                                   |
+| Example                                                      | Stack                         | What it shows                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------ | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [React](examples/react)                                      | React Three Fiber, drei, Vite | The [live example](https://whidrubeld.github.io/three-map-terrain/), a small tool: any area picked on a map, any rectangle of tiles (Lausanne and the Alps preset), buildings, roads and bridges, water, trees, bushes in scrub and a base switched on and off, four looks switched at runtime — one colored by part, one textured; picking, highlighting, model export, the view in the URL |
+| [Basic](examples/basic)                                      | three.js, webpack             | San Francisco: Overture buildings from a custom PMTiles source and OpenFreeMap roads on a toned-down map, a base, picking, export                                                                                                                                                                                                                                                            |
+| [**GPX Terrain**](https://github.com/whidrubeld/gpx-terrain) | React, R3F, TanStack Store    | [A full app](https://whidrubeld.github.io/gpx-terrain/) on the library: GPX tracks draped on terrain, profile, playback, picking, imagery and wireframe at runtime                                                                                                                                                                                                                           |
 
 <table>
   <tr>
@@ -637,7 +637,18 @@ The [basic example](examples/basic/src/overture.ts) loads the [Overture Maps](ht
 
 ## Large areas
 
-A `Map` is a grid of tiles at one zoom — a city, a valley, a mountain range, everything on it in full detail. It is not a globe and does not stream on its own: which tiles to show, and how detailed, is your call, and three pieces make the usual policies a few lines — `removeTileSegment`, `alignTo` and `skirt`.
+A `Map` is a grid of tiles at one zoom — a city, a valley, a mountain range, everything on it in full detail: `nTiles × nTiles` around `location`, or any rectangle given as `grid`, e.g. the tiles under a GPS track:
+
+```ts
+import { Map, Utils } from 'three-map-terrain'
+
+const nw = Utils.position2tile(north, west, zoom)
+const se = Utils.position2tile(south, east, zoom)
+const grid = { minX: nw.x, minY: nw.y, maxX: se.x, maxY: se.y }
+const map = new Map({ location, source, options: { zoom, grid } })
+```
+
+`location` still sets the coordinates — e.g. the start of the track — and need not lie in the grid; the buildings end with it, and so does the `TerrainBase`. A map is not a globe and does not stream on its own: which tiles to show, and how detailed, is your call, and three pieces make the usual policies a few lines — `removeTileSegment`, `alignTo` and `skirt`.
 
 ### Streaming
 
@@ -664,7 +675,7 @@ controls.addEventListener('change', () => {
 })
 ```
 
-Buildings are cut at the edge of the `init()` grid: give them `clip: false` on a map that streams.
+Buildings are cut at the edge of `map.grid`, the grid of `init()`: give them `clip: false` on a map that streams. An area that is fixed, whatever its shape, is a `grid` instead.
 
 ### Levels of detail
 
@@ -698,19 +709,20 @@ Where the two meet, their edges lie at different heights — each zoom samples t
 
 ### `new Map({ location, source?, elevation?, options?, material? })`
 
-| Prop        | Type                                      | Description                                              |
-| ----------- | ----------------------------------------- | -------------------------------------------------------- |
-| `location`  | `{ lat: number; lon: number }`            | The grid is centered on the tile containing it           |
-| `source`    | `Source \| SourceProps`                   | Imagery; [see above](#imagery--source). Without it, none |
-| `elevation` | `ElevationSource \| ElevationSourceProps` | Elevation; AWS Terrain Tiles by default                  |
-| `options`   | `Partial<MapOptions>`                     | See below                                                |
-| `material`  | `Partial<TerrainMaterialOptions>`         | See below                                                |
+| Prop        | Type                                      | Description                                                                    |
+| ----------- | ----------------------------------------- | ------------------------------------------------------------------------------ |
+| `location`  | `{ lat: number; lon: number }`            | Its tile is the origin of the coordinates, and the middle of the `nTiles` grid |
+| `source`    | `Source \| SourceProps`                   | Imagery; [see above](#imagery--source). Without it, none                       |
+| `elevation` | `ElevationSource \| ElevationSourceProps` | Elevation; AWS Terrain Tiles by default                                        |
+| `options`   | `Partial<MapOptions>`                     | See below                                                                      |
+| `material`  | `Partial<TerrainMaterialOptions>`         | See below                                                                      |
 
 **`MapOptions`** (defaults in `defaultMapOptions`)
 
 | Option              | Default | Description                                                                                                                                                               |
 | ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `nTiles`            | `3`     | The grid is `nTiles × nTiles` tiles                                                                                                                                       |
+| `grid`              | —       | The grid as any rectangle of tiles at `zoom` instead, inclusive: `{ minX, minY, maxX, maxY }` (`nTiles` is ignored). [Large areas](#large-areas)                          |
 | `zoom`              | `11`    | Zoom level of the terrain tiles; the imagery's is `zoom + imageryZoomOffset`                                                                                              |
 | `tileSize`          | `600`   | Size of a tile in scene units                                                                                                                                             |
 | `tileSegments`      | `100`   | Segments per tile side (`PlaneGeometry`), 1–256                                                                                                                           |
@@ -847,6 +859,12 @@ Tiles are fetched with CORS. Network errors, HTTP 408/425/429/5xx and bodies tha
 
 ## Upgrading
 
+### To 3.4
+
+Nothing breaks; new:
+
+- The `grid` option takes any rectangle of tiles instead of the `nTiles × nTiles` square around `location` — e.g. the tiles under a GPS track. `init()`, `map.grid`, `map.bounds`, the buildings' `clip` and `TerrainBase` follow it; `location` still sets the coordinates. A map that added such tiles one by one and overrode `grid` can now pass it.
+
 ### To 3.3
 
 Nothing breaks; new for [large areas](#large-areas):
@@ -943,7 +961,7 @@ yarn validate   # typecheck, lint, format check, unit tests, build
 yarn test:e2e   # rendering tests in Chromium (WebGL + WebGPU), tile servers mocked
 ```
 
-The playground takes query parameters: `renderer=webgpu` (`&forceWebGL=1` for its WebGL2 backend), `lights=0`, `wireframe=1`, `segments=40`, `nTiles=5`, `view=top`, `api=osm|swisstopo|none`, `color=e9e4da`, `gray=1` (a `process`), `elevation=mapterhorn`, `buildings=openfreemap&edges=1`, `roads=openfreemap`, `water=openfreemap`, `trees=openfreemap`, `zoom=15&lat=46.515&lon=6.632`, `base=372`, `lod=2&skirt=400` (levels of detail), `stream=1`. Architecture notes and conventions are in [AGENTS.md](AGENTS.md).
+The playground takes query parameters: `renderer=webgpu` (`&forceWebGL=1` for its WebGL2 backend), `lights=0`, `wireframe=1`, `segments=40`, `nTiles=5`, `grid=0,-1,1,1` (any rectangle, in tiles from the location's), `view=top`, `api=osm|swisstopo|none`, `color=e9e4da`, `gray=1` (a `process`), `elevation=mapterhorn`, `buildings=openfreemap&edges=1`, `roads=openfreemap`, `water=openfreemap`, `trees=openfreemap`, `zoom=15&lat=46.515&lon=6.632`, `base=372`, `lod=2&skirt=400` (levels of detail), `stream=1`. Architecture notes and conventions are in [AGENTS.md](AGENTS.md).
 
 ## Roadmap
 

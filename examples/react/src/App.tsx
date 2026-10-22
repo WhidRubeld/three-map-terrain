@@ -40,6 +40,7 @@ import {
 import {
   type Area,
   EXAGGERATIONS,
+  gridOf,
   inSwitzerland,
   kilometers,
   PLACES,
@@ -60,13 +61,16 @@ type Point = readonly [x: number, y: number, z: number]
 const FORMATS: readonly ModelFormat[] = ['glb', 'stl', 'obj', 'usdz']
 
 /** The terrain of an area, on Mapterhorn's elevation: worldwide, finer where finer data exists. */
-function createMap({ lat, lon, zoom, size }: Area, exaggeration: number) {
+function createMap(area: Area, exaggeration: number) {
+  const { lat, lon, zoom } = area
   return new Map({
+    // the middle of the grid: positions are measured from it
     location: { lat, lon },
     elevation: { api: 'mapterhorn' },
     options: {
       zoom,
-      nTiles: size,
+      // any rectangle of tiles
+      grid: gridOf(area),
       exaggeration,
       // a town's relief is smooth (and readable in wireframe), a mountain's not
       tileSegments: zoom >= 14 ? 48 : 128
@@ -83,7 +87,7 @@ export default function App() {
   // a new map for every area; looks and layers change on the same one
   const map = useMemo(() => createMap(area, exaggeration), [area, exaggeration])
   const look = LOOKS[view.look]
-  const width = area.size * map.options.tileSize
+  const width = Math.max(area.columns, area.rows) * map.options.tileSize
   const [ready, setReady] = useState(false)
   const [center, setCenter] = useState<Point | null>(null)
   const [picked, setPicked] = useState<{ text: string; point?: Point }>()
@@ -278,8 +282,8 @@ export default function App() {
                   </button>
                 </Row>
                 <p className='muted area'>
-                  {where(area)} · zoom {area.zoom} · {area.size} × {area.size}{' '}
-                  tiles · {kilometers(area)} km
+                  {where(area)} · zoom {area.zoom} · {area.columns} ×{' '}
+                  {area.rows} tiles · {kilometers(area)} km
                 </p>
                 <Row label='Relief'>
                   <Choice

@@ -561,6 +561,51 @@ test('draws terrain without imagery in its color, buildings in tone', async ({
   expect(errors).toEqual([])
 })
 
+test('draws any rectangle of tiles given as grid, off the location', async ({
+  page
+}) => {
+  const errors = collectErrors(page)
+  // 2 × 1 tiles east of the location's tile, which stays out
+  await openPlayground(
+    page,
+    'renderer=webgl&view=top&lights=0&api=none&color=4080c0&grid=1,0,2,0'
+  )
+  const { x, y } = Utils.position2tile(46.57634, 7.9904, 11)
+  const tiles = await page.evaluate(() =>
+    Object.keys(window.__playground?.map.tileCache ?? {}).sort()
+  )
+  expect(tiles).toEqual([`11/${x + 1}/${y}`, `11/${x + 2}/${y}`])
+
+  // the view is two tiles high around the grid's middle: a point `dx`
+  // east and `dy` south of it, in tiles
+  const { width, height } = page.viewportSize() ?? { width: 1, height: 1 }
+  const at = (dx: number, dy: number) =>
+    [0.5 + (dx / 2) * (height / width), 0.5 + dy / 2] as const
+  const [west, east, north, south, home, beyond] = await samplePixels(
+    page,
+    await page.locator('canvas').screenshot(),
+    [
+      at(-0.5, 0),
+      at(0.5, 0),
+      at(0, -0.75),
+      at(0, 0.75),
+      at(-1.2, 0),
+      at(1.2, 0)
+    ]
+  )
+  expectColor(west, [64, 128, 192], 2, 'west tile')
+  expectColor(east, [64, 128, 192], 2, 'east tile')
+  for (const [pixel, label] of [
+    [north, 'north'],
+    [south, 'south'],
+    [home, "the location's tile"],
+    [beyond, 'beyond']
+  ] as const) {
+    expectColor(pixel, BACKGROUND, 2, label)
+  }
+  expect(errors).toEqual([])
+})
+
 test('processes the imagery on the CPU before it becomes a texture', async ({
   page
 }) => {

@@ -26,6 +26,7 @@ import {
   type ElevationSourceProps,
   type ImageryProcessor,
   Map,
+  type MapOptions,
   type RoadSourceProps,
   Roads,
   type SourceProps,
@@ -51,6 +52,9 @@ const treesApi = params.get('trees')
 // for the presets that need one (mapbox, maptiler, protomaps)
 const token = params.get('token') ?? ''
 const nTiles = Number(params.get('nTiles') ?? 3)
+// any rectangle of tiles instead: west,north,east,south in tiles from the
+// location's tile, e.g. grid=0,-1,1,1 (2 × 3, the location in the west column)
+const gridParam = params.get('grid')?.split(',').map(Number)
 const tileSegments = Number(params.get('segments') ?? 100)
 const imageryZoomOffset = Number(params.get('imageryZoomOffset') ?? 1)
 // meters from the camera beyond which the layers hide their tiles
@@ -77,6 +81,13 @@ const location = {
 const zoom = Number(params.get('zoom') ?? 11)
 const alps = !params.has('lat') && !params.has('lon') && zoom === 11
 const tileSize = 600
+const home = Utils.position2tile(location.lat, location.lon, zoom)
+const grid = gridParam && {
+  minX: home.x + gridParam[0],
+  minY: home.y + gridParam[1],
+  maxX: home.x + gridParam[2],
+  maxY: home.y + gridParam[3]
+}
 
 // a hex color without '#' (e.g. color=e9e4da); gray=1 tones the imagery
 const color = params.has('color') ? `#${params.get('color') ?? ''}` : undefined
@@ -138,13 +149,14 @@ sun.position.set(1e4, 1e4, 1e4)
 scene.add(sun)
 
 // map
-const createMap = (zoom: number, nTiles: number) =>
+const createMap = (zoom: number, nTiles: number, grid?: MapOptions['grid']) =>
   new Map({
     source: imagery,
     elevation: { api: elevationApi, token } as ElevationSourceProps,
     location,
     options: {
       nTiles,
+      grid,
       tileSegments,
       imageryZoomOffset,
       zoom,
@@ -162,7 +174,7 @@ const createMap = (zoom: number, nTiles: number) =>
       ...(gray ? { process: grayscale } : {})
     }
   })
-const map = createMap(zoom, lod > 0 ? 0 : nTiles)
+const map = createMap(zoom, lod > 0 ? 0 : nTiles, grid)
 // the coarser ring around the map: its tiles but the middle one
 const ring = lod > 0 ? createMap(zoom - lod, 0) : undefined
 const buildings = buildingsApi
@@ -238,33 +250,48 @@ const placeOnGround = (ground: { x: number; y: number; z: number }) => {
 const aspect = window.innerWidth / window.innerHeight
 let camera: PerspectiveCamera | OrthographicCamera
 let controls: MapControls | undefined
+// the middle of the view: the grid's, or the location's tile
+const middle = grid
+  ? Utils.tile2position(
+      zoom,
+      (grid.minX + grid.maxX) / 2,
+      (grid.minY + grid.maxY) / 2,
+      map.center,
+      tileSize
+    )
+  : { x: 0, y: 0, z: 0 }
+const across = grid
+  ? Math.max(grid.maxX - grid.minX, grid.maxY - grid.minY) + 1
+  : nTiles
 
 if (topView) {
   // Straight down, north up: used to verify the NW/NE/SW/SE texture layout
-  const half = (map.options.tileSize * (ring ? 3 * 2 ** lod : nTiles)) / 2
+  const half = (map.options.tileSize * (ring ? 3 * 2 ** lod : across)) / 2
   camera = new OrthographicCamera(-half * aspect, half * aspect, half, -half)
-  camera.position.set(0, 0, 1e4)
+  camera.position.set(middle.x, middle.y, 1e4)
   camera.far = 2e4
   camera.updateProjectionMatrix()
 } else {
   camera = new PerspectiveCamera(60, aspect, 1, 1e6)
   camera.up.set(0, 0, 1)
-  camera.position.set(0, -1.2e3, 9e2)
+  camera.position.set(middle.x, middle.y - 1.2e3, 9e2)
   controls = new MapControls(camera, renderer.domElement)
+  controls.target.set(middle.x, middle.y, 0)
   controls.maxPolarAngle = Math.PI * 0.4
 
   scene.add(new AxesHelper(1e3))
 
   // look at the ground: true to scale, it is far above z = 0
   if (!alps) {
-    void map.getTerrainPosition(location).then(({ z }) => {
+    const ground = grid ? map.getLocation(middle) : location
+    void map.getTerrainPosition(ground).then(({ z }) => {
       controls?.target.setZ(z)
       camera.position.z += z
     })
   }
 
-  // the Alps' markers lie outside the middle of a ring
-  if (alps && !ring) {
+  // the Alps' markers lie outside the middle of a ring, or of a grid
+  if (alps && !ring && !grid) {
     const marker = new Mesh(
       new SphereGeometry(8, 24, 12),
       new MeshBasicMaterial({ color: 0xf04040 })
@@ -330,6 +357,7 @@ const status = [
   ...(roadsApi ? [`roads ${roadsApi}`] : []),
   ...(waterApi ? [`water ${waterApi}`] : []),
   ...(treesApi ? [`trees ${treesApi}`] : []),
+  ...(grid ? [`grid ${String(gridParam)}`] : []),
   ...(lod > 0 ? [`lod z${zoom}/z${zoom - lod}`] : []),
   ...(skirt > 0 ? [`skirt ${skirt} m`] : []),
   ...(stream !== undefined ? [`stream ${stream}`] : []),
