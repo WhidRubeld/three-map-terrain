@@ -1,10 +1,12 @@
 import {
   type BufferGeometry,
   Color,
+  LOD,
   Mesh,
   MeshBasicMaterial,
   MeshLambertMaterial,
   MeshStandardMaterial,
+  PerspectiveCamera,
   Raycaster,
   Texture,
   Vector3
@@ -21,6 +23,8 @@ import {
   type TileRequest,
   Utils
 } from '../../src'
+import { Footprint } from '../../src/layers/footprint'
+import { FakeFileReader } from '../support/browser-fakes'
 import { terrariumPixels } from '../support/helpers'
 
 const { loadImageData } = vi.hoisted(() => ({ loadImageData: vi.fn() }))
@@ -30,9 +34,9 @@ vi.mock('../../src/io/image', async (importOriginal) => ({
   loadImageData
 }))
 
-vi.mock('../../src/terrain/material', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/terrain/material')>()),
-  loadQuadTexture: vi.fn(() => Promise.resolve(new Texture()))
+vi.mock('../../src/terrain/texture', () => ({
+  // no canvas in Node: a texture stands in for the stitched imagery
+  loadTextureGrid: vi.fn(() => Promise.resolve(new Texture()))
 }))
 
 const ZOOM = 14
@@ -633,6 +637,128 @@ describe('FeatureLayer', () => {
   })
 })
 
+describe('maxDistance', () => {
+  // a square in the west, center and east tiles
+  const things = [
+    { id: 'w', fx: -0.5, fy: 0.5 },
+    { id: 'c', fx: 0.5, fy: 0.5 },
+    { id: 'e', fx: 1.5, fy: 0.5 }
+  ]
+  const tileAt = (map: Map, dx: number) =>
+    map.tileCache[Utils.getTileKey(ZOOM, center.x + dx, center.y)]
+  /** Where the layer's objects show, by tile: west, center, east. */
+  const shown = (map: Map, layer: FeatureLayer<Thing>, part = 'surface') =>
+    [-1, 0, 1].map((dx) =>
+      objects(layer, part)
+        .filter((mesh) => mesh.name.endsWith(` ${tileAt(map, dx).key()}`))
+        .every((mesh) => mesh.visible)
+    )
+  /** A camera above a tile, among its hills; renders the layer once. */
+  const look = (map: Map, layer: FeatureLayer<Thing>, dx: number) => {
+    const { position } = tileAt(map, dx).mesh
+    const camera = new PerspectiveCamera()
+    camera.position.set(position.x, position.y, 600 * zScale)
+    camera.updateMatrixWorld()
+    map.terrain.updateMatrixWorld(true)
+    // as the renderer does it
+    const hook = layer.group.children.find(
+      (object): object is LOD => (object as Partial<LOD>).isLOD === true
+    )
+    hook?.update(camera)
+  }
+
+  it('hides the tiles farther from the camera than it, in meters', async () => {
+    // a tile is ~1670 m wide here: the neighbours ~835 m away
+    const { map, layer } = await setup(things, {
+      build: drapeSquares(0.2),
+      maxDistance: 500
+    })
+
+    expect(layer.group.children[0]).toBeInstanceOf(LOD)
+    look(map, layer, 0)
+    expect(shown(map, layer)).toEqual([false, true, false])
+    look(map, layer, 1)
+    expect(shown(map, layer)).toEqual([false, false, true])
+
+    layer.maxDistance = 1000
+    look(map, layer, 1)
+    expect(shown(map, layer)).toEqual([false, true, true])
+  })
+
+  it('gives each part its own distance', async () => {
+    const { map, layer } = await setup(things, {
+      build(ctx) {
+        drapeSquares(0.2)(ctx)
+        const [x, y] = ctx.toLocal(lonLat(0.5, 0.5))
+        const z = ctx.groundAt(x, y) + 10
+        ctx.face('lid', [x, y, z, x + 10, y, z, x + 10, y + 10, z], {
+          color: new Color(0xffffff)
+        })
+      },
+      maxDistance: (part) => (part === 'lid' ? 100 : undefined)
+    })
+
+    look(map, layer, 1)
+    expect(shown(map, layer, 'surface')).toEqual([true, true, true])
+    expect(shown(map, layer, 'lid')).toEqual([false, false, true])
+  })
+
+  it('keeps a hidden tile hidden when it is drawn again', async () => {
+    const { map, layer } = await setup(things, {
+      build: drapeSquares(0.2),
+      maxDistance: 500
+    })
+    look(map, layer, 0)
+
+    layer.invalidate([tileAt(map, 1)])
+    await layer.whenReady()
+
+    expect(shown(map, layer)).toEqual([false, true, false])
+  })
+
+  it('shows everything again without it, and picks only what shows', async () => {
+    const { map, layer } = await setup(things, {
+      build: drapeSquares(0.2),
+      maxDistance: 500
+    })
+    look(map, layer, 0)
+
+    expect(layer.pick(rayDown(map, 1.5, 0.5))).toBeUndefined()
+    expect(layer.pick(rayDown(map, 0.5, 0.5))?.feature.id).toBe('c')
+
+    layer.maxDistance = undefined
+    expect(shown(map, layer)).toEqual([true, true, true])
+    expect(layer.group.children.some((object) => object instanceof LOD)).toBe(
+      false
+    )
+    expect(layer.pick(rayDown(map, 1.5, 0.5))?.feature.id).toBe('e')
+  })
+
+  it('exports the hidden tiles too, not itself', async () => {
+    vi.stubGlobal('FileReader', FakeFileReader)
+    const { map, layer } = await setup(things, {
+      build: drapeSquares(0.2),
+      maxDistance: 500
+    })
+    look(map, layer, 0)
+
+    const blob = await map.export('glb', { textures: false })
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    const view = new DataView(bytes.buffer, bytes.byteOffset)
+    const { nodes } = JSON.parse(
+      new TextDecoder().decode(
+        bytes.subarray(20, 20 + view.getUint32(12, true))
+      )
+    ) as { nodes: { name?: string }[] }
+    const names = nodes.map((node) => node.name ?? '')
+
+    expect(
+      names.filter((name) => name.startsWith('things surface'))
+    ).toHaveLength(objects(layer, 'surface').length)
+    expect(names).not.toContain('distance')
+  })
+})
+
 describe('TileContext', () => {
   const capture = async (draw: (ctx: TileContext<Thing>) => void) => {
     let result: TileContext<Thing> | undefined
@@ -671,6 +797,53 @@ describe('TileContext', () => {
     expect(Math.min(...vs)).toBeCloseTo(0, 4)
     expect(Math.max(...vs)).toBeCloseTo(length, 4)
     expect(geometry?.getAttribute(FEATURE_ATTRIBUTE).getX(0)).toBe(0)
+  })
+
+  it('closes ribbons at the outer side of bends and round at the ends, once', async () => {
+    let half = 0
+    const ctx = await capture((ctx) => {
+      const { tileSize } = ctx.map.options
+      half = 0.025 * tileSize
+      // east, then a left turn north
+      const line = [-0.2 * tileSize, 0, 0, 0, 0, 0.2 * tileSize]
+      ctx.feature(ctx.allFeatures[0], () => {
+        ctx.drapeLine('road', line, 2 * half, { color: new Color(0xffffff) })
+      })
+    })
+    const geometry = ctx.parts.surfaces.get('road')?.build()
+    if (!geometry) throw new Error('no ribbon')
+    const footprint = new Footprint([geometry])
+    const { tileSize } = ctx.map.options
+    const [startX, endY] = [-0.2 * tileSize, 0.2 * tileSize]
+
+    // the bevel, outside both segments
+    expect(footprint.covers(0.3 * half, -0.3 * half)).toBe(true)
+    // the round ends: within the half disc beyond them, not further
+    expect(footprint.covers(startX - 0.9 * half, 0)).toBe(true)
+    expect(footprint.covers(startX - 1.05 * half, 0)).toBe(false)
+    expect(footprint.covers(0, endY + 0.9 * half)).toBe(true)
+    expect(footprint.covers(0, endY + 1.05 * half)).toBe(false)
+
+    // seen from above: the two segments, one bevel, two halves of an octagon
+    // — no bevel inside the bend, no half disc under the ribbon
+    const position = geometry.getAttribute('position')
+    const index = geometry.getIndex()
+    let area = 0
+    for (let i = 0; index && i < index.count; i += 3) {
+      const [a, b, c] = [index.getX(i), index.getX(i + 1), index.getX(i + 2)]
+      area +=
+        Math.abs(
+          (position.getX(b) - position.getX(a)) *
+            (position.getY(c) - position.getY(a)) -
+            (position.getX(c) - position.getX(a)) *
+              (position.getY(b) - position.getY(a))
+        ) / 2
+    }
+    const expected =
+      2 * (0.2 * tileSize * 2 * half) +
+      half ** 2 / 2 +
+      2 * Math.SQRT2 * half ** 2
+    expect(area / expected).toBeCloseTo(1, 6)
   })
 
   it('extrudes walls with UVs in meters along and up', async () => {

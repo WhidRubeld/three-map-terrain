@@ -1,21 +1,16 @@
 import {
-  CanvasTexture,
+  type CanvasTexture,
   type ColorRepresentation,
   type Material,
   MeshBasicMaterial,
   MeshLambertMaterial,
-  SRGBColorSpace,
   type Texture
 } from 'three'
 
-import {
-  type Canvas2D,
-  createCanvas2D,
-  loadImage,
-  releaseImage
-} from '../io/image'
+import type { Canvas2D } from '../io/image'
 import type { TileImageSource } from '../sources/Source.class'
-import { type TileRegion, WHOLE_TILE } from '../sources/tile-source'
+import type { TileRegion } from '../sources/tile-source'
+import { loadTextureGrid } from './texture'
 import type { Tile } from './Tile.class'
 
 /**
@@ -127,10 +122,6 @@ export type QuadTextureInputs = readonly [
 
 export type QuadTextureCanvas = HTMLCanvasElement | OffscreenCanvas
 
-const isRejected = (
-  result: PromiseSettledResult<unknown>
-): result is PromiseRejectedResult => result.status === 'rejected'
-
 /**
  * Loads the four child tiles (zoom + 1) and stitches them into a single
  * texture laid out to match the `PlaneGeometry` UVs:
@@ -142,7 +133,7 @@ const isRejected = (
  * Built-in materials can then sample it as a regular `map`, so no custom
  * shader code depends on three.js internals.
  */
-export async function loadQuadTexture(
+export function loadQuadTexture(
   inputs: QuadTextureInputs,
   signal?: AbortSignal,
   /** Draws on the stitched canvas (its context, width, height). */
@@ -152,73 +143,7 @@ export async function loadQuadTexture(
     height: number
   ) => void | Promise<void>
 ): Promise<CanvasTexture<QuadTextureCanvas>> {
-  const results = await Promise.allSettled(
-    inputs.map((input) =>
-      typeof input === 'string'
-        ? loadImage(input, signal).then((image): QuadTextureTile => ({ image }))
-        : input()
-    )
-  )
-  const tiles = results.flatMap((result) =>
-    result.status === 'fulfilled' ? [result.value] : []
-  )
-
-  try {
-    const failure = results.find(isRejected)
-    if (failure) throw failure.reason
-
-    const [nw, sw, ne, se] = tiles
-    // children cut out of an ancestor keep the resolution they have there
-    const size = (tile: QuadTextureTile, side: 'width' | 'height') =>
-      Math.max(
-        1,
-        Math.round(tile.image[side] * (tile.region ?? WHOLE_TILE).size)
-      )
-    const width = Math.max(...tiles.map((tile) => size(tile, 'width')))
-    const height = Math.max(...tiles.map((tile) => size(tile, 'height')))
-    const { canvas, context } = createCanvas2D(
-      width * 2,
-      height * 2,
-      // processors mostly read the pixels
-      process ? { willReadFrequently: true } : undefined
-    )
-
-    const draw = ({ image, region }: QuadTextureTile, x: number, y: number) => {
-      if (!region || region.size === 1) {
-        context.drawImage(image, x, y, width, height)
-        return
-      }
-      const { width: w, height: h } = image
-      context.drawImage(
-        image,
-        region.left * w,
-        region.top * h,
-        region.size * w,
-        region.size * h,
-        x,
-        y,
-        width,
-        height
-      )
-    }
-    draw(nw, 0, 0)
-    draw(ne, width, 0)
-    draw(sw, 0, height)
-    draw(se, width, height)
-    if (process) {
-      await process(context, width * 2, height * 2)
-      signal?.throwIfAborted()
-    }
-
-    const texture = new CanvasTexture<QuadTextureCanvas>(canvas)
-    texture.colorSpace = SRGBColorSpace
-    return texture
-  } finally {
-    // children cut out of one ancestor share its image
-    for (const image of new Set(tiles.map((tile) => tile.image))) {
-      releaseImage(image)
-    }
-  }
+  return loadTextureGrid(inputs, signal, process)
 }
 
 /**

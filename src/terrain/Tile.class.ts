@@ -17,12 +17,10 @@ import type {
 import { decodeTerrarium } from '../sources/ElevationSource.class'
 import type { TileImageSource } from '../sources/Source.class'
 import { loadWithFallback, type TileRegion } from '../sources/tile-source'
+import { gridBounds, gridNormals, raycastGrid } from './grid'
 import type { Map } from './Map.class'
-import {
-  createTerrainMaterial,
-  loadQuadTexture,
-  type QuadTextureCanvas
-} from './material'
+import { createTerrainMaterial, type QuadTextureCanvas } from './material'
+import { loadTextureGrid } from './texture'
 
 /** Shown until the tile texture has been loaded. Shared, never disposed. */
 const placeholderMaterial = new MeshNormalMaterial({ wireframe: true })
@@ -64,6 +62,8 @@ export class Tile {
         new PlaneGeometry(tileSize, tileSize, tileSegments, tileSegments),
         placeholderMaterial
       )
+      // the triangles under the ray only, not all of them
+      this._mesh.raycast = raycastGrid
     }
     return this._mesh
   }
@@ -166,14 +166,29 @@ export class Tile {
 
   /**
    * Call after changing vertex heights: uploads them and refreshes the normals
-   * and the bounding volumes (used by frustum culling and raycasting).
+   * and the bounding volumes (used by frustum culling and raycasting). Pass
+   * the vertex rows and columns that changed (from–to, 0 to `tileSegments`,
+   * rows from the north) to refresh the normals around them only.
    */
-  updateGeometry() {
+  updateGeometry(
+    rows: readonly [from: number, to: number] = [0, Infinity],
+    columns: readonly [from: number, to: number] = [0, Infinity]
+  ) {
     const { geometry } = this
-    geometry.attributes.position.needsUpdate = true
-    geometry.computeVertexNormals()
-    geometry.computeBoundingBox()
-    geometry.computeBoundingSphere()
+    const { tileSize, tileSegments: n } = this.map.options
+    const { position, normal } = geometry.attributes
+    // a changed vertex turns the triangles around it: its neighbours' normals too
+    gridNormals(
+      position,
+      normal,
+      n,
+      tileSize / n,
+      [rows[0] - 1, rows[1] + 1],
+      [columns[0] - 1, columns[1] + 1]
+    )
+    position.needsUpdate = true
+    normal.needsUpdate = true
+    gridBounds(geometry)
   }
 
   /** The four tiles at zoom + 1 covering this one: NW, SW, NE, SE. */
@@ -187,32 +202,43 @@ export class Tile {
   }
 
   /**
-   * Loads the tile's imagery: its four children at `zoom + 1` stitched into
-   * one texture, processed by the map's `process`; `null` without imagery.
-   * A child beyond the source's `maxZoom`, or missing, is cut out of its
-   * nearest ancestor; children sharing an ancestor load it once.
+   * Loads the tile's imagery: its four children at `zoom + 1` — or the
+   * tiles `imageryZoomOffset` levels deeper — stitched into one texture,
+   * processed by the map's `process`; `null` without imagery. A tile beyond
+   * the source's `maxZoom`, or missing, is cut out of its nearest ancestor;
+   * tiles sharing an ancestor load it once.
    */
   async loadImagery(
     signal: AbortSignal = this.textureController.signal
   ): Promise<CanvasTexture<QuadTextureCanvas> | null> {
-    const { source, materialOptions } = this.map
+    const { source, materialOptions, options } = this.map
     if (source.api === 'none') return null
+    const offset = options.imageryZoomOffset ?? 1
+    const k = 2 ** offset
     const memo = new globalThis.Map<string, Promise<TileImageSource | null>>()
-    const [nw, sw, ne, se] = this.children().map((child) => async () => {
-      const loaded = await loadWithFallback(
-        { z: child.z, x: child.x, y: child.y, signal },
-        source.maxZoom,
-        (tile) => source.load(tile),
-        memo
-      )
-      if (!loaded) {
-        throw new Error(`No texture tile at ${child.key()} or its ancestors`)
+    // column by column from the west, each from the north
+    const inputs = Array.from({ length: k * k }, (_, i) => {
+      const z = this.z + offset
+      const x = this.x * k + Math.floor(i / k)
+      const y = this.y * k + (i % k)
+      return async () => {
+        const loaded = await loadWithFallback(
+          { z, x, y, signal },
+          source.maxZoom,
+          (tile) => source.load(tile),
+          memo
+        )
+        if (!loaded) {
+          throw new Error(
+            `No texture tile at ${Utils.getTileKey(z, x, y)} or its ancestors`
+          )
+        }
+        return { image: loaded.data, region: loaded.region }
       }
-      return { image: loaded.data, region: loaded.region }
     })
     const { process } = materialOptions
-    return loadQuadTexture(
-      [nw, sw, ne, se],
+    return loadTextureGrid(
+      inputs,
       signal,
       process &&
         ((context, width, height) =>
@@ -390,10 +416,15 @@ export class Tile {
 
     this.seamY = south?.loaded === true
     this.seamX = east?.loaded === true
-    if (this.seamY) this.resolveSeamY(south)
-    if (this.seamX) this.resolveSeamX(east)
-
-    this.updateGeometry()
+    const n = this.map.options.tileSegments
+    if (this.seamY) {
+      this.resolveSeamY(south)
+      this.updateGeometry([n, n])
+    }
+    if (this.seamX) {
+      this.resolveSeamX(east)
+      this.updateGeometry([0, n], [n, n])
+    }
   }
 
   /** Aborts pending requests and releases GPU resources. */

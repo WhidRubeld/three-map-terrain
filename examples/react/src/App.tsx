@@ -1,256 +1,169 @@
 import './App.css'
 
 import { MapControls, PerspectiveCamera } from '@react-three/drei'
-import { Canvas, type ThreeEvent } from '@react-three/fiber'
-import { useEffect, useMemo, useState } from 'react'
-import { type Material, MeshBasicMaterial, Raycaster } from 'three'
+import { Canvas, type ThreeEvent, useThree } from '@react-three/fiber'
 import {
-  type BuildingFeature,
-  Buildings,
-  type GeoLocation,
-  type ImageryProcessor,
+  lazy,
+  type ReactNode,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState
+} from 'react'
+import {
+  type PerspectiveCamera as Camera,
+  Raycaster,
+  type Vector3
+} from 'three'
+import {
+  type FeatureHit,
+  type FeatureLayer,
   Map,
-  type ModelFormat,
-  ROAD_KINDS,
-  type RoadFeature,
-  Roads,
-  type SourceProps,
-  type TerrainMaterialOptions,
-  TerrainBase,
-  Trees,
-  Water
+  type ModelFormat
 } from 'three-map-terrain'
 
-import { COLORED } from './colored'
-import { TEXTURED } from './textured'
+import {
+  LAYER_NAMES,
+  type LayerName,
+  LAYERS,
+  layersBelow,
+  minZoom
+} from './layers'
+import {
+  applyLook,
+  IMAGERY,
+  type ImageryName,
+  LOOKS,
+  type LookName
+} from './looks'
+import {
+  type Area,
+  EXAGGERATIONS,
+  inSwitzerland,
+  kilometers,
+  PLACES,
+  type PlaceName,
+  placeOf,
+  readView,
+  type View,
+  writeView
+} from './view'
+
+// the picker and its map library load once it opens
+const Picker = lazy(() =>
+  import('./Picker').then(({ Picker }) => ({ default: Picker }))
+)
 
 type Point = readonly [x: number, y: number, z: number]
 
-const alps = { lat: 46.57634, lon: 7.9904 }
-const lausanne = { lat: 46.515, lon: 6.632 }
+const FORMATS: readonly ModelFormat[] = ['glb', 'stl', 'obj', 'usdz']
 
-/**
- * The layers' materials by part in the current look — none but in the
- * textured one: the look's. `setMaterial()` makes the layers ask again.
- */
-let parts: Readonly<Record<string, Material>> = {}
-const byPart = (part: string): Material | undefined => parts[part]
-const HIDDEN = new MeshBasicMaterial({ visible: false })
-
-const PLACES = {
-  alps: {
-    title: 'Bernese Alps',
-    // satellite imagery on the default elevation (AWS Terrain Tiles)
-    create: () => new Map({ source: { api: 'eox' }, location: alps })
-  },
-  lausanne: {
-    title: 'Lausanne',
-    // from Lake Geneva (372 m, at z = 0) up to the cathedral, true to scale
-    create: () => {
-      const map = new Map({
-        location: lausanne,
-        elevation: { api: 'mapterhorn' },
-        // 48 segments: dense enough for the relief, readable in wireframe
-        options: {
-          zoom: 15,
-          exaggeration: 1,
-          baseAltitude: 372,
-          tileSegments: 48
-        },
-        material: LOOKS.plain.material
-      })
-      // set up once: they take on the terrain's look. All read the
-      // OpenFreeMap tiles; bridges span the Flon valley
-      const buildings = map.addLayer(
-        new Buildings({
-          source: { api: 'openfreemap' },
-          edges: true,
-          material: byPart
-        })
-      )
-      const roads = map.addLayer(
-        new Roads({
-          source: { api: 'openfreemap' },
-          // streets and railways; footpaths would clutter the photo
-          kinds: ROAD_KINDS.filter((kind) => kind !== 'path'),
-          material: byPart
-        })
-      )
-      // the lake and the Flon, the woods of the ravines — not in the river,
-      // on the roads or in the houses the woods of the data take in
-      const water = map.addLayer(
-        new Water({ source: { api: 'openfreemap' }, material: byPart })
-      )
-      map.addLayer(
-        new Trees({
-          source: { api: 'openfreemap' },
-          avoid: [water, roads, buildings],
-          material: byPart
-        })
-      )
-      map.addLayer(new TerrainBase())
-      return map
+/** The terrain of an area, on Mapterhorn's elevation: worldwide, finer where finer data exists. */
+function createMap({ lat, lon, zoom, size }: Area, exaggeration: number) {
+  return new Map({
+    location: { lat, lon },
+    elevation: { api: 'mapterhorn' },
+    options: {
+      zoom,
+      nTiles: size,
+      exaggeration,
+      // a town's relief is smooth (and readable in wireframe), a mountain's not
+      tileSegments: zoom >= 14 ? 48 : 128
     }
-  }
+  })
 }
-
-type Place = keyof typeof PLACES
-
-/** The imagery toned down to the buildings: gray, a little brighter. */
-const gray: ImageryProcessor = (context, { width, height }) => {
-  const image = context.getImageData(0, 0, width, height)
-  const { data } = image
-  for (let i = 0; i < data.length; i += 4) {
-    const luma = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]
-    data[i] = data[i + 1] = data[i + 2] = luma * 1.1
-  }
-  context.putImageData(image, 0, 0)
-}
-
-/** One look for the terrain — and the layers, which take it on. */
-interface Look {
-  source: SourceProps
-  material: Partial<TerrainMaterialOptions>
-  /** The layers' own materials, by part. */
-  parts?: Readonly<Record<string, Material>>
-  background: number
-  light: { ambient: number; sun: number }
-}
-
-const SWISSIMAGE: SourceProps = {
-  url: 'https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/default/current/3857/{z}/{x}/{y}.jpeg',
-  attribution: '© swisstopo'
-}
-
-const LOOKS = {
-  // no imagery: a colored model, the relief shows in the light
-  plain: {
-    source: { api: 'none' },
-    material: { color: '#e8dcc3', wireframe: false, process: undefined },
-    parts: COLORED,
-    background: 0x1d1c1a,
-    light: { ambient: 0.9, sun: 3.2 }
-  },
-  // the photo, in the buildings' tone
-  aerial: {
-    source: SWISSIMAGE,
-    material: { color: '#ffffff', wireframe: false, process: gray },
-    // the photo has its water and trees
-    parts: { water: HIDDEN, crowns: HIDDEN, trunks: HIDDEN },
-    background: 0x161616,
-    light: { ambient: 1.4, sun: 2.4 }
-  },
-  // the photo in color; roads, railways and facades with textures
-  textured: {
-    source: SWISSIMAGE,
-    material: { color: '#ffffff', wireframe: false, process: undefined },
-    parts: TEXTURED,
-    background: 0x1b1d20,
-    light: { ambient: 1.3, sun: 2.6 }
-  },
-  // everything in lines — the trees outlined — over a light fill
-  wireframe: {
-    source: { api: 'none' },
-    material: {
-      color: '#9fb3c8',
-      wireframe: true,
-      fillOpacity: 0.12,
-      process: undefined
-    },
-    background: 0x0f1216,
-    light: { ambient: 1.5, sun: 2.5 }
-  }
-} satisfies Record<string, Look>
-
-type LookName = keyof typeof LOOKS
-
-const ALPS_LOOK: Pick<Look, 'background' | 'light'> = {
-  background: 0x161616,
-  light: { ambient: 1.5, sun: 2.5 }
-}
-
-const param = (name: string) =>
-  new URLSearchParams(window.location.search).get(name)
-
-type Picked =
-  | { kind: 'terrain'; location: GeoLocation; position: Point }
-  | { kind: 'building'; location: GeoLocation; feature: BuildingFeature }
-  | { kind: 'road'; location: GeoLocation; feature: RoadFeature }
 
 export default function App() {
-  const [place, setPlace] = useState<Place>(
-    param('place') === 'lausanne' ? 'lausanne' : 'alps'
+  const [view, setView] = useState(() => readView(window.location.search))
+  const [picking, setPicking] = useState(() =>
+    new URLSearchParams(window.location.search).has('pick')
   )
-  const [lookName, setLookName] = useState<LookName>(() => {
-    const name = param('look')
-    return name !== null && name in LOOKS ? (name as LookName) : 'plain'
-  })
-  const map = useMemo(() => PLACES[place].create(), [place])
-  const buildings = map.layers.find((layer) => layer instanceof Buildings)
-  const roads = map.layers.find((layer) => layer instanceof Roads)
-  const look = place === 'alps' ? ALPS_LOOK : LOOKS[lookName]
+  const { area, exaggeration } = view
+  // a new map for every area; looks and layers change on the same one
+  const map = useMemo(() => createMap(area, exaggeration), [area, exaggeration])
+  const look = LOOKS[view.look]
+  const width = area.size * map.options.tileSize
   const [ready, setReady] = useState(false)
-  const [picked, setPicked] = useState<Picked | null>(null)
+  const [center, setCenter] = useState<Point | null>(null)
+  const [picked, setPicked] = useState<{ text: string; point?: Point }>()
   const [saving, setSaving] = useState<ModelFormat | null>(null)
+  const [copied, setCopied] = useState(false)
   const [credits, setCredits] = useState<string[]>([])
+  const [folded, setFolded] = useState(
+    () => window.matchMedia('(max-width: 600px)').matches
+  )
+
+  // the URL is the view: copied, it opens the same
+  useEffect(() => {
+    window.history.replaceState(null, '', writeView(view, picking))
+  }, [view, picking])
 
   useEffect(() => {
-    // resolves once every tile has its elevation; textures and buildings
+    // resolves once every tile has its elevation; textures and layers
     // keep streaming in
     void map.init(() => setReady(true))
+    // the camera looks at the middle of the grid, at its height there
+    const [west, south, east, north] = map.bounds
+    map
+      .getTerrainPosition({ lat: (south + north) / 2, lon: (west + east) / 2 })
+      .then(({ x, y, z }) => setCenter([x, y, z]))
+      .catch(() => undefined)
     // StrictMode mounts twice in development: clean() aborts pending
     // requests and frees GPU resources so the second init() starts fresh
     return () => {
       map.clean()
       setReady(false)
-      setPicked(null)
+      setPicked(undefined)
     }
   }, [map])
 
-  // another look: the same map and buildings, restyled
+  // another look: the same map and layers, restyled
   useEffect(() => {
-    if (place === 'alps') return
-    const look: Look = LOOKS[lookName]
-    parts = look.parts ?? {}
-    map.setSource(look.source)
-    map.setMaterial(look.material)
-  }, [map, place, lookName])
+    applyLook(map, view.look, view.imagery)
+  }, [map, view.look, view.imagery])
 
-  // the credits of the sources in use, once the look is applied
+  // the layers switched on are on the map, the others not…
+  useEffect(() => {
+    for (const name of LAYER_NAMES) {
+      if (view.layers.includes(name)) map.addLayer(LAYERS[name])
+      else map.removeLayer(LAYERS[name])
+    }
+  }, [map, view.layers])
+  // …and none on the map of the area left
+  useEffect(
+    () => () => {
+      for (const layer of Object.values(LAYERS)) map.removeLayer(layer)
+    },
+    [map]
+  )
+
+  // the credits of the sources in use
   useEffect(() => {
     setCredits(map.attributions)
-  }, [map, place, lookName])
+  }, [map, view.look, view.imagery, view.layers])
 
-  // a geolocation at an altitude: 3000 m above the center of the Alps
-  const aircraft = useMemo((): Point | null => {
-    if (place !== 'alps') return null
-    const { x, y, z } = map.getPosition(
-      { ...alps, alt: 3e3 },
-      { loadTile: false }
-    )
-    return [x, y, z + 8] // the sphere's radius above it
-  }, [map, place])
+  const update = (next: Partial<View>) => setView((v) => ({ ...v, ...next }))
+
+  const onPick = (next: Area) => {
+    setPicking(false)
+    // swisstopo has no photos beyond Switzerland
+    setView((v) => ({
+      ...v,
+      area: next,
+      imagery: inSwitzerland(next) ? v.imagery : 'sentinel'
+    }))
+  }
+  const onCancel = useCallback(() => setPicking(false), [])
 
   const onClick = (event: ThreeEvent<MouseEvent>) => {
     event.stopPropagation()
-    // a building: its feature, highlighted
-    const building = buildings?.pickIntersection(event)
-    buildings?.highlight(building?.feature)
-    // a road under the pointer, not one the terrain hides
-    const road = building
-      ? undefined
-      : roads?.pick(new Raycaster(event.ray.origin, event.ray.direction))
-    roads?.highlight(road?.feature)
-    if (building) {
-      setPicked({
-        kind: 'building',
-        location: building,
-        feature: building.feature
-      })
-      return
-    }
-    if (road) {
-      setPicked({ kind: 'road', location: road, feature: road.feature })
+    // not at the end of a drag
+    if (event.delta > 4) return
+    const raycaster = new Raycaster(event.ray.origin, event.ray.direction)
+    const feature = pickFeature(raycaster)
+    if (feature) {
+      setPicked({ text: feature })
       return
     }
     // the terrain: event.point is in world space, getLocation expects
@@ -259,20 +172,10 @@ export default function App() {
     const surface = map.getTerrainPositionSync(geo, { loadTile: false })
     if (surface) {
       setPicked({
-        kind: 'terrain',
-        location: geo,
-        position: [surface.x, surface.y, surface.z]
+        text: `${where(geo)} · ${Math.round(geo.alt)} m`,
+        point: [surface.x, surface.y, surface.z]
       })
     }
-  }
-
-  const choose = (next: { place?: Place; look?: LookName }) => {
-    const url = new URL(window.location.href)
-    if (next.place) url.searchParams.set('place', next.place)
-    if (next.look) url.searchParams.set('look', next.look)
-    window.history.replaceState(null, '', url)
-    if (next.place) setPlace(next.place)
-    if (next.look) setLookName(next.look)
   }
 
   // the terrain, imagery and layers as a 3D model file
@@ -282,7 +185,9 @@ export default function App() {
       const blob = await map.export(format)
       const link = document.createElement('a')
       link.href = URL.createObjectURL(blob)
-      link.download = `${place}.${format}`
+      const name =
+        placeOf(area) ?? `terrain-${area.lat.toFixed(4)}-${area.lon.toFixed(4)}`
+      link.download = `${name}-z${area.zoom}.${format}`
       link.click()
       URL.revokeObjectURL(link.href)
     } finally {
@@ -290,11 +195,24 @@ export default function App() {
     }
   }
 
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      window.prompt('Copy the link', window.location.href)
+    }
+  }
+
+  const closer = layersBelow(area.zoom).filter((name) =>
+    view.layers.includes(name)
+  )
   return (
     <>
-      <Canvas className='scene' flat>
+      <Canvas className='scene' flat frameloop={picking ? 'never' : 'always'}>
         <color attach='background' args={[look.background]} />
-        <fog attach='fog' args={[look.background, 2e3, 6e3]} />
+        <fog attach='fog' args={[look.background, 2 * width, 5 * width]} />
         <ambientLight intensity={look.light.ambient} />
         <directionalLight
           intensity={look.light.sun}
@@ -302,80 +220,274 @@ export default function App() {
         />
         <PerspectiveCamera
           makeDefault
-          position={[0, -1.25e3, 1e3]}
+          position={[0, -0.8 * width, 0.7 * width]}
           fov={60}
+          near={1}
           far={1e6}
           up={[0, 0, 1]}
         />
-        <MapControls maxPolarAngle={Math.PI * 0.42} />
+        <MapControls makeDefault maxPolarAngle={Math.PI * 0.42} />
+        <Framing center={center} width={width} />
         <primitive object={map.terrain} onClick={onClick} />
-        {aircraft && (
-          <mesh position={aircraft}>
-            <sphereGeometry args={[8, 24, 12]} />
-            <meshBasicMaterial color={0xf04040} />
-          </mesh>
-        )}
-        {picked?.kind === 'terrain' && (
-          <mesh position={picked.position}>
-            <sphereGeometry args={[6, 24, 12]} />
+        {picked?.point && (
+          <mesh position={picked.point}>
+            <sphereGeometry args={[width / 300, 24, 12]} />
             <meshBasicMaterial color={0xf0d040} />
           </mesh>
         )}
       </Canvas>
 
-      <aside className='panel'>
-        <h1>three-map-terrain</h1>
-        <Choice
-          label='Place'
-          options={Object.keys(PLACES) as Place[]}
-          value={place}
-          name={(key) => PLACES[key].title}
-          onChange={(key) => choose({ place: key })}
-        />
-        {place !== 'alps' && (
-          <Choice
-            label='Look'
-            options={Object.keys(LOOKS) as LookName[]}
-            value={lookName}
-            onChange={(key) => choose({ look: key })}
-          />
-        )}
-        <p className='status' role='status'>
-          {!ready
-            ? 'Loading the terrain…'
-            : picked
-              ? describe(picked)
-              : buildings
-                ? 'Click a building, a road or the terrain.'
-                : 'Click the terrain: its geolocation shows here.'}
-        </p>
-        <p className='muted'>Drag to pan, right-drag to rotate.</p>
-        <div className='choice'>
-          {(['glb', 'stl'] as const).map((format) => (
-            <button
-              key={format}
-              type='button'
-              disabled={!ready || saving !== null}
-              onClick={() => void download(format)}
-            >
-              {saving === format
-                ? 'Exporting…'
-                : `Download ${format.toUpperCase()}`}
-            </button>
-          ))}
-        </div>
-        <nav>
-          <a href='https://github.com/whidrubeld/three-map-terrain'>GitHub</a>
-          <a href='https://www.npmjs.com/package/three-map-terrain'>npm</a>
-          <a href='https://whidrubeld.github.io/gpx-terrain/'>
-            GPX Terrain — the showcase
-          </a>
-        </nav>
-      </aside>
+      {picking ? (
+        <Suspense>
+          <Picker area={area} onPick={onPick} onCancel={onCancel} />
+        </Suspense>
+      ) : (
+        <>
+          <aside className='panel'>
+            <header>
+              <h1>three-map-terrain</h1>
+              <button
+                type='button'
+                className='fold'
+                aria-expanded={!folded}
+                onClick={() => setFolded(!folded)}
+              >
+                {folded ? 'Show' : 'Hide'}
+              </button>
+            </header>
+            {!folded && (
+              <>
+                <p className='muted'>
+                  Real-world 3D terrain for three.js, from map tiles: pick an
+                  area, style it, export a model.
+                </p>
+                <Row label='Area'>
+                  <Choice
+                    label='Area'
+                    options={Object.keys(PLACES) as PlaceName[]}
+                    value={placeOf(area)}
+                    name={(key) => PLACES[key].title}
+                    onChange={(key) => setView(PLACES[key])}
+                  />
+                  <button
+                    type='button'
+                    className='primary'
+                    onClick={() => setPicking(true)}
+                  >
+                    Pick on map…
+                  </button>
+                </Row>
+                <p className='muted area'>
+                  {where(area)} · zoom {area.zoom} · {area.size} × {area.size}{' '}
+                  tiles · {kilometers(area)} km
+                </p>
+                <Row label='Relief'>
+                  <Choice
+                    label='Relief'
+                    options={EXAGGERATIONS}
+                    value={String(exaggeration)}
+                    name={(key) => `${key}×`}
+                    onChange={(key) => update({ exaggeration: Number(key) })}
+                  />
+                </Row>
+                <Row label='Look'>
+                  <Choice
+                    label='Look'
+                    options={Object.keys(LOOKS) as LookName[]}
+                    value={view.look}
+                    onChange={(key) => update({ look: key })}
+                  />
+                </Row>
+                {look.imagery && inSwitzerland(area) && (
+                  <Row label='Photo'>
+                    <Choice
+                      label='Photo'
+                      options={Object.keys(IMAGERY) as ImageryName[]}
+                      value={view.imagery}
+                      name={(key) => IMAGERY[key].title}
+                      onChange={(key) => update({ imagery: key })}
+                    />
+                  </Row>
+                )}
+                <Row label='Layers'>
+                  <div className='choice' role='group' aria-label='Layers'>
+                    {LAYER_NAMES.map((name) => (
+                      <button
+                        key={name}
+                        type='button'
+                        aria-pressed={view.layers.includes(name)}
+                        className={closer.includes(name) ? 'faint' : undefined}
+                        onClick={() =>
+                          // this one switched, the others as they are
+                          update({
+                            layers: LAYER_NAMES.filter(
+                              (other) =>
+                                (other === name) !== view.layers.includes(other)
+                            )
+                          })
+                        }
+                      >
+                        {capitalize(name)}
+                      </button>
+                    ))}
+                  </div>
+                </Row>
+                {closer.length > 0 && (
+                  <p className='muted'>
+                    Not at this zoom:{' '}
+                    {closer
+                      .map((name) => `${name} from ${minZoom(LAYERS[name])}`)
+                      .join(', ')}
+                    .
+                  </p>
+                )}
+                <Row label='Export'>
+                  <div className='choice'>
+                    {FORMATS.map((format) => (
+                      <button
+                        key={format}
+                        type='button'
+                        className='format'
+                        disabled={!ready || saving !== null}
+                        onClick={() => void download(format)}
+                      >
+                        {saving === format ? '…' : format}
+                      </button>
+                    ))}
+                  </div>
+                </Row>
+                <Row label='Share'>
+                  <button type='button' onClick={() => void copyLink()}>
+                    {copied ? 'Copied' : 'Copy link'}
+                  </button>
+                </Row>
+                <p className='status' role='status'>
+                  {!ready
+                    ? 'Loading the terrain…'
+                    : (picked?.text ?? 'Click the terrain or anything on it.')}
+                </p>
+                <p className='muted'>Drag to pan, right-drag to rotate.</p>
+                <nav>
+                  <a href='https://github.com/whidrubeld/three-map-terrain'>
+                    GitHub
+                  </a>
+                  <a href='https://www.npmjs.com/package/three-map-terrain'>
+                    npm
+                  </a>
+                  <a href='https://whidrubeld.github.io/gpx-terrain/'>
+                    GPX Terrain — the showcase
+                  </a>
+                </nav>
+              </>
+            )}
+          </aside>
 
-      {/* the credits every data source asks for */}
-      <footer className='attribution'>{credits.join(' · ')}</footer>
+          {/* the credits every data source asks for */}
+          <footer className='attribution'>{credits.join(' · ')}</footer>
+        </>
+      )}
     </>
+  )
+}
+
+/**
+ * Points the camera at the grid's middle from the south, as far as it is
+ * wide — farther on a portrait screen.
+ */
+function Framing({ center, width }: { center: Point | null; width: number }) {
+  const camera = useThree((state) => state.camera) as Camera
+  const controls = useThree((state) => state.controls) as unknown as {
+    target: Vector3
+    update(): void
+  } | null
+  useEffect(() => {
+    if (!center || !controls) return
+    const [x, y, z] = center
+    const distance = width * Math.max(1, 1 / camera.aspect)
+    controls.target.set(x, y, z)
+    camera.position.set(x, y - 0.8 * distance, z + 0.7 * distance)
+    controls.update()
+  }, [center, width, camera, controls])
+  return null
+}
+
+interface Described {
+  kind?: string
+  height?: number
+  bridge?: boolean
+  properties: Record<string, unknown>
+}
+
+const SINGULAR: Record<LayerName, string> = {
+  buildings: 'building',
+  roads: 'road',
+  water: 'water',
+  trees: 'trees',
+  base: 'base'
+}
+
+/**
+ * The nearest feature under a ray, highlighted (the others not), described.
+ * Draped layers lie on the terrain and on each other: a hit within a unit
+ * of the nearest goes to the first of buildings, trees, roads, water.
+ */
+function pickFeature(raycaster: Raycaster): string | undefined {
+  const { buildings, trees, roads, water } = LAYERS
+  const candidates = [
+    candidate('buildings', buildings, raycaster),
+    candidate('trees', trees, raycaster),
+    candidate('roads', roads, raycaster),
+    candidate('water', water, raycaster)
+  ]
+  const nearest = Math.min(...candidates.map(({ distance }) => distance))
+  const chosen = candidates.find(
+    ({ hit, distance }) => hit && distance <= nearest + 1
+  )
+  for (const each of candidates) each.highlight(each === chosen)
+  if (!chosen?.hit) return undefined
+  const { feature } = chosen.hit
+  const { kind, height, bridge, properties } = feature
+  const name = typeof properties.name === 'string' ? `${properties.name}, ` : ''
+  const high =
+    chosen.name === 'buildings' && height !== undefined
+      ? `, ${Math.round(height)} m high`
+      : ''
+  return `${name}${kind ?? SINGULAR[chosen.name]}${bridge ? ' bridge' : ''}${high} · ${where(chosen.hit)} · ${Math.round(chosen.hit.alt)} m`
+}
+
+interface Candidate {
+  name: LayerName
+  hit: FeatureHit<Described> | undefined
+  distance: number
+  highlight: (on: boolean) => void
+}
+
+function candidate<F extends Described>(
+  name: LayerName,
+  layer: FeatureLayer<F>,
+  raycaster: Raycaster
+): Candidate {
+  // none on a layer switched off
+  const hit = layer.pick(raycaster)
+  return {
+    name,
+    hit,
+    distance: hit?.point.distanceTo(raycaster.ray.origin) ?? Infinity,
+    highlight: (on) => layer.highlight(on ? hit?.feature : undefined)
+  }
+}
+
+const capitalize = (key: string) => key.charAt(0).toUpperCase() + key.slice(1)
+
+const where = ({ lat, lon }: { lat: number; lon: number }) =>
+  `${lat.toFixed(5)}, ${lon.toFixed(5)}`
+
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className='row'>
+      <span className='label'>{label}</span>
+      <div className='controls'>{children}</div>
+    </div>
   )
 }
 
@@ -383,12 +495,12 @@ function Choice<T extends string>({
   label,
   options,
   value,
-  name = (key) => key,
+  name = capitalize,
   onChange
 }: {
   label: string
   options: readonly T[]
-  value: T
+  value: T | undefined
   name?: (key: T) => string
   onChange: (key: T) => void
 }) {
@@ -406,18 +518,4 @@ function Choice<T extends string>({
       ))}
     </div>
   )
-}
-
-function describe(picked: Picked) {
-  const { lat, lon, alt } = picked.location
-  const where = `${lat.toFixed(5)}, ${lon.toFixed(5)}`
-  if (picked.kind === 'terrain') return `${where} · ${Math.round(alt)} m`
-  if (picked.kind === 'road') {
-    const { kind, bridge, properties } = picked.feature
-    const name =
-      typeof properties.name === 'string' ? `${properties.name}, ` : ''
-    return `${name}${kind}${bridge ? ' bridge' : ''} · ${where} · ${Math.round(alt)} m`
-  }
-  const { height } = picked.feature
-  return `Building${height === undefined ? '' : `, ${Math.round(height)} m high`} · ${where}`
 }

@@ -5,6 +5,7 @@ import {
   type MeshBasicMaterial,
   type MeshLambertMaterial,
   MeshStandardMaterial,
+  Quaternion,
   Raycaster,
   Texture,
   Vector3
@@ -18,7 +19,9 @@ import {
   TRUNK_COLOR,
   type TileRequest,
   type TreeFeature,
+  type TreeSpot,
   Trees,
+  treeShapes,
   treesFromOverpass,
   treesFromVectorTile,
   Utils,
@@ -35,9 +38,9 @@ vi.mock('../../../src/io/image', async (importOriginal) => ({
   loadImageData
 }))
 
-vi.mock('../../../src/terrain/material', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../../src/terrain/material')>()),
-  loadQuadTexture: vi.fn(() => Promise.resolve(new Texture()))
+vi.mock('../../../src/terrain/texture', () => ({
+  // no canvas in Node: a texture stands in for the stitched imagery
+  loadTextureGrid: vi.fn(() => Promise.resolve(new Texture()))
 }))
 
 const ZOOM = 15
@@ -101,7 +104,7 @@ const setup = async (
   return { map, layer }
 }
 
-const copies = (layer: Trees, part: 'crowns' | 'trunks') =>
+const copies = (layer: Trees, part: string) =>
   layer.group.children.filter(
     (object) =>
       object.name.startsWith(`trees ${part} `) &&
@@ -117,13 +120,30 @@ const outlines = (layer: Trees) =>
   ) as InstancedMesh<InstancedMesh['geometry'], MeshBasicMaterial>[]
 
 /** Where every copy stands, in map.terrain coordinates. */
-const positions = (layer: Trees, part: 'crowns' | 'trunks') => {
+const positions = (layer: Trees, part: string) => {
   const matrix = new Matrix4()
   return copies(layer, part).flatMap((mesh) =>
     Array.from({ length: mesh.count }, (_, i) => {
       mesh.getMatrixAt(i, matrix)
       return new Vector3().setFromMatrixPosition(matrix).add(mesh.position)
     })
+  )
+}
+
+/** Where a point of `map.terrain` is, in tiles from the center tile's corner. */
+const inTiles = (map: Map, point: Vector3) => {
+  const { lat, lon } = map.getLocation(point)
+  const f = Utils.position2tileFraction(lat, lon, ZOOM)
+  return { x: f.x - center.x, y: f.y - center.y }
+}
+
+/** A bush: the crown, 1.5 m around, at the spot. */
+const bush = (ctx: { unitsPerMeter: number }, spot: TreeSpot) => {
+  const r = 1.5 * ctx.unitsPerMeter
+  return new Matrix4().compose(
+    new Vector3(spot.x, spot.y, spot.z),
+    new Quaternion(),
+    new Vector3(r, r, r)
   )
 }
 
@@ -347,6 +367,113 @@ describe('Trees', () => {
 
     expect(disposeCopies).toHaveBeenCalled()
     expect(disposeShape).not.toHaveBeenCalled()
+  })
+
+  it('plants what you decide at each spot: bushes in scrub, trees in woods', async () => {
+    const forest: TreeFeature = { ...wood(0.1, 0.1, 0.4, 0.4), kind: 'forest' }
+    const scrub: TreeFeature = { ...wood(0.6, 0.6, 0.9, 0.9), kind: 'scrub' }
+    const spots: TreeSpot[] = []
+    const { map, layer } = await setup([forest, scrub], {
+      plant(ctx, spot, feature, tree) {
+        if (feature.kind !== 'scrub') {
+          tree()
+          return
+        }
+        spots.push(spot)
+        ctx.instances('shrubs', treeShapes().crown).add(bush(ctx, spot))
+      }
+    })
+    const [shrubs] = copies(layer, 'shrubs')
+
+    expect(spots.length).toBeGreaterThan(100)
+    expect(shrubs.count).toBe(spots.length)
+    // in the trees' green, unless a material of yours
+    expect(shrubs.material.color.getHexString()).toBe(
+      new Color(CROWN_COLOR).getHexString()
+    )
+    // the bushes in the scrub, on the ground; the trees in the wood
+    for (const p of positions(layer, 'shrubs')) {
+      const { x, y } = inTiles(map, p)
+      expect(x > 0.6 && x < 0.9 && y > 0.6 && y < 0.9).toBe(true)
+      const surface = map.getTerrainPositionSync(map.getLocation(p), {
+        loadTile: false
+      })
+      expect(surface?.z).toBeCloseTo(p.z, 3)
+    }
+    for (const p of positions(layer, 'crowns')) {
+      const { x, y } = inTiles(map, p)
+      expect(x > 0.1 && x < 0.4 && y > 0.1 && y < 0.4).toBe(true)
+    }
+
+    // a bush is picked as its scrub
+    const [position] = positions(layer, 'shrubs')
+    map.terrain.updateMatrixWorld(true)
+    const raycaster = new Raycaster(
+      map.terrain.localToWorld(position.clone().setZ(1e6)),
+      new Vector3(0, 0, -1)
+    )
+    expect(layer.pick(raycaster)?.feature).toBe(scrub)
+  })
+
+  it('stands trees as high as you ask, or nothing', async () => {
+    const at = (fx: number, kind: string): TreeFeature => ({
+      kind,
+      geometry: { type: 'Point', coordinates: lonLat(fx, 0.5) },
+      height: 20,
+      properties: {}
+    })
+    const { map, layer } = await setup([at(0.3, 'tree'), at(0.7, 'stump')], {
+      plant(_ctx, _spot, feature, tree) {
+        if (feature.kind === 'tree') tree(4)
+      }
+    })
+    const [crown] = copies(layer, 'crowns')
+    const matrix = new Matrix4()
+    crown.getMatrixAt(0, matrix)
+    const scale = new Vector3().setFromMatrixScale(matrix)
+
+    expect(crown.count).toBe(1)
+    expect(scale.z / map.options.zScale).toBeCloseTo(4 * 0.62 * 0.5, 6)
+  })
+
+  it('plants your parts while the trees are hidden', async () => {
+    const hidden = new MeshStandardMaterial({ visible: false })
+    const { layer } = await setup([wood(0.2, 0.2, 0.5, 0.5)], {
+      material: (part) => (part === 'shrubs' ? undefined : hidden),
+      plant(ctx, spot, _feature, tree) {
+        tree()
+        ctx.instances('shrubs', treeShapes().crown).add(bush(ctx, spot))
+      }
+    })
+
+    expect(copies(layer, 'crowns')).toEqual([])
+    expect(copies(layer, 'shrubs')[0].count).toBeGreaterThan(100)
+  })
+
+  it('spaces every wood by its own spacing', async () => {
+    const scrub: TreeFeature = { ...wood(0.1, 0.1, 0.4, 0.4), kind: 'scrub' }
+    const forest: TreeFeature = { ...wood(0.6, 0.6, 0.9, 0.9), kind: 'forest' }
+    const { map, layer } = await setup([scrub, forest], {
+      spacing: (_zoom, feature) => (feature.kind === 'scrub' ? 5 : 10)
+    })
+    const xs = positions(layer, 'trunks').map((p) => inTiles(map, p).x)
+    const dense = xs.filter((x) => x < 0.5).length
+    const sparse = xs.filter((x) => x > 0.5).length
+
+    expect(dense / sparse).toBeGreaterThan(3.4)
+    expect(dense / sparse).toBeLessThan(4.6)
+  })
+
+  it('plants a spot once where woods overlap', async () => {
+    const one = await setup([wood(0.2, 0.2, 0.6, 0.6)])
+    const both = await setup([
+      wood(0.2, 0.2, 0.6, 0.6),
+      { ...wood(0.2, 0.2, 0.6, 0.6), id: 'forest', kind: 'forest' }
+    ])
+    const keys = (layer: Trees) =>
+      positions(layer, 'trunks').map((p) => p.toArray().join())
+
+    expect(keys(both.layer)).toEqual(keys(one.layer))
   })
 
   it('reads woods from vector tiles and trees from Overpass', async () => {

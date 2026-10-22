@@ -12,6 +12,7 @@ import {
   type DrawFeatures,
   type FeatureHit,
   FeatureLayer,
+  type LayerDistance,
   type LayerMaterial,
   type Look
 } from '../FeatureLayer.class'
@@ -55,6 +56,12 @@ export interface BuildingsOptions {
   highlightColor: ColorRepresentation
   /** Height in meters of buildings the source has none for. */
   defaultHeight: number
+  /**
+   * Hides the buildings of tiles farther than this from the camera, in
+   * meters — or per part: `(part) => (part === 'edges' ? 1500 : 4000)`.
+   * See `FeatureLayer.maxDistance`.
+   */
+  maxDistance?: LayerDistance
   /** Terrain tiles below this zoom get no buildings. */
   minZoom: number
 }
@@ -112,6 +119,7 @@ export class Buildings extends FeatureLayer<BuildingFeature> {
       material: options.material,
       highlightColor: options.highlightColor,
       minZoom: options.minZoom,
+      maxDistance: options.maxDistance,
       name: 'buildings'
     })
     this.options = options

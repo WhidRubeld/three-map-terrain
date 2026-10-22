@@ -1,7 +1,12 @@
 // OpenStreetMap water: Overpass API JSON → areas and waterways.
 
 import { parseLength } from '../features'
-import { type OverpassElement, polygonsOf, toPositions } from '../osm'
+import {
+  type OverpassElement,
+  overpassQl,
+  polygonsOf,
+  toPositions
+} from '../osm'
 import type { WaterFeature } from './features'
 
 /** Waterways drawn as lines. */
@@ -53,18 +58,19 @@ export function waterFromOverpass(response: unknown): WaterFeature[] {
   })
 }
 
-/** The Overpass QL query for the water in a bounding box. */
-export function overpassWaterQuery([
-  west,
-  south,
-  east,
-  north
-]: readonly number[]) {
-  const bbox = `(${south},${west},${north},${east})`
-  return (
-    `[out:json][timeout:60];(` +
-    `way["natural"="water"]${bbox};relation["natural"="water"]["type"="multipolygon"]${bbox};` +
-    `way["landuse"="reservoir"]${bbox};way["waterway"~"^(${WATERWAYS})$"]${bbox};` +
-    `);out body geom qt;`
-  )
+/**
+ * The Overpass QL query for the water in a bounding box — and the elements
+ * of `more` selectors.
+ */
+export function overpassWaterQuery(
+  bbox: readonly number[],
+  more: readonly string[] = []
+) {
+  return overpassQl(bbox, [
+    'way["natural"="water"]',
+    'relation["natural"="water"]["type"="multipolygon"]',
+    'way["landuse"="reservoir"]',
+    `way["waterway"~"^(${WATERWAYS})$"]`,
+    ...more
+  ])
 }

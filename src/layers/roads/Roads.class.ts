@@ -25,6 +25,7 @@ import {
   type DrawFeatures,
   type FeatureHit,
   FeatureLayer,
+  type LayerDistance,
   type LayerMaterial,
   type Look
 } from '../FeatureLayer.class'
@@ -63,6 +64,12 @@ export interface RoadsOptions {
   bridges: boolean
   /** Color `highlight()` uses by default. */
   highlightColor: ColorRepresentation
+  /**
+   * Hides the roads of tiles farther than this from the camera, in meters —
+   * or per part, e.g. the bridges' `'structure'` sooner than the roads. See
+   * `FeatureLayer.maxDistance`.
+   */
+  maxDistance?: LayerDistance
   /** Terrain tiles below this zoom get no roads. */
   minZoom: number
 }
@@ -176,6 +183,7 @@ export class Roads extends FeatureLayer<RoadFeature> {
       material: options.material,
       highlightColor: options.highlightColor,
       minZoom: options.minZoom,
+      maxDistance: options.maxDistance,
       name: 'roads'
     })
     this.options = options

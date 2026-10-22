@@ -8,6 +8,7 @@ import {
   type DrawFeatures,
   type FeatureHit,
   FeatureLayer,
+  type LayerDistance,
   type LayerMaterial,
   type Look
 } from '../FeatureLayer.class'
@@ -34,6 +35,11 @@ export interface WaterOptions {
   widths: Readonly<Partial<Record<string, number>>>
   /** Color `highlight()` uses by default. */
   highlightColor: ColorRepresentation
+  /**
+   * Hides the water of tiles farther than this from the camera, in meters.
+   * See `FeatureLayer.maxDistance`.
+   */
+  maxDistance?: LayerDistance
   /** Terrain tiles below this zoom get no water. */
   minZoom: number
 }
@@ -83,6 +89,7 @@ export class Water extends FeatureLayer<WaterFeature> {
       material: options.material,
       highlightColor: options.highlightColor,
       minZoom: options.minZoom,
+      maxDistance: options.maxDistance,
       name: 'water'
     })
     this.options = options

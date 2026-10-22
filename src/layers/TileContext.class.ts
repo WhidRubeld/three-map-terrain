@@ -108,6 +108,12 @@ export class TileContext<F> {
   private readonly lineParts = new globalThis.Map<string, LineBuilder>()
   private readonly instanceParts = new globalThis.Map<string, InstanceBuilder>()
   private readonly own: TileSurface
+  private readonly ownKey: string
+  /** The surfaces of the neighbours read, by offset (`'dx dy'`). */
+  private readonly neighbours = new globalThis.Map<
+    string,
+    TileSurface | undefined
+  >()
   private readonly point: SurfacePoint = { z: 0, nx: 0, ny: 0, nz: 1 }
   private current = -1
   private readonly metersPerTile: number
@@ -129,6 +135,7 @@ export class TileContext<F> {
     this.zScale = zScale
     this.rect = [-tileSize / 2, -tileSize / 2, tileSize / 2, tileSize / 2]
     this.own = new TileSurface(tile)
+    this.ownKey = tile.key()
   }
 
   /** The index of the feature being drawn, −1 outside `feature()`. */
@@ -167,30 +174,7 @@ export class TileContext<F> {
    * one is loaded — or `undefined`.
    */
   surfaceAt(x: number, y: number): SurfacePoint | undefined {
-    const { tileSize, tileSegments } = this.map.options
-    const u = x / tileSize + 0.5
-    const v = 0.5 - y / tileSize
-    // the edges belong to this tile
-    const dx = u >= 0 && u <= 1 ? 0 : Math.floor(u)
-    const dy = v >= 0 && v <= 1 ? 0 : Math.floor(v)
-    const key = Utils.getTileKey(
-      this.tile.z,
-      this.tile.x + dx,
-      this.tile.y + dy
-    )
-    this.depends.add(key)
-    const tile =
-      dx === 0 && dy === 0
-        ? this.tile
-        : (this.map.tileCache[key] as Tile | undefined)
-    if (!tile?.loaded) return undefined
-    const surface = tile === this.tile ? this.own : new TileSurface(tile)
-    return surface.sample((u - dx) * tileSegments, (v - dy) * tileSegments, {
-      z: 0,
-      nx: 0,
-      ny: 0,
-      nz: 1
-    })
+    return this.sampleAt(x, y, { z: 0, nx: 0, ny: 0, nz: 1 })
   }
 
   /**
@@ -198,10 +182,53 @@ export class TileContext<F> {
    * in if loaded, else of this tile's nearest edge.
    */
   groundAt(x: number, y: number): number {
-    const surface = this.surfaceAt(x, y)
+    const surface = this.sampleAt(x, y, this.point)
     if (surface) return surface.z
     const { tileSize } = this.map.options
     return this.tile.heightAt(x / tileSize + 0.5, 0.5 - y / tileSize)
+  }
+
+  /** `surfaceAt`, into `out`. */
+  private sampleAt(
+    x: number,
+    y: number,
+    out: SurfacePoint
+  ): SurfacePoint | undefined {
+    const { tileSize, tileSegments } = this.map.options
+    const u = x / tileSize + 0.5
+    const v = 0.5 - y / tileSize
+    // the edges belong to this tile
+    const dx = u >= 0 && u <= 1 ? 0 : Math.floor(u)
+    const dy = v >= 0 && v <= 1 ? 0 : Math.floor(v)
+    const surface = this.surfaceOf(dx, dy)
+    return surface?.sample(
+      (u - dx) * tileSegments,
+      (v - dy) * tileSegments,
+      out
+    )
+  }
+
+  /** The surface of the tile `dx`, `dy` from this one if it is loaded; read from now on. */
+  private surfaceOf(dx: number, dy: number): TileSurface | undefined {
+    if (dx === 0 && dy === 0) {
+      this.depends.add(this.ownKey)
+      return this.tile.loaded ? this.own : undefined
+    }
+    const near = `${String(dx)} ${String(dy)}`
+    if (!this.neighbours.has(near)) {
+      const key = Utils.getTileKey(
+        this.tile.z,
+        this.tile.x + dx,
+        this.tile.y + dy
+      )
+      this.depends.add(key)
+      const tile = this.map.tileCache[key] as Tile | undefined
+      this.neighbours.set(
+        near,
+        tile?.loaded ? new TileSurface(tile) : undefined
+      )
+    }
+    return this.neighbours.get(near)
   }
 
   // --- parts and features -------------------------------------------------
@@ -513,18 +540,26 @@ export class TileContext<F> {
       Math.max(...xs) + half >= minX &&
       Math.min(...ys) - half <= maxY &&
       Math.max(...ys) + half >= minY
-    const disc = (cx: number, cy: number) => {
+    // a round cap: the half of a disc beyond the end, facing `dx`, `dy`
+    // (the other half lies under the ribbon)
+    const cap = (cx: number, cy: number, dx: number, dy: number) => {
       const polygon: number[] = []
-      for (let k = 0; k < CAP_SEGMENTS; k++) {
-        const angle = (2 * Math.PI * k) / CAP_SEGMENTS
-        polygon.push(cx + Math.cos(angle) * half, cy + Math.sin(angle) * half)
+      for (let k = 0; k <= CAP_SEGMENTS / 2; k++) {
+        const angle = (2 * Math.PI * k) / CAP_SEGMENTS - Math.PI / 2
+        const [along, across] = [Math.cos(angle) * half, Math.sin(angle) * half]
+        polygon.push(
+          cx + dx * along - dy * across,
+          cy + dy * along + dx * across
+        )
       }
       return polygon
     }
 
     let along = 0
     let previous: [number, number] | undefined
-    let end: { x: number; y: number; uv: UvMapping } | undefined
+    let end:
+      | { x: number; y: number; dx: number; dy: number; uv: UvMapping }
+      | undefined
     for (let i = 0; i + 3 < line.length; i += 2) {
       const [ax, ay, bx, by] = [line[i], line[i + 1], line[i + 2], line[i + 3]]
       const length = Math.hypot(bx - ax, by - ay)
@@ -548,34 +583,38 @@ export class TileContext<F> {
           { ...style, uv }
         )
         if (previous) {
-          // bevels fill the outer side of a bend (the inner one overlaps)
+          // a bevel fills the outer side of a bend: the right of a left
+          // turn (the inner side is under both segments)
           const [px, py] = previous
-          if (Math.abs(px * dy - py * dx) > 1e-4) {
-            for (const side of [1, -1]) {
-              this.drapeConvex(
-                part,
-                [
-                  ax,
-                  ay,
-                  ax - py * half * side,
-                  ay + px * half * side,
-                  ax + nx * side,
-                  ay + ny * side
-                ],
-                { ...style, uv }
-              )
-            }
+          const turn = px * dy - py * dx
+          if (Math.abs(turn) > 1e-4) {
+            const side = turn > 0 ? -1 : 1
+            this.drapeConvex(
+              part,
+              [
+                ax,
+                ay,
+                ax - py * half * side,
+                ay + px * half * side,
+                ax + nx * side,
+                ay + ny * side
+              ],
+              { ...style, uv }
+            )
           }
         } else if (caps) {
-          this.drapeConvex(part, disc(ax, ay), { ...style, uv })
+          this.drapeConvex(part, cap(ax, ay, -dx, -dy), { ...style, uv })
         }
       }
       previous = [dx, dy]
-      end = { x: bx, y: by, uv }
+      end = { x: bx, y: by, dx, dy, uv }
       along += length / unitsPerMeter
     }
     if (caps && end && near([end.x], [end.y])) {
-      this.drapeConvex(part, disc(end.x, end.y), { ...style, uv: end.uv })
+      this.drapeConvex(part, cap(end.x, end.y, end.dx, end.dy), {
+        ...style,
+        uv: end.uv
+      })
     }
   }
 
@@ -585,7 +624,7 @@ export class TileContext<F> {
     if (!lines) return
     const { tileSize, tileSegments: n } = this.map.options
     const rect = this.clipRect(style.clip)
-    this.depends.add(this.tile.key())
+    this.depends.add(this.ownKey)
     const point = this.point
     const sample = (col: number, row: number) => {
       this.own.sample(col, row, point)
@@ -652,7 +691,7 @@ export class TileContext<F> {
         (0.5 - polygon[i + 1] / tileSize) * n
       )
     }
-    this.depends.add(this.tile.key())
+    this.depends.add(this.ownKey)
     const builder = this.surface(part)
     const point = this.point
     // the pieces share the points of their cuts: one vertex each
@@ -681,15 +720,16 @@ export class TileContext<F> {
       vertices.set(key, index)
       return index
     }
-    cutPolygon(cells, grid, (piece) => {
-      const indices: number[] = []
-      for (let i = 0; i < piece.length; i += 2) {
+    const indices: number[] = []
+    cutPolygon(cells, grid, (piece, length) => {
+      indices.length = 0
+      for (let i = 0; i < length; i += 2) {
         const index = vertex(piece[i], piece[i + 1])
         if (index !== indices.at(-1) && index !== indices[0])
           indices.push(index)
       }
       // rows go south: counter-clockwise in the grid is clockwise in the scene
-      const reverse = polygonArea(piece) > 0
+      const reverse = polygonArea(piece, 2, length) > 0
       for (let i = 1; i < indices.length - 1; i++) {
         if (reverse) builder.triangle(indices[0], indices[i + 1], indices[i])
         else builder.triangle(indices[0], indices[i], indices[i + 1])

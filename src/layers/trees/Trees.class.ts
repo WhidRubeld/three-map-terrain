@@ -17,6 +17,7 @@ import {
   type FeatureHit,
   FeatureLayer,
   type GroundCover,
+  type LayerDistance,
   type LayerMaterial
 } from '../FeatureLayer.class'
 import type { Rect, TileContext } from '../TileContext.class'
@@ -40,6 +41,21 @@ export interface TreesOptions {
     draw: DrawFeatures<TreeFeature>
   ) => void
   /**
+   * What stands at each spot the layer plants — in a wood, or a single
+   * tree: by default `tree()`, a trunk and a crown. Yours decides by the
+   * feature (its `kind`, its `properties`): `tree(height?)` for the tree,
+   * copies of your own (`ctx.instances(part, geometry).add(matrix)`, in
+   * parts you name: their materials are the layer's), or nothing — bushes
+   * in scrub, low trees in orchards, palms. A spot is planted once: by the
+   * first wood covering it.
+   */
+  plant?: (
+    ctx: TileContext<TreeFeature>,
+    spot: TreeSpot,
+    feature: TreeFeature,
+    tree: (height?: number) => void
+  ) => void
+  /**
    * Layers whose ground stays clear of trees — water, roads, buildings,
    * yours: woods in the data often take in the rivers, roads and houses
    * crossing them. A tree stands only where none of them drew; trees are
@@ -50,21 +66,28 @@ export interface TreesOptions {
   clearance: number
   /**
    * Meters between the trees of a wood — or a function of the terrain's
-   * zoom, e.g. fewer trees on a wide map: `(zoom) => (zoom < 15 ? 14 : 9)`.
+   * zoom and the wood, e.g. fewer trees on a wide map:
+   * `(zoom) => (zoom < 15 ? 14 : 9)`, or denser bushes in scrub.
    */
-  spacing: number | ((zoom: number) => number)
+  spacing: number | ((zoom: number, feature: TreeFeature) => number)
   /** Meters high, from the lowest to the highest, for trees without a height. */
   heights: readonly [low: number, high: number]
   /** At most this many trees on a terrain tile. */
   maxPerTile: number
   /** Color `highlight()` uses by default. */
   highlightColor: ColorRepresentation
+  /**
+   * Hides the trees of tiles farther than this from the camera, in meters —
+   * or per part: `(part) => (part === 'trunks' ? 800 : 2500)`, trunks
+   * first (crowns hide them from afar). See `FeatureLayer.maxDistance`.
+   */
+  maxDistance?: LayerDistance
   /** Terrain tiles below this zoom get no trees. */
   minZoom: number
 }
 
 export const defaultTreesOptions: Readonly<
-  Omit<TreesOptions, 'source' | 'material' | 'build'>
+  Omit<TreesOptions, 'source' | 'material' | 'build' | 'plant'>
 > = Object.freeze({
   avoid: [],
   clearance: 2,
@@ -78,6 +101,16 @@ export const defaultTreesOptions: Readonly<
 /** The tree (or wood) under a ray: the feature and where it was hit. */
 export type TreeHit = FeatureHit<TreeFeature>
 
+/** A spot the layer plants, in the tile's local coordinates. */
+export interface TreeSpot {
+  readonly x: number
+  readonly y: number
+  /** The rendered ground there. */
+  readonly z: number
+  /** A number in [0, 1), the same every time the spot is planted. */
+  readonly random: number
+}
+
 /** Colors of the crowns (unless the look gives one) and of the trunks. */
 export const CROWN_COLOR = '#6f9a4f'
 export const TRUNK_COLOR = '#7d5c3e'
@@ -89,13 +122,15 @@ const TRUNK_RADIUS = 0.035
 /** Meters trunks reach below the ground. */
 const FOUNDATION = 0.5
 
-/**
- * The shared shapes, few triangles for many copies: a trunk (z from 0 to
- * 1, 8 triangles) and a crown (radius 1, 20 triangles, shaded round).
- */
 let shapes: { trunk: BufferGeometry; crown: BufferGeometry } | undefined
 
-function treeShapes() {
+/**
+ * The trees' shapes, few triangles for many copies, shared by every layer:
+ * a trunk (z from 0 to 1, 8 triangles) and a crown (radius 1, 20
+ * triangles, shaded round), white for the parts' colors. Copies of yours
+ * may use them (`plant`); never dispose them.
+ */
+export function treeShapes() {
   if (!shapes) {
     const white = (geometry: BufferGeometry) => {
       const count = geometry.getAttribute('position').count
@@ -191,6 +226,9 @@ function inside(x: number, y: number, rows: Rows) {
   return within
 }
 
+/** Copies of a shape in a part, as `ctx.instances()` adds them. */
+type Copies = ReturnType<TileContext<TreeFeature>['instances']>
+
 /** A feature in map units (tiles at the map's zoom): its points and polygons. */
 interface Prepared {
   zoom: number
@@ -205,7 +243,8 @@ interface Prepared {
  * tile is drawn again and never double at tile edges; single trees (points)
  * stand where they are. A tree is a trunk and a crown, copies of one
  * geometry each, standing on the rendered surface; trunks are brown,
- * crowns green or in the look's `color`.
+ * crowns green or in the look's `color`. What stands at a spot is yours to
+ * decide: `plant`.
  */
 export class Trees extends FeatureLayer<TreeFeature> {
   declare readonly source: TreeSource
@@ -225,6 +264,7 @@ export class Trees extends FeatureLayer<TreeFeature> {
       material: options.material,
       highlightColor: options.highlightColor,
       minZoom: options.minZoom,
+      maxDistance: options.maxDistance,
       name: 'trees'
     })
     this.options = options
@@ -337,27 +377,52 @@ export class Trees extends FeatureLayer<TreeFeature> {
     ctx: TileContext<TreeFeature>,
     features: readonly TreeFeature[]
   ) {
+    const { plant: own, heights, maxPerTile, avoid, clearance } = this.options
     // nothing shows: the trees are planted when they do
-    if (!ctx.visible('crowns') && !ctx.visible('trunks')) return
+    if (!own && !ctx.visible('crowns') && !ctx.visible('trunks')) return
     const { tile, map } = ctx
     const { tileSize } = map.options
-    const { heights, maxPerTile, avoid, clearance } = this.options
-    const spacing =
-      typeof this.options.spacing === 'function'
-        ? this.options.spacing(tile.z)
-        : this.options.spacing
     const { trunk, crown } = treeShapes()
-    const trunks = ctx.instances('trunks', trunk)
-    const crowns = ctx.instances('crowns', crown)
     const wanted = new Set(features)
     const meters = Utils.tileWidth(map.geoLocation.lat, tile.z)
-    const cell = spacing / meters // map units
     const margin = clearance / meters
     const matrix = new Matrix4()
     const position = new Vector3()
     const scale = new Vector3()
     const rotation = new Quaternion()
+    let copies: Record<'trunks' | 'crowns', Copies> | undefined
     let count = 0
+
+    /** A trunk and a crown, `height` meters high. */
+    const tree = ({ x, y, z }: TreeSpot, height: number) => {
+      copies ??= {
+        trunks: ctx.instances('trunks', trunk),
+        crowns: ctx.instances('crowns', crown)
+      }
+      const crownHeight = height * CROWN_HEIGHT
+      // the trunk up into the crown
+      const trunkHeight = height - crownHeight * 0.6
+      matrix.compose(
+        position.set(x, y, z - FOUNDATION * ctx.zScale),
+        rotation,
+        scale.set(
+          height * TRUNK_RADIUS * ctx.unitsPerMeter,
+          height * TRUNK_RADIUS * ctx.unitsPerMeter,
+          (trunkHeight + FOUNDATION) * ctx.zScale
+        )
+      )
+      copies.trunks.add(matrix)
+      matrix.compose(
+        position.set(x, y, z + (height - crownHeight / 2) * ctx.zScale),
+        rotation,
+        scale.set(
+          height * CROWN_RADIUS * ctx.unitsPerMeter,
+          height * CROWN_RADIUS * ctx.unitsPerMeter,
+          (crownHeight / 2) * ctx.zScale
+        )
+      )
+      copies.crowns.add(matrix)
+    }
 
     const plant = (
       x: number,
@@ -370,32 +435,29 @@ export class Trees extends FeatureLayer<TreeFeature> {
       count++
       const lx = (x - tile.x - 0.5) * tileSize
       const ly = (0.5 - (y - tile.y)) * tileSize
-      const ground = ctx.groundAt(lx, ly)
-      const height =
+      const spot: TreeSpot = { x: lx, y: ly, z: ctx.groundAt(lx, ly), random }
+      const standard =
         feature.height ?? heights[0] + (heights[1] - heights[0]) * random
-      const crownHeight = height * CROWN_HEIGHT
-      // the trunk up into the crown
-      const trunkHeight = height - crownHeight * 0.6
-      matrix.compose(
-        position.set(lx, ly, ground - FOUNDATION * ctx.zScale),
-        rotation,
-        scale.set(
-          height * TRUNK_RADIUS * ctx.unitsPerMeter,
-          height * TRUNK_RADIUS * ctx.unitsPerMeter,
-          (trunkHeight + FOUNDATION) * ctx.zScale
-        )
-      )
-      trunks.add(matrix)
-      matrix.compose(
-        position.set(lx, ly, ground + (height - crownHeight / 2) * ctx.zScale),
-        rotation,
-        scale.set(
-          height * CROWN_RADIUS * ctx.unitsPerMeter,
-          height * CROWN_RADIUS * ctx.unitsPerMeter,
-          (crownHeight / 2) * ctx.zScale
-        )
-      )
-      crowns.add(matrix)
+      if (own) {
+        own(ctx, spot, feature, (height = standard) => {
+          tree(spot, height)
+        })
+      } else tree(spot, standard)
+    }
+
+    // a spot of a grid is planted once: by the first wood covering it
+    const claimed = new globalThis.Map<number, Set<number>>()
+    const claim = (cell: number, i: number, j: number) => {
+      let spots = claimed.get(cell)
+      if (!spots) claimed.set(cell, (spots = new Set()))
+      // the tile's spots, by their indices from just outside it
+      const stride = Math.ceil(1 / cell) + 4
+      const key =
+        (i - Math.floor(tile.x / cell) + 1) * stride +
+        (j - Math.floor(tile.y / cell) + 1)
+      if (spots.has(key)) return false
+      spots.add(key)
+      return true
     }
 
     for (const source of ctx.sources) {
@@ -411,6 +473,11 @@ export class Trees extends FeatureLayer<TreeFeature> {
       for (const feature of source.features) {
         if (!wanted.has(feature)) continue
         const { points, polygons } = this.mapUnits(feature)
+        const spacing =
+          typeof this.options.spacing === 'function'
+            ? this.options.spacing(tile.z, feature)
+            : this.options.spacing
+        const cell = spacing / meters // map units
         ctx.feature(feature, () => {
           for (const [i, [x, y]] of points.entries()) {
             if (within(x, y))
@@ -440,7 +507,7 @@ export class Trees extends FeatureLayer<TreeFeature> {
                 // a point jittered in its cell, the same for every tile
                 const x = (i + hash(i, j, 1)) * cell
                 const y = (j + hash(i, j, 2)) * cell
-                if (within(x, y) && inside(x, y, rows)) {
+                if (within(x, y) && inside(x, y, rows) && claim(cell, i, j)) {
                   plant(x, y, feature, hash(i, j, 3))
                 }
               }

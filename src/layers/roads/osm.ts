@@ -1,6 +1,7 @@
 // OpenStreetMap roads: tags → kind, width, bridge; Overpass API JSON → features.
 
 import { parseLength, type Position, toNumber } from '../features'
+import { overpassQl } from '../osm'
 import { type RoadAttributes, type RoadFeature, roadKind } from './features'
 
 /** Meters per lane, for roads with `lanes` and no `width`. */
@@ -70,17 +71,17 @@ export function roadsFromOverpass(response: unknown): RoadFeature[] {
   })
 }
 
-/** The Overpass QL query for the roads and railways in a bounding box. */
-export function overpassRoadsQuery([
-  west,
-  south,
-  east,
-  north
-]: readonly number[]) {
-  const bbox = `(${south},${west},${north},${east})`
-  return (
-    `[out:json][timeout:60];(` +
-    `way["highway"]${bbox};way["railway"~"^(${RAILWAYS})$"]${bbox};` +
-    `);out body geom qt;`
-  )
+/**
+ * The Overpass QL query for the roads and railways in a bounding box — and
+ * the elements of `more` selectors.
+ */
+export function overpassRoadsQuery(
+  bbox: readonly number[],
+  more: readonly string[] = []
+) {
+  return overpassQl(bbox, [
+    'way["highway"]',
+    `way["railway"~"^(${RAILWAYS})$"]`,
+    ...more
+  ])
 }

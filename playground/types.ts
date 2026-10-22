@@ -1,5 +1,6 @@
-import type { Camera } from 'three'
+import type { Camera, WebGLRenderer } from 'three'
 import type { MapControls } from 'three/addons/controls/MapControls.js'
+import type { WebGPURenderer } from 'three/webgpu'
 
 import type {
   BuildingId,
@@ -28,6 +29,7 @@ export interface Playground {
   revision: string
   /** `webgl`, `webgpu`, or `webgpu (webgl2 backend)` */
   backend: string
+  renderer: WebGLRenderer | WebGPURenderer
   camera: Camera
   /** Orbit controls; `undefined` in the top view. */
   controls: MapControls | undefined

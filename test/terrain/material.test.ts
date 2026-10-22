@@ -12,6 +12,7 @@ import {
   defaultMaterialOptions,
   loadQuadTexture
 } from '../../src'
+import { loadTextureGrid } from '../../src/terrain/texture'
 import {
   bitmaps,
   FakeOffscreenCanvas,
@@ -184,6 +185,39 @@ describe('loadQuadTexture', () => {
 
     expect(bitmaps).toHaveLength(3)
     for (const bitmap of bitmaps) expect(bitmap.close).toHaveBeenCalled()
+  })
+})
+
+describe('loadTextureGrid', () => {
+  it('stitches k × k tiles column by column, each from the north', async () => {
+    const urls = Array.from(
+      { length: 16 },
+      (_, i) => `${String(Math.floor(i / 4))}${String(i % 4)}`
+    )
+    await loadTextureGrid(urls)
+    const [canvas] = FakeOffscreenCanvas.instances
+
+    expect([canvas.width, canvas.height]).toEqual([1024, 1024])
+    expect(canvas.draws).toHaveLength(16)
+    // url `${column}${row}` lands in its cell
+    for (const { url, x, y } of canvas.draws as {
+      url: string
+      x: number
+      y: number
+    }[]) {
+      expect([x / 256, y / 256]).toEqual([Number(url[0]), Number(url[1])])
+    }
+  })
+
+  it('makes a texture of one tile', async () => {
+    const texture = await loadTextureGrid(['own'])
+
+    expect(texture.image).toBe(FakeOffscreenCanvas.instances[0])
+    expect([texture.image.width, texture.image.height]).toEqual([256, 256])
+  })
+
+  it('rejects a grid that is no square', async () => {
+    await expect(loadTextureGrid(['a', 'b'])).rejects.toThrow('no square')
   })
 })
 

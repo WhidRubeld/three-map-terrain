@@ -45,7 +45,9 @@ describe('cutPolygon', () => {
     // a rotated rectangle across many cells
     const polygon = [0.3, 1.2, 4.1, 0.4, 4.6, 2.7, 0.8, 3.5]
     const pieces: number[][] = []
-    cutPolygon(polygon, [0, 0, 8, 8], (piece) => pieces.push(piece))
+    cutPolygon(polygon, [0, 0, 8, 8], (piece, length) =>
+      pieces.push(Array.from(piece.subarray(0, length)))
+    )
 
     const area = pieces.reduce(
       (sum, piece) => sum + Math.abs(polygonArea(piece)),
@@ -74,13 +76,71 @@ describe('cutPolygon', () => {
   it('keeps only what lies in the rectangle', () => {
     const polygon = [-2, -2, 2, -2, 2, 2, -2, 2]
     const pieces: number[][] = []
-    cutPolygon(polygon, [0, 0, 1.5, 3], (piece) => pieces.push(piece))
+    cutPolygon(polygon, [0, 0, 1.5, 3], (piece, length) =>
+      pieces.push(Array.from(piece.subarray(0, length)))
+    )
 
     const area = pieces.reduce(
       (sum, piece) => sum + Math.abs(polygonArea(piece)),
       0
     )
     expect(area).toBeCloseTo(1.5 * 2, 9)
+  })
+})
+
+describe('cutPolygon, step by step', () => {
+  /** The cut as clipHalfPlane makes it: rect, row bands, cells, triangles. */
+  const reference = (
+    polygon: number[],
+    rect: [number, number, number, number]
+  ) => {
+    const pieces: number[][] = []
+    const clipped = clipToRect(polygon, rect)
+    if (clipped.length < 6) return pieces
+    const ys = clipped.filter((_, i) => i % 2 === 1)
+    for (let r = Math.floor(Math.min(...ys)); r < Math.max(...ys); r++) {
+      const band = clipHalfPlane(clipHalfPlane(clipped, 0, -1, -r), 0, 1, r + 1)
+      if (band.length < 6) continue
+      const xs = band.filter((_, i) => i % 2 === 0)
+      for (let c = Math.floor(Math.min(...xs)); c < Math.max(...xs); c++) {
+        const cell = clipHalfPlane(clipHalfPlane(band, -1, 0, -c), 1, 0, c + 1)
+        if (cell.length < 6) continue
+        for (const piece of [
+          clipHalfPlane(cell, 1, 1, c + r + 1),
+          clipHalfPlane(cell, -1, -1, -(c + r + 1))
+        ]) {
+          if (piece.length >= 6 && Math.abs(polygonArea(piece)) > 1e-9) {
+            pieces.push(piece)
+          }
+        }
+      }
+    }
+    return pieces
+  }
+
+  it('cuts exactly the pieces clipping one plane at a time cuts', () => {
+    let seed = 5
+    const next = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+    for (let k = 0; k < 200; k++) {
+      // a convex polygon: points on an ellipse, in order
+      const [cx, cy, rx, ry] = [
+        next() * 10,
+        next() * 10,
+        next() * 4,
+        next() * 4
+      ]
+      const count = 3 + Math.floor(next() * 8)
+      const polygon: number[] = []
+      for (let i = 0; i < count; i++) {
+        const angle = (2 * Math.PI * (i + next() * 0.5)) / count
+        polygon.push(cx + rx * Math.cos(angle), cy + ry * Math.sin(angle))
+      }
+      const pieces: number[][] = []
+      cutPolygon(polygon, [1, 2, 9, 8], (piece, length) =>
+        pieces.push(Array.from(piece.subarray(0, length)))
+      )
+      expect(pieces).toEqual(reference(polygon, [1, 2, 9, 8]))
+    }
   })
 })
 
