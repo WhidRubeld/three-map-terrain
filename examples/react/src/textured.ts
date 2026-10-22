@@ -63,7 +63,7 @@ const draped = {
   polygonOffsetUnits: -4
 }
 
-/** Materials by part, for `Buildings`, `Roads` and the bushes of `Trees`. */
+/** Materials by part, for `Buildings`, `Roads` and the bushes of `Vegetation`. */
 export const TEXTURED: Readonly<Record<string, Material>> = {
   surface: new MeshLambertMaterial({ map: asphalt, ...draped }),
   rails: new MeshLambertMaterial({ map: track, ...draped }),
@@ -71,7 +71,7 @@ export const TEXTURED: Readonly<Record<string, Material>> = {
   structure: new MeshLambertMaterial({ color: '#c8c2b6' }),
   walls: new MeshLambertMaterial({ map: facade }),
   roofs: new MeshLambertMaterial({ color: '#9a8f86' }),
-  shrubs: new MeshLambertMaterial({ color: '#7d8a48' }),
+  bushes: new MeshLambertMaterial({ color: '#7d8a48' }),
   // no outlines over the textures
   edges: new LineBasicMaterial({ visible: false })
 }

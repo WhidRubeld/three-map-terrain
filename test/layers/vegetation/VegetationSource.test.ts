@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
-  overpassTreesQuery,
-  shortbreadTreeProperties,
-  TreeSource
+  mapboxStreetsVegetationProperties,
+  openMapTilesVegetationProperties,
+  overpassVegetationQuery,
+  protomapsVegetationProperties,
+  shortbreadVegetationProperties,
+  VegetationSource
 } from '../../../src'
 import { encodeVectorTile } from '../../support/mvt-encoder'
 
@@ -32,8 +35,8 @@ const signal = new AbortController().signal
 const tile = { z: 14, x: 8530, y: 5766, signal }
 const square = [[10, 10, 100, 10, 100, 100, 10, 100]]
 
-describe('TreeSource', () => {
-  it('reads more than woods from a preset, with properties of yours', async () => {
+describe('VegetationSource', () => {
+  it('reads woods and scrub from a preset, more with properties of yours', async () => {
     loadArrayBuffer.mockResolvedValue(
       encodeVectorTile([
         {
@@ -41,31 +44,68 @@ describe('TreeSource', () => {
           features: [
             { type: 3, properties: { kind: 'forest' }, geometry: square },
             { type: 3, properties: { kind: 'scrub' }, geometry: square },
+            { type: 3, properties: { kind: 'heath' }, geometry: square },
             { type: 3, properties: { kind: 'grass' }, geometry: square }
           ]
         }
       ])
     )
-    const woods = new TreeSource({ api: 'versatiles' })
-    const more = new TreeSource({
+    const plain = new VegetationSource({ api: 'versatiles' })
+    const more = new VegetationSource({
       api: 'versatiles',
       properties: (p, layer) =>
-        p.kind === 'scrub'
-          ? { kind: 'scrub' }
-          : shortbreadTreeProperties(p, layer)
+        p.kind === 'heath'
+          ? { kind: 'heath' }
+          : shortbreadVegetationProperties(p, layer)
     })
 
-    expect((await woods.load(tile)).map((tree) => tree.kind)).toEqual([
-      'forest'
-    ])
-    expect((await more.load(tile)).map((tree) => tree.kind)).toEqual([
+    expect((await plain.load(tile)).map((plant) => plant.kind)).toEqual([
       'forest',
       'scrub'
     ])
-    expect(more.tiles).toBe(woods.tiles)
+    expect((await more.load(tile)).map((plant) => plant.kind)).toEqual([
+      'forest',
+      'scrub',
+      'heath'
+    ])
+    expect(more.tiles).toBe(plain.tiles)
   })
 
-  it('asks Overpass for more with a query of yours', async () => {
+  it('reads the scrub of every basemap schema', () => {
+    expect(
+      openMapTilesVegetationProperties(
+        { class: 'grass', subclass: 'shrubbery' },
+        'landcover'
+      )
+    ).toEqual({ kind: 'shrubbery', hidden: false })
+    expect(
+      openMapTilesVegetationProperties(
+        { class: 'grass', subclass: 'meadow' },
+        'landcover'
+      ).hidden
+    ).toBe(true)
+    // Mapbox's scrub takes in heaths: scrub all the same
+    expect(
+      mapboxStreetsVegetationProperties(
+        { class: 'scrub', type: 'heath' },
+        'landuse'
+      )
+    ).toEqual({ kind: 'scrub', hidden: false })
+    expect(
+      mapboxStreetsVegetationProperties(
+        { class: 'wood', type: 'forest' },
+        'landuse'
+      )
+    ).toEqual({ kind: 'forest', hidden: false })
+    expect(
+      protomapsVegetationProperties({ kind: 'scrub' }, 'landuse').hidden
+    ).toBe(false)
+    expect(
+      protomapsVegetationProperties({ kind: 'grass' }, 'landuse').hidden
+    ).toBe(true)
+  })
+
+  it('asks Overpass for scrub and shrubs, more with a query of yours', async () => {
     loadJson.mockResolvedValue({
       elements: [
         {
@@ -83,17 +123,14 @@ describe('TreeSource', () => {
         { type: 'node', id: 9, lat: 0.5, lon: 0.6, tags: { natural: 'tree' } }
       ]
     })
-    const source = new TreeSource({
+    const source = new VegetationSource({
       api: 'overpass',
-      endpoint: 'https://trees.test/overpass',
+      endpoint: 'https://plants.test/overpass',
       query: (bbox) =>
-        overpassTreesQuery(bbox, [
-          'way["natural"="scrub"]',
-          'node["natural"="shrub"]'
-        ])
+        overpassVegetationQuery(bbox, ['way["landuse"="orchard"]'])
     })
 
-    const trees = await source.load(tile)
+    const plants = await source.load(tile)
 
     const [, , options] = loadJson.mock.calls[0] as [
       string,
@@ -103,11 +140,12 @@ describe('TreeSource', () => {
     const query = options.body.get('data') ?? ''
     expect(query).toMatch(/^\[out:json\]/)
     expect(query).toContain('node["natural"="tree"](46.9')
-    expect(query).toContain('way["natural"="scrub"](46.9')
     expect(query).toContain('node["natural"="shrub"](46.9')
+    expect(query).toContain('way["natural"="scrub"](46.9')
+    expect(query).toContain('way["landuse"="orchard"](46.9')
     expect(query).toMatch(/out body geom qt;$/)
     // their kind: the natural tag
-    expect(trees).toMatchObject([
+    expect(plants).toMatchObject([
       { id: 'way/7', kind: 'scrub', geometry: { type: 'Polygon' } },
       { id: 'node/8', kind: 'shrub', geometry: { type: 'Point' } },
       { id: 'node/9', kind: 'tree', geometry: { type: 'Point' } }

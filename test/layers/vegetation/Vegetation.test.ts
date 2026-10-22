@@ -13,18 +13,20 @@ import {
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  BUSH_COLOR,
   CROWN_COLOR,
+  isBush,
   type MaterialOptions,
   Map,
+  type PlantSpot,
+  plantShapes,
   TRUNK_COLOR,
   type TileRequest,
-  type TreeFeature,
-  type TreeSpot,
-  Trees,
-  treeShapes,
-  treesFromOverpass,
-  treesFromVectorTile,
   Utils,
+  Vegetation,
+  type VegetationFeature,
+  vegetationFromOverpass,
+  vegetationFromVectorTile,
   Water,
   type WaterFeature
 } from '../../../src'
@@ -67,7 +69,12 @@ const lonLat = (fx: number, fy: number) => [
   Utils.tile2lat(center.y + fy, ZOOM)
 ]
 
-const wood = (x0: number, y0: number, x1: number, y1: number): TreeFeature => ({
+const wood = (
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number
+): VegetationFeature => ({
   id: `wood ${x0}`,
   geometry: {
     type: 'Polygon',
@@ -85,11 +92,11 @@ const wood = (x0: number, y0: number, x1: number, y1: number): TreeFeature => ({
 })
 
 const setup = async (
-  trees: TreeFeature[],
-  options: Partial<ConstructorParameters<typeof Trees>[0]> = {},
+  features: VegetationFeature[],
+  options: Partial<ConstructorParameters<typeof Vegetation>[0]> = {},
   material: Partial<MaterialOptions> = {}
 ) => {
-  const load = vi.fn((_tile: TileRequest) => Promise.resolve(trees))
+  const load = vi.fn((_tile: TileRequest) => Promise.resolve(features))
   const map = new Map({
     source: { api: 'eox' },
     location,
@@ -97,30 +104,33 @@ const setup = async (
     material
   })
   const layer = map.addLayer(
-    new Trees({ source: { load, minZoom: ZOOM, maxZoom: ZOOM }, ...options })
+    new Vegetation({
+      source: { load, minZoom: ZOOM, maxZoom: ZOOM },
+      ...options
+    })
   )
   await map.init()
   await layer.whenReady()
   return { map, layer }
 }
 
-const copies = (layer: Trees, part: string) =>
+const copies = (layer: Vegetation, part: string) =>
   layer.group.children.filter(
     (object) =>
-      object.name.startsWith(`trees ${part} `) &&
+      object.name.startsWith(`vegetation ${part} `) &&
       !object.name.endsWith('outline')
   ) as InstancedMesh<
     InstancedMesh['geometry'],
     MeshLambertMaterial | MeshBasicMaterial
   >[]
 
-const outlines = (layer: Trees) =>
+const outlines = (layer: Vegetation) =>
   layer.group.children.filter((object) =>
     object.name.endsWith(' outline')
   ) as InstancedMesh<InstancedMesh['geometry'], MeshBasicMaterial>[]
 
 /** Where every copy stands, in map.terrain coordinates. */
-const positions = (layer: Trees, part: string) => {
+const positions = (layer: Vegetation, part: string) => {
   const matrix = new Matrix4()
   return copies(layer, part).flatMap((mesh) =>
     Array.from({ length: mesh.count }, (_, i) => {
@@ -137,8 +147,8 @@ const inTiles = (map: Map, point: Vector3) => {
   return { x: f.x - center.x, y: f.y - center.y }
 }
 
-/** A bush: the crown, 1.5 m around, at the spot. */
-const bush = (ctx: { unitsPerMeter: number }, spot: TreeSpot) => {
+/** A palm of yours: the crown, 1.5 m around, at the spot. */
+const palm = (ctx: { unitsPerMeter: number }, spot: PlantSpot) => {
   const r = 1.5 * ctx.unitsPerMeter
   return new Matrix4().compose(
     new Vector3(spot.x, spot.y, spot.z),
@@ -147,7 +157,7 @@ const bush = (ctx: { unitsPerMeter: number }, spot: TreeSpot) => {
   )
 }
 
-describe('Trees', () => {
+describe('Vegetation', () => {
   it('fills a wood with trees standing on the terrain, never twice at tile edges', async () => {
     // across the center tile and its eastern neighbour
     const { map, layer } = await setup([wood(0.7, 0.3, 1.3, 0.5)], {
@@ -189,7 +199,7 @@ describe('Trees', () => {
   })
 
   it('stands single trees where they are, as high as they are', async () => {
-    const tree: TreeFeature = {
+    const tree: VegetationFeature = {
       geometry: { type: 'Point', coordinates: lonLat(0.5, 0.5) },
       height: 20,
       properties: {}
@@ -286,7 +296,7 @@ describe('Trees', () => {
     )
     const [crowns] = copies(layer, 'crowns')
     const crownOutlines = outlines(layer).filter((outline) =>
-      outline.name.startsWith('trees crowns ')
+      outline.name.startsWith('vegetation crowns ')
     )
 
     expect(crowns.material.transparent).toBe(true)
@@ -313,9 +323,62 @@ describe('Trees', () => {
     expect(copies(layer, 'trunks')[0].count).toBe(50)
   })
 
+  it('thins a capped tile evenly, never cuts it at a row', async () => {
+    const { map, layer } = await setup([wood(0.1, 0.1, 0.9, 0.9)], {
+      maxPerTile: 400
+    })
+    const trees = positions(layer, 'trunks').map((p) => inTiles(map, p))
+    const share = (inside: (p: { x: number; y: number }) => boolean) =>
+      trees.filter(inside).length / trees.length
+
+    expect(trees).toHaveLength(400)
+    // as many in each half of the wood as in the other
+    expect(share(({ y }) => y > 0.5)).toBeGreaterThan(0.4)
+    expect(share(({ y }) => y > 0.5)).toBeLessThan(0.6)
+    expect(share(({ x }) => x > 0.5)).toBeGreaterThan(0.4)
+    expect(share(({ x }) => x > 0.5)).toBeLessThan(0.6)
+  })
+
+  it('keeps trees in every wood of a capped tile', async () => {
+    const { map, layer } = await setup(
+      [wood(0.1, 0.1, 0.9, 0.45), wood(0.1, 0.55, 0.9, 0.9)],
+      { maxPerTile: 400 }
+    )
+    const trees = positions(layer, 'trunks').map((p) => inTiles(map, p))
+    const south = trees.filter(({ y }) => y > 0.5).length
+
+    expect(trees).toHaveLength(400)
+    expect(south / trees.length).toBeGreaterThan(0.4)
+    expect(south / trees.length).toBeLessThan(0.6)
+  })
+
+  it('plants the same trees every time a capped tile is drawn', async () => {
+    const { layer } = await setup([wood(0.1, 0.1, 0.9, 0.9)], {
+      maxPerTile: 400
+    })
+    const before = positions(layer, 'crowns').map((p) => p.toArray().join())
+
+    layer.invalidate()
+    await layer.whenReady()
+
+    expect(positions(layer, 'crowns').map((p) => p.toArray().join())).toEqual(
+      before
+    )
+  })
+
+  it('plants every spot of a tile up to the cap, as without one', async () => {
+    const trees = [wood(0.2, 0.2, 0.5, 0.5)]
+    const all = positions((await setup(trees)).layer, 'trunks')
+    const at = (await setup(trees, { maxPerTile: all.length })).layer
+    const below = (await setup(trees, { maxPerTile: all.length - 1 })).layer
+
+    expect(positions(at, 'trunks')).toEqual(all)
+    expect(positions(below, 'trunks')).toHaveLength(all.length - 1)
+  })
+
   it('picks the wood of a tree, and highlights its trees', async () => {
     const forest = wood(0.2, 0.2, 0.5, 0.5)
-    const tree: TreeFeature = {
+    const tree: VegetationFeature = {
       id: 'single',
       geometry: { type: 'Point', coordinates: lonLat(0.8, 0.8) },
       properties: {}
@@ -369,30 +432,106 @@ describe('Trees', () => {
     expect(disposeShape).not.toHaveBeenCalled()
   })
 
-  it('plants what you decide at each spot: bushes in scrub, trees in woods', async () => {
-    const forest: TreeFeature = { ...wood(0.1, 0.1, 0.4, 0.4), kind: 'forest' }
-    const scrub: TreeFeature = { ...wood(0.6, 0.6, 0.9, 0.9), kind: 'scrub' }
-    const spots: TreeSpot[] = []
-    const { map, layer } = await setup([forest, scrub], {
-      plant(ctx, spot, feature, tree) {
-        if (feature.kind !== 'scrub') {
+  it('grows bushes in scrub and trees in woods, denser', async () => {
+    const forest: VegetationFeature = {
+      ...wood(0.1, 0.1, 0.4, 0.4),
+      kind: 'forest'
+    }
+    const scrub: VegetationFeature = {
+      ...wood(0.6, 0.6, 0.9, 0.9),
+      id: 'scrub',
+      kind: 'scrub'
+    }
+    const { map, layer } = await setup([forest, scrub])
+    const [bushes] = copies(layer, 'bushes')
+    const inside = (
+      { x, y }: { x: number; y: number },
+      [x0, y0, x1, y1]: number[]
+    ) => x > x0 && x < x1 && y > y0 && y < y1
+
+    // 9 m between trees, 5 between bushes: (9 / 5)² as many
+    const trees = positions(layer, 'trunks').length
+    expect(bushes.count / trees).toBeGreaterThan(2.8)
+    expect(bushes.count / trees).toBeLessThan(3.7)
+    expect(bushes.material.color.getHexString()).toBe(
+      new Color(BUSH_COLOR).getHexString()
+    )
+    for (const p of positions(layer, 'crowns')) {
+      expect(inside(inTiles(map, p), [0.1, 0.1, 0.4, 0.4])).toBe(true)
+    }
+    // in the scrub, from just below the ground up to 2–4 m
+    const matrix = new Matrix4()
+    for (let i = 0; i < bushes.count; i++) {
+      bushes.getMatrixAt(i, matrix)
+      const p = new Vector3().setFromMatrixPosition(matrix).add(bushes.position)
+      const half = new Vector3().setFromMatrixScale(matrix).z
+      expect(inside(inTiles(map, p), [0.6, 0.6, 0.9, 0.9])).toBe(true)
+      const ground =
+        map.getTerrainPositionSync(map.getLocation(p), { loadTile: false })
+          ?.z ?? NaN
+      const [bottom, top] = [p.z - half, p.z + half].map(
+        (z) => (z - ground) / map.options.zScale
+      )
+      expect(bottom).toBeLessThan(0)
+      expect(bottom).toBeCloseTo(-0.1 * top, 2)
+      expect(top).toBeGreaterThan(1.99)
+      expect(top).toBeLessThan(4.01)
+    }
+
+    // a bush is picked as its scrub
+    const [position] = positions(layer, 'bushes')
+    map.terrain.updateMatrixWorld(true)
+    const raycaster = new Raycaster(
+      map.terrain.localToWorld(position.clone().setZ(1e6)),
+      new Vector3(0, 0, -1)
+    )
+    expect(layer.pick(raycaster)?.feature).toBe(scrub)
+  })
+
+  it('stands single bushes and trees where they are', async () => {
+    const at = (fx: number, kind: string): VegetationFeature => ({
+      kind,
+      geometry: { type: 'Point', coordinates: lonLat(fx, 0.5) },
+      properties: {}
+    })
+    const { layer } = await setup([at(0.3, 'shrub'), at(0.7, 'tree')])
+
+    expect(copies(layer, 'bushes')[0].count).toBe(1)
+    expect(copies(layer, 'crowns')[0].count).toBe(1)
+    expect(isBush(at(0, 'shrubbery'))).toBe(true)
+    expect(isBush(at(0, 'heath'))).toBe(false)
+  })
+
+  it('plants what you decide at each spot: copies of yours, trees', async () => {
+    const forest: VegetationFeature = {
+      ...wood(0.1, 0.1, 0.4, 0.4),
+      kind: 'forest'
+    }
+    const beach: VegetationFeature = {
+      ...wood(0.6, 0.6, 0.9, 0.9),
+      kind: 'beach'
+    }
+    const spots: PlantSpot[] = []
+    const { map, layer } = await setup([forest, beach], {
+      plant(ctx, spot, feature, { tree }) {
+        if (feature.kind !== 'beach') {
           tree()
           return
         }
         spots.push(spot)
-        ctx.instances('shrubs', treeShapes().crown).add(bush(ctx, spot))
+        ctx.instances('palms', plantShapes().crown).add(palm(ctx, spot))
       }
     })
-    const [shrubs] = copies(layer, 'shrubs')
+    const [palms] = copies(layer, 'palms')
 
     expect(spots.length).toBeGreaterThan(100)
-    expect(shrubs.count).toBe(spots.length)
-    // in the trees' green, unless a material of yours
-    expect(shrubs.material.color.getHexString()).toBe(
+    expect(palms.count).toBe(spots.length)
+    // in the crowns' green, unless a material of yours
+    expect(palms.material.color.getHexString()).toBe(
       new Color(CROWN_COLOR).getHexString()
     )
-    // the bushes in the scrub, on the ground; the trees in the wood
-    for (const p of positions(layer, 'shrubs')) {
+    // the palms on the beach, on the ground; the trees in the wood
+    for (const p of positions(layer, 'palms')) {
       const { x, y } = inTiles(map, p)
       expect(x > 0.6 && x < 0.9 && y > 0.6 && y < 0.9).toBe(true)
       const surface = map.getTerrainPositionSync(map.getLocation(p), {
@@ -405,56 +544,69 @@ describe('Trees', () => {
       expect(x > 0.1 && x < 0.4 && y > 0.1 && y < 0.4).toBe(true)
     }
 
-    // a bush is picked as its scrub
-    const [position] = positions(layer, 'shrubs')
+    // a palm is picked as its beach
+    const [position] = positions(layer, 'palms')
     map.terrain.updateMatrixWorld(true)
     const raycaster = new Raycaster(
       map.terrain.localToWorld(position.clone().setZ(1e6)),
       new Vector3(0, 0, -1)
     )
-    expect(layer.pick(raycaster)?.feature).toBe(scrub)
+    expect(layer.pick(raycaster)?.feature).toBe(beach)
   })
 
-  it('stands trees as high as you ask, or nothing', async () => {
-    const at = (fx: number, kind: string): TreeFeature => ({
+  it('stands plants as high as you ask, or nothing', async () => {
+    const at = (fx: number, kind: string): VegetationFeature => ({
       kind,
       geometry: { type: 'Point', coordinates: lonLat(fx, 0.5) },
       height: 20,
       properties: {}
     })
-    const { map, layer } = await setup([at(0.3, 'tree'), at(0.7, 'stump')], {
-      plant(_ctx, _spot, feature, tree) {
-        if (feature.kind === 'tree') tree(4)
+    const { map, layer } = await setup(
+      [at(0.2, 'tree'), at(0.5, 'heath'), at(0.8, 'stump')],
+      {
+        plant(_ctx, _spot, feature, { tree, bush }) {
+          if (feature.kind === 'tree') tree(4)
+          if (feature.kind === 'heath') bush(1)
+        }
       }
-    })
-    const [crown] = copies(layer, 'crowns')
-    const matrix = new Matrix4()
-    crown.getMatrixAt(0, matrix)
-    const scale = new Vector3().setFromMatrixScale(matrix)
+    )
+    const half = (part: string) => {
+      const [mesh] = copies(layer, part)
+      expect(mesh.count).toBe(1)
+      const matrix = new Matrix4()
+      mesh.getMatrixAt(0, matrix)
+      return new Vector3().setFromMatrixScale(matrix).z / map.options.zScale
+    }
 
-    expect(crown.count).toBe(1)
-    expect(scale.z / map.options.zScale).toBeCloseTo(4 * 0.62 * 0.5, 6)
+    expect(half('crowns')).toBeCloseTo(4 * 0.62 * 0.5, 6)
+    expect(half('bushes')).toBeCloseTo(1.1 * 0.5, 6)
   })
 
   it('plants your parts while the trees are hidden', async () => {
     const hidden = new MeshStandardMaterial({ visible: false })
     const { layer } = await setup([wood(0.2, 0.2, 0.5, 0.5)], {
-      material: (part) => (part === 'shrubs' ? undefined : hidden),
-      plant(ctx, spot, _feature, tree) {
+      material: (part) => (part === 'palms' ? undefined : hidden),
+      plant(ctx, spot, _feature, { tree }) {
         tree()
-        ctx.instances('shrubs', treeShapes().crown).add(bush(ctx, spot))
+        ctx.instances('palms', plantShapes().crown).add(palm(ctx, spot))
       }
     })
 
     expect(copies(layer, 'crowns')).toEqual([])
-    expect(copies(layer, 'shrubs')[0].count).toBeGreaterThan(100)
+    expect(copies(layer, 'palms')[0].count).toBeGreaterThan(100)
   })
 
-  it('spaces every wood by its own spacing', async () => {
-    const scrub: TreeFeature = { ...wood(0.1, 0.1, 0.4, 0.4), kind: 'scrub' }
-    const forest: TreeFeature = { ...wood(0.6, 0.6, 0.9, 0.9), kind: 'forest' }
-    const { map, layer } = await setup([scrub, forest], {
-      spacing: (_zoom, feature) => (feature.kind === 'scrub' ? 5 : 10)
+  it('spaces every area by its own spacing', async () => {
+    const orchard: VegetationFeature = {
+      ...wood(0.1, 0.1, 0.4, 0.4),
+      kind: 'orchard'
+    }
+    const forest: VegetationFeature = {
+      ...wood(0.6, 0.6, 0.9, 0.9),
+      kind: 'forest'
+    }
+    const { map, layer } = await setup([orchard, forest], {
+      spacing: (_zoom, feature) => (feature.kind === 'orchard' ? 5 : 10)
     })
     const xs = positions(layer, 'trunks').map((p) => inTiles(map, p).x)
     const dense = xs.filter((x) => x < 0.5).length
@@ -470,13 +622,13 @@ describe('Trees', () => {
       wood(0.2, 0.2, 0.6, 0.6),
       { ...wood(0.2, 0.2, 0.6, 0.6), id: 'forest', kind: 'forest' }
     ])
-    const keys = (layer: Trees) =>
+    const keys = (layer: Vegetation) =>
       positions(layer, 'trunks').map((p) => p.toArray().join())
 
     expect(keys(both.layer)).toEqual(keys(one.layer))
   })
 
-  it('reads woods from vector tiles and trees from Overpass', async () => {
+  it('reads woods and scrub from vector tiles, single plants from Overpass', async () => {
     const data = encodeVectorTile([
       {
         name: 'landcover',
@@ -488,18 +640,30 @@ describe('Trees', () => {
           },
           {
             type: 3,
-            properties: { class: 'grass' },
+            properties: { class: 'grass', subclass: 'scrub' },
+            geometry: [[0, 0, 100, 0, 100, 100, 0, 100]]
+          },
+          {
+            type: 3,
+            properties: { class: 'grass', subclass: 'meadow' },
             geometry: [[0, 0, 100, 0, 100, 100, 0, 100]]
           }
         ]
       }
     ])
     expect(
-      await treesFromVectorTile(data, { z: ZOOM, x: center.x, y: center.y })
-    ).toMatchObject([{ kind: 'forest', geometry: { type: 'Polygon' } }])
+      await vegetationFromVectorTile(data, {
+        z: ZOOM,
+        x: center.x,
+        y: center.y
+      })
+    ).toMatchObject([
+      { kind: 'forest', geometry: { type: 'Polygon' } },
+      { kind: 'scrub', geometry: { type: 'Polygon' } }
+    ])
 
     expect(
-      treesFromOverpass({
+      vegetationFromOverpass({
         elements: [
           {
             type: 'node',
@@ -507,20 +671,29 @@ describe('Trees', () => {
             lat: 46.5,
             lon: 6.6,
             tags: { natural: 'tree', height: '12 m' }
+          },
+          {
+            type: 'node',
+            id: 2,
+            lat: 46.5,
+            lon: 6.7,
+            tags: { natural: 'shrub' }
           }
         ]
       })
     ).toMatchObject([
       {
         id: 'node/1',
+        kind: 'tree',
         height: 12,
         geometry: { type: 'Point', coordinates: [6.6, 46.5] }
-      }
+      },
+      { id: 'node/2', kind: 'shrub' }
     ])
   })
 })
 
-describe('Trees clear of other layers', () => {
+describe('Vegetation clear of other layers', () => {
   // a wood across the center tile, a river through its middle
   const forest = wood(0.1, 0.1, 0.9, 0.9)
   const river: WaterFeature = {
@@ -532,7 +705,7 @@ describe('Trees clear of other layers', () => {
     properties: {}
   }
 
-  const plant = (waterLate: boolean) => {
+  const plant = (waterLate: boolean, maxPerTile = Infinity) => {
     // every tile's water waits
     const waiting: (() => void)[] = []
     const drawn: string[] = []
@@ -557,7 +730,7 @@ describe('Trees clear of other layers', () => {
       })
     )
     const trees = map.addLayer(
-      new Trees({
+      new Vegetation({
         source: {
           minZoom: ZOOM,
           maxZoom: ZOOM,
@@ -566,6 +739,7 @@ describe('Trees clear of other layers', () => {
         },
         avoid: [water],
         clearance: 5,
+        maxPerTile,
         build(ctx, draw) {
           drawn.push(ctx.tile.key())
           draw()
@@ -583,7 +757,7 @@ describe('Trees clear of other layers', () => {
     }
   }
 
-  const across = (map: Map, trees: Trees) => {
+  const across = (map: Map, trees: Vegetation) => {
     const meters = Utils.tileWidth(location.lat, ZOOM)
     const tile = map.tileCache[Utils.getTileKey(ZOOM, center.x, center.y)]
     const { tileSize } = map.options
@@ -601,6 +775,19 @@ describe('Trees clear of other layers', () => {
     expect(distances.length).toBeGreaterThan(100)
     // half the river (20 m) and the clearance (5 m)
     expect(Math.min(...distances)).toBeGreaterThanOrEqual(25 - 1e-6)
+  })
+
+  it('fills the cap of a tile clear of the water, over the whole wood', async () => {
+    const { map, trees } = plant(false, 300)
+    await map.init()
+    await map.whenReady()
+    const spots = positions(trees, 'trunks').map((p) => inTiles(map, p))
+    const south = spots.filter(({ y }) => y > 0.5).length
+
+    expect(spots).toHaveLength(300)
+    expect(Math.min(...across(map, trees))).toBeGreaterThanOrEqual(25 - 1e-6)
+    expect(south / spots.length).toBeGreaterThan(0.4)
+    expect(south / spots.length).toBeLessThan(0.6)
   })
 
   it('plants once the water has arrived, and once only', async () => {

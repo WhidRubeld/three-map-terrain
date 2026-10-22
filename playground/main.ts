@@ -30,9 +30,9 @@ import {
   type RoadSourceProps,
   Roads,
   type SourceProps,
-  type TreeSourceProps,
-  Trees,
   Utils,
+  Vegetation,
+  type VegetationSourceProps,
   Water,
   type WaterSourceProps
 } from '../src'
@@ -48,7 +48,7 @@ const elevationApi = (params.get('elevation') ?? 'aws') as ElevationApi
 const buildingsApi = params.get('buildings')
 const roadsApi = params.get('roads')
 const waterApi = params.get('water')
-const treesApi = params.get('trees')
+const vegetationApi = params.get('vegetation')
 // for the presets that need one (mapbox, maptiler, protomaps)
 const token = params.get('token') ?? ''
 const nTiles = Number(params.get('nTiles') ?? 3)
@@ -205,10 +205,10 @@ const water = waterApi
     )
   : undefined
 // clear of the water, roads and buildings shown
-const trees = treesApi
+const vegetation = vegetationApi
   ? map.addLayer(
-      new Trees({
-        source: { api: treesApi, token } as TreeSourceProps,
+      new Vegetation({
+        source: { api: vegetationApi, token } as VegetationSourceProps,
         avoid: [water, roads, buildings].filter((layer) => layer !== undefined),
         maxDistance
       })
@@ -356,7 +356,7 @@ const status = [
     : []),
   ...(roadsApi ? [`roads ${roadsApi}`] : []),
   ...(waterApi ? [`water ${waterApi}`] : []),
-  ...(treesApi ? [`trees ${treesApi}`] : []),
+  ...(vegetationApi ? [`vegetation ${vegetationApi}`] : []),
   ...(grid ? [`grid ${String(gridParam)}`] : []),
   ...(lod > 0 ? [`lod z${zoom}/z${zoom - lod}`] : []),
   ...(skirt > 0 ? [`skirt ${skirt} m`] : []),
@@ -441,7 +441,7 @@ const playground: Playground = {
   buildings,
   roads,
   water,
-  trees,
+  vegetation,
   renderer,
   camera,
   controls,

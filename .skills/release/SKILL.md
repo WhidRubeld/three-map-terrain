@@ -20,7 +20,8 @@ updated on npmjs.com.
 Compare with the last tag (`git describe --tags --abbrev=0`, `git log <tag>..HEAD`).
 
 - **major** — changed/removed public exports, changed behaviour of `Map`,
-  `Tile`, `Source`, `Utils`, `QuadTextureMaterial`, or raised the `three` peer floor;
+  `Tile`, `Source`, `Utils`, `QuadTextureMaterial`, or raised the `three` peer floor
+  (while the library has no users, a minor — see AGENTS.md);
 - **minor** — new options/exports, backwards compatible;
 - **patch** — fixes only.
 
@@ -46,8 +47,8 @@ After the PR is merged to `master`:
 gh release create v<version> --target master --title "v<version>" --notes-file <notes.md>
 ```
 
-`--target master` creates the tag on GitHub's `master`. For a major, start the
-notes with the breaking changes and link the README's upgrade section;
+`--target master` creates the tag on GitHub's `master`. When anything breaks,
+start the notes with the breaking changes (renames: old → new);
 `--generate-notes` alone only lists the commits.
 
 Then watch the workflow: `gh run watch` and confirm

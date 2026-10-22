@@ -10,7 +10,7 @@ import type {
   RoadId,
   RoadKind,
   Roads,
-  Trees,
+  Vegetation,
   Water
 } from '../src'
 
@@ -25,8 +25,8 @@ export interface Playground {
   roads: Roads | undefined
   /** The water layer (`?water=…`). */
   water: Water | undefined
-  /** The trees layer (`?trees=…`). */
-  trees: Trees | undefined
+  /** The vegetation layer (`?vegetation=…`). */
+  vegetation: Vegetation | undefined
   /** three.js `REVISION` actually loaded */
   revision: string
   /** `webgl`, `webgpu`, or `webgpu (webgl2 backend)` */
