@@ -416,7 +416,12 @@ depends on the published package. After a release, bump it there.
   of 20 triangles with a sphere's normals) shared by every layer, white
   `color` attributes, sized by its height (crown 62 % of it, radius 24 %);
   the colors are the parts' materials (`partColor`), copies have no
-  `instanceColor`; `maxPerTile` caps a tile. Nothing is planted while both
+  `instanceColor`. A tile's spots are collected first (one reused
+  `Float64Array`: x, y, `random`, rank); over `maxPerTile` those of the
+  lowest rank (`hash(i, j, 4)`, independent of `random`; a counting sort)
+  are planted, `avoid` asked in that order up to the cap — thinned evenly,
+  the same every draw, never cut at a row or a wood; under it every spot.
+  Nothing is planted while both
   parts are hidden (`ctx.visible`) — unless `plant` is given: the layer
   decides where (grid, `avoid`, clipping, cap), `plant(ctx, spot, feature,
 tree)` what stands there — `tree(height?)` (the trunk and crown, their

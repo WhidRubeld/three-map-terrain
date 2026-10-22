@@ -72,7 +72,13 @@ export interface TreesOptions {
   spacing: number | ((zoom: number, feature: TreeFeature) => number)
   /** Meters high, from the lowest to the highest, for trees without a height. */
   heights: readonly [low: number, high: number]
-  /** At most this many trees on a terrain tile. */
+  /**
+   * At most this many trees on a terrain tile. A tile with more spots is
+   * thinned evenly — every wood keeps the same share of its spots, spread
+   * over all of it, the same each time it is drawn: sparser woods, never
+   * cut ones. The share is the tile's, so a thinned tile is sparser than an
+   * unthinned neighbour; a wider `spacing` keeps tiles under it.
+   */
   maxPerTile: number
   /** Color `highlight()` uses by default. */
   highlightColor: ColorRepresentation
@@ -228,6 +234,15 @@ function inside(x: number, y: number, rows: Rows) {
 
 /** Copies of a shape in a part, as `ctx.instances()` adds them. */
 type Copies = ReturnType<TileContext<TreeFeature>['instances']>
+
+/** Ranks of the spots, for the cap: the buckets of a counting sort. */
+const RANKS = 4096
+
+/**
+ * The spots of the tile being drawn, 4 numbers each: `x`, `y` (map units),
+ * `random` and rank. Reused by every draw, grown as needed.
+ */
+let spots = new Float64Array(4 * 4096)
 
 /** A feature in map units (tiles at the map's zoom): its points and polygons. */
 interface Prepared {
@@ -391,7 +406,6 @@ export class Trees extends FeatureLayer<TreeFeature> {
     const scale = new Vector3()
     const rotation = new Quaternion()
     let copies: Record<'trunks' | 'crowns', Copies> | undefined
-    let count = 0
 
     /** A trunk and a crown, `height` meters high. */
     const tree = ({ x, y, z }: TreeSpot, height: number) => {
@@ -424,17 +438,11 @@ export class Trees extends FeatureLayer<TreeFeature> {
       copies.crowns.add(matrix)
     }
 
-    const plant = (
-      x: number,
-      y: number,
-      feature: TreeFeature,
-      random: number
-    ) => {
-      if (count >= maxPerTile) return
-      if (avoid.some((layer) => layer.covers(x, y, margin))) return
-      count++
-      const lx = (x - tile.x - 0.5) * tileSize
-      const ly = (0.5 - (y - tile.y)) * tileSize
+    /** What stands at spot `k`, of `feature`. */
+    const plant = (k: number, feature: TreeFeature) => {
+      const lx = (spots[4 * k] - tile.x - 0.5) * tileSize
+      const ly = (0.5 - (spots[4 * k + 1] - tile.y)) * tileSize
+      const random = spots[4 * k + 2]
       const spot: TreeSpot = { x: lx, y: ly, z: ctx.groundAt(lx, ly), random }
       const standard =
         feature.height ?? heights[0] + (heights[1] - heights[0]) * random
@@ -445,18 +453,34 @@ export class Trees extends FeatureLayer<TreeFeature> {
       } else tree(spot, standard)
     }
 
+    // the tile's spots, wood after wood; `ends`: where each wood's spots end
+    let count = 0
+    const ends: [TreeFeature, number][] = []
+    const offer = (x: number, y: number, random: number, rank: number) => {
+      if (4 * count === spots.length) {
+        const grown = new Float64Array(2 * spots.length)
+        grown.set(spots)
+        spots = grown
+      }
+      const k = 4 * count++
+      spots[k] = x
+      spots[k + 1] = y
+      spots[k + 2] = random
+      spots[k + 3] = Math.floor(rank * RANKS)
+    }
+
     // a spot of a grid is planted once: by the first wood covering it
-    const claimed = new globalThis.Map<number, Set<number>>()
+    const claimed = new globalThis.Map<number, Uint8Array>()
     const claim = (cell: number, i: number, j: number) => {
-      let spots = claimed.get(cell)
-      if (!spots) claimed.set(cell, (spots = new Set()))
       // the tile's spots, by their indices from just outside it
       const stride = Math.ceil(1 / cell) + 4
+      let taken = claimed.get(cell)
+      if (!taken) claimed.set(cell, (taken = new Uint8Array(stride * stride)))
       const key =
         (i - Math.floor(tile.x / cell) + 1) * stride +
         (j - Math.floor(tile.y / cell) + 1)
-      if (spots.has(key)) return false
-      spots.add(key)
+      if (taken[key]) return false
+      taken[key] = 1
       return true
     }
 
@@ -478,43 +502,73 @@ export class Trees extends FeatureLayer<TreeFeature> {
             ? this.options.spacing(tile.z, feature)
             : this.options.spacing
         const cell = spacing / meters // map units
-        ctx.feature(feature, () => {
-          for (const [i, [x, y]] of points.entries()) {
-            if (within(x, y))
-              plant(
-                x,
-                y,
-                feature,
-                hash(Math.floor(x / cell), Math.floor(y / cell), i)
-              )
+        for (const [i, [x, y]] of points.entries()) {
+          if (within(x, y)) {
+            const [ci, cj] = [Math.floor(x / cell), Math.floor(y / cell)]
+            offer(x, y, hash(ci, cj, i), hash(ci, cj, -1 - i))
           }
-          for (const polygon of polygons) {
-            const { rings, bbox } = polygon
-            if (polygon.rows?.cell !== cell) {
-              polygon.rows = rowsOf(rings, bbox, cell)
-            }
-            const { rows } = polygon
-            const [i0, j0] = [
-              Math.floor(Math.max(bbox[0], minX) / cell),
-              Math.floor(Math.max(bbox[1], minY) / cell)
-            ]
-            const [i1, j1] = [
-              Math.ceil(Math.min(bbox[2], maxX) / cell),
-              Math.ceil(Math.min(bbox[3], maxY) / cell)
-            ]
-            for (let j = j0; j < j1 && count < maxPerTile; j++) {
-              for (let i = i0; i < i1; i++) {
-                // a point jittered in its cell, the same for every tile
-                const x = (i + hash(i, j, 1)) * cell
-                const y = (j + hash(i, j, 2)) * cell
-                if (within(x, y) && inside(x, y, rows) && claim(cell, i, j)) {
-                  plant(x, y, feature, hash(i, j, 3))
-                }
+        }
+        for (const polygon of polygons) {
+          const { rings, bbox } = polygon
+          if (polygon.rows?.cell !== cell) {
+            polygon.rows = rowsOf(rings, bbox, cell)
+          }
+          const { rows } = polygon
+          const [i0, j0] = [
+            Math.floor(Math.max(bbox[0], minX) / cell),
+            Math.floor(Math.max(bbox[1], minY) / cell)
+          ]
+          const [i1, j1] = [
+            Math.ceil(Math.min(bbox[2], maxX) / cell),
+            Math.ceil(Math.min(bbox[3], maxY) / cell)
+          ]
+          for (let j = j0; j < j1; j++) {
+            for (let i = i0; i < i1; i++) {
+              // a point jittered in its cell, the same for every tile
+              const x = (i + hash(i, j, 1)) * cell
+              const y = (j + hash(i, j, 2)) * cell
+              if (within(x, y) && inside(x, y, rows) && claim(cell, i, j)) {
+                offer(x, y, hash(i, j, 3), hash(i, j, 4))
               }
             }
           }
-        })
+        }
+        ends.push([feature, count])
       }
+    }
+
+    const clear = (k: number) =>
+      !avoid.some((layer) =>
+        layer.covers(spots[4 * k], spots[4 * k + 1], margin)
+      )
+
+    // over the cap, the spots of the lowest ranks: every wood keeps the same
+    // share of its spots, spread over all of it — never the first rows or woods
+    let chosen: Uint8Array | undefined
+    if (count > maxPerTile) {
+      chosen = new Uint8Array(count)
+      // the spots by rank (a counting sort), in their order within one
+      const starts = new Uint32Array(RANKS + 1)
+      for (let k = 0; k < count; k++) starts[spots[4 * k + 3] + 1]++
+      for (let r = 1; r <= RANKS; r++) starts[r] += starts[r - 1]
+      const order = new Uint32Array(count)
+      for (let k = 0; k < count; k++) order[starts[spots[4 * k + 3]]++] = k
+      for (let r = 0, planted = 0; r < count && planted < maxPerTile; r++) {
+        if (clear(order[r])) {
+          chosen[order[r]] = 1
+          planted++
+        }
+      }
+    }
+
+    let start = 0
+    for (const [feature, end] of ends) {
+      ctx.feature(feature, () => {
+        for (let k = start; k < end; k++) {
+          if (chosen ? chosen[k] : clear(k)) plant(k, feature)
+        }
+      })
+      start = end
     }
   }
 }

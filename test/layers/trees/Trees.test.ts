@@ -313,6 +313,59 @@ describe('Trees', () => {
     expect(copies(layer, 'trunks')[0].count).toBe(50)
   })
 
+  it('thins a capped tile evenly, never cuts it at a row', async () => {
+    const { map, layer } = await setup([wood(0.1, 0.1, 0.9, 0.9)], {
+      maxPerTile: 400
+    })
+    const trees = positions(layer, 'trunks').map((p) => inTiles(map, p))
+    const share = (inside: (p: { x: number; y: number }) => boolean) =>
+      trees.filter(inside).length / trees.length
+
+    expect(trees).toHaveLength(400)
+    // as many in each half of the wood as in the other
+    expect(share(({ y }) => y > 0.5)).toBeGreaterThan(0.4)
+    expect(share(({ y }) => y > 0.5)).toBeLessThan(0.6)
+    expect(share(({ x }) => x > 0.5)).toBeGreaterThan(0.4)
+    expect(share(({ x }) => x > 0.5)).toBeLessThan(0.6)
+  })
+
+  it('keeps trees in every wood of a capped tile', async () => {
+    const { map, layer } = await setup(
+      [wood(0.1, 0.1, 0.9, 0.45), wood(0.1, 0.55, 0.9, 0.9)],
+      { maxPerTile: 400 }
+    )
+    const trees = positions(layer, 'trunks').map((p) => inTiles(map, p))
+    const south = trees.filter(({ y }) => y > 0.5).length
+
+    expect(trees).toHaveLength(400)
+    expect(south / trees.length).toBeGreaterThan(0.4)
+    expect(south / trees.length).toBeLessThan(0.6)
+  })
+
+  it('plants the same trees every time a capped tile is drawn', async () => {
+    const { layer } = await setup([wood(0.1, 0.1, 0.9, 0.9)], {
+      maxPerTile: 400
+    })
+    const before = positions(layer, 'crowns').map((p) => p.toArray().join())
+
+    layer.invalidate()
+    await layer.whenReady()
+
+    expect(positions(layer, 'crowns').map((p) => p.toArray().join())).toEqual(
+      before
+    )
+  })
+
+  it('plants every spot of a tile up to the cap, as without one', async () => {
+    const trees = [wood(0.2, 0.2, 0.5, 0.5)]
+    const all = positions((await setup(trees)).layer, 'trunks')
+    const at = (await setup(trees, { maxPerTile: all.length })).layer
+    const below = (await setup(trees, { maxPerTile: all.length - 1 })).layer
+
+    expect(positions(at, 'trunks')).toEqual(all)
+    expect(positions(below, 'trunks')).toHaveLength(all.length - 1)
+  })
+
   it('picks the wood of a tree, and highlights its trees', async () => {
     const forest = wood(0.2, 0.2, 0.5, 0.5)
     const tree: TreeFeature = {
@@ -532,7 +585,7 @@ describe('Trees clear of other layers', () => {
     properties: {}
   }
 
-  const plant = (waterLate: boolean) => {
+  const plant = (waterLate: boolean, maxPerTile = Infinity) => {
     // every tile's water waits
     const waiting: (() => void)[] = []
     const drawn: string[] = []
@@ -566,6 +619,7 @@ describe('Trees clear of other layers', () => {
         },
         avoid: [water],
         clearance: 5,
+        maxPerTile,
         build(ctx, draw) {
           drawn.push(ctx.tile.key())
           draw()
@@ -601,6 +655,19 @@ describe('Trees clear of other layers', () => {
     expect(distances.length).toBeGreaterThan(100)
     // half the river (20 m) and the clearance (5 m)
     expect(Math.min(...distances)).toBeGreaterThanOrEqual(25 - 1e-6)
+  })
+
+  it('fills the cap of a tile clear of the water, over the whole wood', async () => {
+    const { map, trees } = plant(false, 300)
+    await map.init()
+    await map.whenReady()
+    const spots = positions(trees, 'trunks').map((p) => inTiles(map, p))
+    const south = spots.filter(({ y }) => y > 0.5).length
+
+    expect(spots).toHaveLength(300)
+    expect(Math.min(...across(map, trees))).toBeGreaterThanOrEqual(25 - 1e-6)
+    expect(south / spots.length).toBeGreaterThan(0.4)
+    expect(south / spots.length).toBeLessThan(0.6)
   })
 
   it('plants once the water has arrived, and once only', async () => {
