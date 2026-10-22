@@ -717,13 +717,14 @@ for (const renderer of ['webgl', 'webgpu'] as const) {
 }
 
 for (const renderer of ['webgl', 'webgpu'] as const) {
-  test(`lays water on the terrain and plants trees in woods (${renderer})`, async ({
+  test(`lays water on the terrain, trees in woods and bushes in scrub (${renderer})`, async ({
     page
   }, testInfo) => {
     const errors = collectErrors(page)
     const zoom = 14
     const center = Utils.position2tile(46.57634, 7.9904, zoom)
-    // a lake over the NW quadrant, a wood over the NE one
+    // a lake over the NW quadrant, a wood over the NE one, scrub in the SE
+    // one (small: the tile's plants stay under maxPerTile); the SW one bare
     const tile = encodeVectorTile([
       {
         name: 'water',
@@ -744,6 +745,12 @@ for (const renderer of ['webgl', 'webgpu'] as const) {
             type: 3,
             properties: { class: 'wood', subclass: 'forest' },
             geometry: [[2148, 100, 3996, 100, 3996, 1948, 2148, 1948]]
+          },
+          {
+            id: 3,
+            type: 3,
+            properties: { class: 'grass', subclass: 'scrub' },
+            geometry: [[2148, 2148, 2900, 2148, 2900, 2900, 2148, 2900]]
           }
         ]
       }
@@ -751,7 +758,7 @@ for (const renderer of ['webgl', 'webgpu'] as const) {
     const query = await rendererQuery(page, renderer)
     const { backend } = await openPlayground(
       page,
-      `${query}&view=top&lights=0&nTiles=1&zoom=${zoom}&water=openfreemap&trees=openfreemap&segments=32`,
+      `${query}&view=top&lights=0&nTiles=1&zoom=${zoom}&water=openfreemap&vegetation=openfreemap&segments=32`,
       {
         vectorTiles: (z, x, y) =>
           z === zoom && x === center.x && y === center.y ? tile : undefined
@@ -805,6 +812,12 @@ for (const renderer of ['webgl', 'webgpu'] as const) {
         { base64: png.toString('base64'), color, regions }
       )
 
+    const wood = [...tilePoint(page, 0.6, 0.1), ...tilePoint(page, 0.9, 0.4)]
+    const scrub = [
+      ...tilePoint(page, 0.55, 0.55),
+      ...tilePoint(page, 0.68, 0.68)
+    ]
+    const bare = [...tilePoint(page, 0.1, 0.6), ...tilePoint(page, 0.4, 0.9)]
     // crowns (CROWN_COLOR) cover a good part of the wood, none outside it
     const share = await page.evaluate(
       async ({ base64, regions }) => {
@@ -839,34 +852,33 @@ for (const renderer of ['webgl', 'webgpu'] as const) {
           return crowns / (w * h)
         })
       },
-      {
-        base64: png.toString('base64'),
-        regions: [
-          [...tilePoint(page, 0.6, 0.1), ...tilePoint(page, 0.9, 0.4)],
-          [...tilePoint(page, 0.6, 0.6), ...tilePoint(page, 0.9, 0.9)]
-        ]
-      }
+      { base64: png.toString('base64'), regions: [wood, scrub, bare] }
     )
     expect(share[0]).toBeGreaterThan(0.05)
     expect(share[1]).toBe(0)
+    expect(share[2]).toBe(0)
+    // bushes (BUSH_COLOR) the scrub, nowhere else
+    const bushes = await shares(png, [143, 154, 85], [scrub, wood, bare])
+    expect(bushes[0]).toBeGreaterThan(0.05)
+    expect(bushes[1]).toBe(0)
+    expect(bushes[2]).toBe(0)
 
-    // a wireframe look with a fill, the trees in a color of their own: the
-    // materials change, the trees are outlined
+    // a wireframe look with a fill, the plants in a color of their own: the
+    // materials change, the trees and bushes are outlined
     await page.evaluate(async () => {
       const playground = window.__playground
       playground?.map.setMaterial({ wireframe: true, fillOpacity: 0.5 })
-      playground?.trees?.setMaterial({ color: '#ff00ff' })
+      playground?.vegetation?.setMaterial({ color: '#ff00ff' })
       await playground?.map.whenReady()
       await playground?.freeze()
     })
     const wireframe = await page.locator('canvas').screenshot()
-    const wood = [...tilePoint(page, 0.6, 0.1), ...tilePoint(page, 0.9, 0.4)]
-    const outside = [...tilePoint(page, 0.6, 0.6), ...tilePoint(page, 0.9, 0.9)]
-    const [outlined, none] = await shares(
+    const [trees, outlined, none] = await shares(
       wireframe,
       [255, 0, 255],
-      [wood, outside]
+      [wood, scrub, bare]
     )
+    expect(trees).toBeGreaterThan(0.02)
     expect(outlined).toBeGreaterThan(0.02)
     expect(none).toBe(0)
     // the lake: half its blue over the background — blended in sRGB

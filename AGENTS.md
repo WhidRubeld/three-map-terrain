@@ -60,8 +60,9 @@ src/                      library (the only published code, plus dist/)
                           features (kinds, widths, MVT schemas), osm, bridges
                           (joining pieces, deck profile)
     water/                Water (draped areas and waterways), WaterSource, schemas, osm
-    trees/                Trees (woods scattered, single trees; instanced trunks
-                          and crowns), TreeSource, schemas, osm
+    vegetation/           Vegetation (woods and scrub scattered with trees and
+                          bushes, single ones; instanced trunks, crowns, bushes),
+                          VegetationSource, schemas, osm
     osm.ts                (internal) Overpass elements, joinRings, polygonsOf
     base/                 TerrainBase: side walls + bottom (a plain MapLayer)
   io/                     network and formats
@@ -82,9 +83,9 @@ examples/react            React Three Fiber + drei + Vite; the live example
                           areas (`grid`: columns × rows) picked on an
                           OpenStreetMap map (Picker.tsx: OpenLayers, lazy; edges
                           dragged with its Extent; Photon search) or presets (Lausanne,
-                          Alps), layers toggled with add/removeLayer (layers.ts;
-                          scrub as bushes: Trees `plant`), four looks (looks.ts;
-                          colored.ts, textured.ts: materials per part), export;
+                          Alps), layers toggled with add/removeLayer (layers.ts),
+                          four looks (looks.ts; colored.ts, textured.ts:
+                          materials per part), export;
                           the view lives in the URL (view.ts: place or lat/lon/
                           z/w/h, ex, look, imagery, layers, pick). No Leaflet
 docs/                     README images (WebP) of the examples: `yarn screenshots`
@@ -263,7 +264,7 @@ depends on the published package. After a release, bump it there.
     across all layers, again and again until `SLICE_BUDGET` (6 ms) is used,
     then posts the next slice — at least one tile per slice. `prepare()`
     runs before a stale layer's next tile (cross-tile state). A tile whose
-    `canDraw(tile)` is false waits (Trees for `avoid`); when nothing else is
+    `canDraw(tile)` is false waits (Vegetation for `avoid`); when nothing else is
     drawable and no layer is loading, waiting tiles are drawn anyway (layers
     waiting for each other). `whenReady()` waits for the loads, then slice
     by slice until nothing is stale or dirty. `pending(tile)`: loading, or
@@ -310,8 +311,8 @@ depends on the published package. After a release, bump it there.
     triangles/segments with a highlight material (polygon offset), never
     picked, `userData.export = false` — so it works over any material.
   - `covers()` caches the 3 × 3 tiles' footprints for the tile of the last
-    point (`version` bumps whenever objects change): Trees ask for every
-    candidate tree.
+    point (`version` bumps whenever objects change): Vegetation asks for
+    every candidate plant.
   - `maxDistance` (option and property; meters, or per part): a
     `BeforeRender` — an `LOD` subclass, first child of `group` while set —
     is updated by the renderer (WebGL and WebGPU) before each render with
@@ -396,39 +397,48 @@ depends on the published package. After a release, bump it there.
   the terrain, behind roads at −4), shores and center lines in `lines`.
   Tunnels dropped by the schemas. Blue (`WATER_COLOR`) unless the look has
   its own color.
-- **Trees** (`src/layers/trees/`): woods (polygons) are scattered on a
-  jittered grid of `spacing` meters anchored to map units — `hash(i, j, k)`
-  per cell, so the same trees in every redraw and none twice at tile edges
-  (each tile plants only inside source ∩ terrain tile); points are single
-  trees. A wood's edges are indexed by grid row (`rowsOf`, cached per
-  polygon and cell): a point tests only its row's edges. `spacing` may be
-  a function of the zoom and the wood (cells differ per feature). A grid
-  spot is claimed once per tile (`claim`, per cell size): overlapping woods
-  plant it once, the first wins. `avoid` (any `GroundCover`, i.e. FeatureLayers)
-  keeps trees off what other layers drew: `covers(x, y, margin)` (map
-  units) asks the `Footprint` of the tile and its 8 neighbours (`footprint.ts`: the faces' triangles from above in a grid of
-  about 4 a cell, walls skipped, built lazily, dropped on every redraw).
-  `canDraw` holds a tile until no `avoid` layer is `pending` on it or its
-  neighbours — planted once; `onTileDrawn` makes Trees draw that tile and
-  its neighbours again later, and `Trees.whenReady` waits for the `avoid`
-  layers first. On Lausanne it takes out a quarter of the trees. A tree = a
-  trunk (open 4-sided prism, z 0–1, 8 triangles) and a crown (icosahedron
-  of 20 triangles with a sphere's normals) shared by every layer, white
-  `color` attributes, sized by its height (crown 62 % of it, radius 24 %);
-  the colors are the parts' materials (`partColor`), copies have no
-  `instanceColor`. A tile's spots are collected first (one reused
-  `Float64Array`: x, y, `random`, rank); over `maxPerTile` those of the
-  lowest rank (`hash(i, j, 4)`, independent of `random`; a counting sort)
-  are planted, `avoid` asked in that order up to the cap — thinned evenly,
-  the same every draw, never cut at a row or a wood; under it every spot.
-  Nothing is planted while both
-  parts are hidden (`ctx.visible`) — unless `plant` is given: the layer
-  decides where (grid, `avoid`, clipping, cap), `plant(ctx, spot, feature,
-tree)` what stands there — `tree(height?)` (the trunk and crown, their
-  copies made lazily), copies in parts of its own, or nothing. Shapes,
-  sizes and species stay out of the library (bushes are in the React
-  example); `treeShapes()` is public for reuse. Overpass nodes' `kind` is
-  their `natural` tag.
+- **Vegetation** (`src/layers/vegetation/`): woods and scrub (polygons)
+  are scattered on a jittered grid of `spacing` meters anchored to map
+  units — `hash(i, j, k)` per cell, so the same plants in every redraw and
+  none twice at tile edges (each tile plants only inside source ∩ terrain
+  tile); points are single plants. An area's edges are indexed by grid row
+  (`rowsOf`, cached per polygon and cell): a point tests only its row's
+  edges. `spacing` may be a function of the zoom and the area (cells differ
+  per feature; default 9 m, 5 in scrub). A grid spot is claimed once per
+  tile (`claim`, per cell size): overlapping areas plant it once, the first
+  wins. `avoid` (any `GroundCover`, i.e. FeatureLayers) keeps plants off
+  what other layers drew: `covers(x, y, margin)` (map units) asks the
+  `Footprint` of the tile and its 8 neighbours (`footprint.ts`: the faces'
+  triangles from above in a grid of about 4 a cell, walls skipped, built
+  lazily, dropped on every redraw). `canDraw` holds a tile until no
+  `avoid` layer is `pending` on it or its neighbours — planted once;
+  `onTileDrawn` makes Vegetation draw that tile and its neighbours again
+  later, and `Vegetation.whenReady` waits for the `avoid` layers first. On
+  Lausanne it takes out a quarter of the trees. Two forms are built in, on
+  shapes shared by every layer (`plantShapes()`, public for reuse; white
+  `color` attributes): a tree = a trunk (open 4-sided prism, z 0–1, 8
+  triangles) and a crown (icosahedron of 20 triangles with a sphere's
+  normals), sized by its height (crown 62 % of it, radius 24 %); a bush =
+  the crown on the ground (radius 70 % of its height, 10 % of it in the
+  ground), part `bushes`. Bushes grow where the feature's `kind` is one of
+  `BUSH_KINDS` (`scrub`, `shrubbery`, `shrub`; `isBush`) — every schema
+  reads scrub (Mapbox's `class=scrub` takes in heaths: kind `scrub`) —
+  trees elsewhere. The colors are the parts' materials (`partColor`:
+  crowns `CROWN_COLOR`, bushes `BUSH_COLOR`, both the look's `color` if it
+  has one, trunks `TRUNK_COLOR`), copies have no `instanceColor`. A tile's
+  spots are collected first (one reused `Float64Array`: x, y, `random`,
+  rank); over `maxPerTile` those of the lowest rank (`hash(i, j, 4)`,
+  independent of `random`; a counting sort) are planted, `avoid` asked in
+  that order up to the cap — thinned evenly, the same every draw, never
+  cut at a row or an area; under it every spot. Nothing is planted while
+  all three parts are hidden (`ctx.visible`) — unless `plant` is given:
+  the layer decides where (grid, `avoid`, clipping, cap), `plant(ctx,
+spot, feature, { tree, bush })` what grows there — `tree(height?)`,
+  `bush(height?)` (heights by default the feature's, else between
+  `treeHeights` / `bushHeights` by the spot's `random`; copies made
+  lazily), copies in parts of its own, or nothing. Other shapes, sizes and
+  species stay out of the library: `plant`, a `build`, or a layer of the
+  user's. Overpass nodes' `kind` is their `natural` tag.
 - **TerrainBase**: rebuilt from all placed tiles on every tile event — walls
   along sides without a placed neighbour, a floor per tile, `depth` meters
   below the lowest vertex; in wireframe an outline.
@@ -449,8 +459,10 @@ tree)` what stands there — `tree(height?)` (the trunk and crown, their
 - No Node APIs in `src/` (`tsconfig.build.json` sets `types: []`).
 - Use TS `private`, not `#private` — consumers may wrap instances in proxies
   (Vue `reactive`, MobX), which breaks `#` fields.
-- Keep the public API backwards compatible within a major. 3.0 dropped the
-  2.x legacy names (README, Upgrading); a rename or removal now waits for 4.0.
+- The library has no users yet: renames and removals may land in a minor
+  (3.5 renamed `Trees` to `Vegetation`), and the README keeps no upgrade
+  notes. Once it has users, keep the public API backwards compatible within
+  a major.
   `FeatureLayer` is beta: its protected API may still grow.
 - Prettier: no semicolons, single quotes, no trailing commas. Don't hand-format;
   run `yarn format`.

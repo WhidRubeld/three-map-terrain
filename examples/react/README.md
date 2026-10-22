@@ -23,8 +23,8 @@ What it shows:
   place. The frame is the `grid` the map gets.
 - **Layers** ([src/layers.ts](src/layers.ts)) — OpenFreeMap buildings with
   their edges, roads and railways whose bridges span the valleys, water,
-  woods with bushes in their scrub (`Trees` with `plant`, kept off the
-  water, roads and houses with `avoid`) and a `TerrainBase`: made once,
+  woods and scrub (`Vegetation`: trees and bushes, kept off the water,
+  roads and houses with `avoid`) and a `TerrainBase`: made once,
   switched on and off with `map.addLayer` / `map.removeLayer`, and moved to
   the next area's map. Below their zoom (`minZoom`) they draw nothing.
 - **Looks** ([src/looks.ts](src/looks.ts)) — one map restyled at runtime
@@ -36,7 +36,7 @@ What it shows:
   repeating at true size since the UVs are in meters) and wireframe. The
   photos are Sentinel-2 cloudless worldwide, swisstopo's in Switzerland.
 - **Relief** — the vertical exaggeration (`exaggeration`), 1× to 3×.
-- Picking what is under the cursor — a building, tree, road or water
+- Picking what is under the cursor — a building, plant, road or water
   (`layer.pick` with the event's ray, never one behind the terrain) — and
   highlighting it, or the geolocation of the terrain (`map.getLocation`).
 - **Export** — `map.export()`: the terrain, imagery and layers as GLB, STL,

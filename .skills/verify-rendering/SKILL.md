@@ -63,33 +63,33 @@ yarn dev    # vite playground → http://localhost:5173
 
 Query parameters:
 
-| Param                | Values                                     | Default  | Purpose                                                            |
-| -------------------- | ------------------------------------------ | -------- | ------------------------------------------------------------------ |
-| `renderer`           | `webgl`, `webgpu`                          | `webgl`  | renderer under test                                                |
-| `forceWebGL`         | `1`                                        | —        | `WebGPURenderer` with its WebGL2 backend                           |
-| `lights`             | `1`, `0`                                   | `1`      | `MeshLambertMaterial` vs unlit basic                               |
-| `wireframe`          | `1`                                        | —        | `wireframe` material option                                        |
-| `api`                | `eox`, `osm`, `swisstopo`, `none`          | `eox`    | texture source (`swisstopo`: a `url` template; `none`: no imagery) |
-| `color`              | hex without `#`                            | —        | `material.color` (a tint, or the plain terrain)                    |
-| `elevation`          | `aws`, `mapterhorn`, …                     | `aws`    | elevation source                                                   |
-| `buildings`          | `openfreemap`, `versatiles`, `overpass`, … | —        | the `Buildings` layer; `token=…` for keyed ones                    |
-| `edges`              | `1`                                        | —        | buildings' `edges`                                                 |
-| `roads`              | `openfreemap`, `versatiles`, `overpass`, … | —        | the `Roads` layer (bridges, tunnels)                               |
-| `water`, `trees`     | `openfreemap`, `versatiles`, `overpass`, … | —        | the `Water` and `Trees` layers                                     |
-| `gray`               | `1`                                        | —        | a grayscale `process` of the imagery (the playground's own)        |
-| `zoom`, `lat`, `lon` | numbers                                    | Alps, 11 | another place or zoom: drawn true to scale (`exaggeration=…`)      |
-| `base`               | meters                                     | `0`      | `baseAltitude`                                                     |
-| `nTiles`             | integer                                    | `3`      | grid size                                                          |
-| `grid`               | `west,north,east,south`                    | —        | the `grid` option: tiles from the location's tile, e.g. `0,-1,1,1` |
-| `segments`           | integer                                    | `100`    | `tileSegments` (try `40` with `wireframe=1`)                       |
-| `imageryZoomOffset`  | `0`–`3`                                    | `1`      | imagery tiles per terrain tile: `4^offset`                         |
-| `maxDistance`        | meters                                     | —        | the layers hide tiles farther from the camera                      |
-| `skirt`              | meters                                     | `0`      | the tiles' `skirt`                                                 |
-| `lod`                | zoom levels                                | —        | levels of detail: the map is the middle tile of a coarser `ring`   |
-| `stream`             | tiles                                      | —        | only the tiles within this many of the controls' target            |
-| `view`               | `orbit`, `top`                             | `orbit`  | perspective + MapControls, or orthographic top view                |
+| Param                 | Values                                     | Default  | Purpose                                                            |
+| --------------------- | ------------------------------------------ | -------- | ------------------------------------------------------------------ |
+| `renderer`            | `webgl`, `webgpu`                          | `webgl`  | renderer under test                                                |
+| `forceWebGL`          | `1`                                        | —        | `WebGPURenderer` with its WebGL2 backend                           |
+| `lights`              | `1`, `0`                                   | `1`      | `MeshLambertMaterial` vs unlit basic                               |
+| `wireframe`           | `1`                                        | —        | `wireframe` material option                                        |
+| `api`                 | `eox`, `osm`, `swisstopo`, `none`          | `eox`    | texture source (`swisstopo`: a `url` template; `none`: no imagery) |
+| `color`               | hex without `#`                            | —        | `material.color` (a tint, or the plain terrain)                    |
+| `elevation`           | `aws`, `mapterhorn`, …                     | `aws`    | elevation source                                                   |
+| `buildings`           | `openfreemap`, `versatiles`, `overpass`, … | —        | the `Buildings` layer; `token=…` for keyed ones                    |
+| `edges`               | `1`                                        | —        | buildings' `edges`                                                 |
+| `roads`               | `openfreemap`, `versatiles`, `overpass`, … | —        | the `Roads` layer (bridges, tunnels)                               |
+| `water`, `vegetation` | `openfreemap`, `versatiles`, `overpass`, … | —        | the `Water` and `Vegetation` layers                                |
+| `gray`                | `1`                                        | —        | a grayscale `process` of the imagery (the playground's own)        |
+| `zoom`, `lat`, `lon`  | numbers                                    | Alps, 11 | another place or zoom: drawn true to scale (`exaggeration=…`)      |
+| `base`                | meters                                     | `0`      | `baseAltitude`                                                     |
+| `nTiles`              | integer                                    | `3`      | grid size                                                          |
+| `grid`                | `west,north,east,south`                    | —        | the `grid` option: tiles from the location's tile, e.g. `0,-1,1,1` |
+| `segments`            | integer                                    | `100`    | `tileSegments` (try `40` with `wireframe=1`)                       |
+| `imageryZoomOffset`   | `0`–`3`                                    | `1`      | imagery tiles per terrain tile: `4^offset`                         |
+| `maxDistance`         | meters                                     | —        | the layers hide tiles farther from the camera                      |
+| `skirt`               | meters                                     | `0`      | the tiles' `skirt`                                                 |
+| `lod`                 | zoom levels                                | —        | levels of detail: the map is the middle tile of a coarser `ring`   |
+| `stream`              | tiles                                      | —        | only the tiles within this many of the controls' target            |
+| `view`                | `orbit`, `top`                             | `orbit`  | perspective + MapControls, or orthographic top view                |
 
-`window.__playground` exposes `{ map, ring, buildings, roads, water, trees, renderer, camera, controls, revision, backend, ready, texturedTiles(), lastPick, lastBuilding, lastRoad, freeze() }` — e.g. `__playground.map.setMaterial({ wireframe: true })` or `await __playground.map.export('glb')` from the console.
+`window.__playground` exposes `{ map, ring, buildings, roads, water, vegetation, renderer, camera, controls, revision, backend, ready, texturedTiles(), lastPick, lastBuilding, lastRoad, freeze() }` — e.g. `__playground.map.setMaterial({ wireframe: true })` or `await __playground.map.export('glb')` from the console.
 
 Buildings and looks, with real data:
 
@@ -165,7 +165,7 @@ errors about aborted requests.
 
 - React (`?place=lausanne&look=plain|aerial|textured|wireframe`): plain is
   a colored model — beige ground, white buildings, gray roads, the blue
-  lake, green woods, on the base — and aerial hides the water and trees
+  lake, green woods and olive scrub, on the base — and aerial hides the water and vegetation
   (the photo has them). Switch
   the looks back and forth (e.g. wireframe → textured → plain, and through
   aerial) — every look must be complete each time, the textured one with

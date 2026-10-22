@@ -426,20 +426,20 @@ const SINGULAR: Record<LayerName, string> = {
   buildings: 'building',
   roads: 'road',
   water: 'water',
-  trees: 'trees',
+  vegetation: 'plant',
   base: 'base'
 }
 
 /**
  * The nearest feature under a ray, highlighted (the others not), described.
  * Draped layers lie on the terrain and on each other: a hit within a unit
- * of the nearest goes to the first of buildings, trees, roads, water.
+ * of the nearest goes to the first of buildings, vegetation, roads, water.
  */
 function pickFeature(raycaster: Raycaster): string | undefined {
-  const { buildings, trees, roads, water } = LAYERS
+  const { buildings, vegetation, roads, water } = LAYERS
   const candidates = [
     candidate('buildings', buildings, raycaster),
-    candidate('trees', trees, raycaster),
+    candidate('vegetation', vegetation, raycaster),
     candidate('roads', roads, raycaster),
     candidate('water', water, raycaster)
   ]

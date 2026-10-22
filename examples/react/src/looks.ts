@@ -49,8 +49,8 @@ export const LOOKS = {
   aerial: {
     imagery: true,
     material: { color: '#ffffff', wireframe: false, process: gray },
-    // the photo has its water and trees
-    parts: { water: HIDDEN, crowns: HIDDEN, trunks: HIDDEN, shrubs: HIDDEN },
+    // the photo has its water and vegetation
+    parts: { water: HIDDEN, crowns: HIDDEN, trunks: HIDDEN, bushes: HIDDEN },
     background: 0x161616,
     light: { ambient: 1.4, sun: 2.4 }
   },
@@ -62,7 +62,7 @@ export const LOOKS = {
     background: 0x1b1d20,
     light: { ambient: 1.3, sun: 2.6 }
   },
-  // everything in lines — the trees outlined — over a light fill
+  // everything in lines — the plants outlined — over a light fill
   wireframe: {
     imagery: false,
     material: {

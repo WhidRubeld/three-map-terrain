@@ -98,7 +98,7 @@ export interface FeatureHit<F> extends GeoLocation {
 
 /**
  * A layer whose drawing takes the ground — water, roads, buildings — so that
- * others keep clear of it: `new Trees({ avoid: [water, roads] })`.
+ * others keep clear of it: `new Vegetation({ avoid: [water, roads] })`.
  */
 export interface GroundCover {
   /**

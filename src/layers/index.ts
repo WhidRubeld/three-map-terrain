@@ -20,5 +20,5 @@ export {
 export * from './buildings'
 export * from './roads'
 export * from './water'
-export * from './trees'
+export * from './vegetation'
 export * from './base'

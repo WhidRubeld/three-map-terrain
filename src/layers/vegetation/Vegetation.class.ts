@@ -9,8 +9,11 @@ import {
   Vector3
 } from 'three'
 
-import type { TreeFeature } from './features'
-import { TreeSource, type TreeSourceProps } from './TreeSource.class'
+import { isBush, type VegetationFeature } from './features'
+import {
+  VegetationSource,
+  type VegetationSourceProps
+} from './VegetationSource.class'
 import type { Position, Ring } from '../features'
 import {
   type DrawFeatures,
@@ -25,56 +28,61 @@ import { Utils } from '../../geo/Utils.class'
 import type { Map } from '../../terrain/Map.class'
 import type { Tile } from '../../terrain/Tile.class'
 
-export interface TreesOptions {
-  /** Where the trees come from: a `TreeSource`, or the props to create one. */
-  source: TreeSource | TreeSourceProps
+export interface VegetationOptions {
+  /** Where the plants come from: a `VegetationSource`, or the props to create one. */
+  source: VegetationSource | VegetationSourceProps
   /**
-   * How the trees are drawn: the look (crowns in green unless it gives a
-   * `color`, trunks in brown; outlined in wireframe), one material for
-   * both, or a material per part: `'crowns'`, `'trunks'` — copies of one
-   * geometry (`InstancedMesh`) in the material's color.
+   * How the plants are drawn: the look (crowns in green and bushes in olive
+   * unless it gives a `color`, trunks in brown; outlined in wireframe), one
+   * material for every part, or a material per part: `'crowns'`,
+   * `'trunks'`, `'bushes'` — copies of one geometry (`InstancedMesh`) in
+   * the material's color.
    */
   material?: LayerMaterial
   /** Replaces or extends the geometry. See `FeatureLayer`. */
   build?: (
-    ctx: TileContext<TreeFeature>,
-    draw: DrawFeatures<TreeFeature>
+    ctx: TileContext<VegetationFeature>,
+    draw: DrawFeatures<VegetationFeature>
   ) => void
   /**
-   * What stands at each spot the layer plants — in a wood, or a single
-   * tree: by default `tree()`, a trunk and a crown. Yours decides by the
-   * feature (its `kind`, its `properties`): `tree(height?)` for the tree,
-   * copies of your own (`ctx.instances(part, geometry).add(matrix)`, in
-   * parts you name: their materials are the layer's), or nothing — bushes
-   * in scrub, low trees in orchards, palms. A spot is planted once: by the
-   * first wood covering it.
+   * What grows at each spot the layer plants — in a wood or scrub, or a
+   * single plant: by default a bush where the feature is one of
+   * `BUSH_KINDS` (`isBush`), else a tree. Yours decides by the feature (its
+   * `kind`, its `properties`): `plants.tree(height?)`,
+   * `plants.bush(height?)`, copies of your own
+   * (`ctx.instances(part, geometry).add(matrix)`, in parts you name: their
+   * materials are the layer's), or nothing — low trees in orchards, palms,
+   * dwarf shrubs on heaths. A spot is planted once: by the first area
+   * covering it.
    */
   plant?: (
-    ctx: TileContext<TreeFeature>,
-    spot: TreeSpot,
-    feature: TreeFeature,
-    tree: (height?: number) => void
+    ctx: TileContext<VegetationFeature>,
+    spot: PlantSpot,
+    feature: VegetationFeature,
+    plants: Plants
   ) => void
   /**
-   * Layers whose ground stays clear of trees — water, roads, buildings,
+   * Layers whose ground stays clear of plants — water, roads, buildings,
    * yours: woods in the data often take in the rivers, roads and houses
-   * crossing them. A tree stands only where none of them drew; trees are
+   * crossing them. A plant stands only where none of them drew; plants are
    * planted once these have drawn the tiles around.
    */
   avoid: readonly GroundCover[]
-  /** Meters a tree keeps from what `avoid` drew. */
+  /** Meters a plant keeps from what `avoid` drew. */
   clearance: number
   /**
-   * Meters between the trees of a wood — or a function of the terrain's
-   * zoom and the wood, e.g. fewer trees on a wide map:
-   * `(zoom) => (zoom < 15 ? 14 : 9)`, or denser bushes in scrub.
+   * Meters between the plants of an area — by default 9 in woods, 5 in
+   * scrub — or a function of the terrain's zoom and the area, e.g. fewer
+   * on a wide map: `(zoom, feature) => (zoom < 15 ? 2 : 1) * (isBush(feature) ? 5 : 9)`.
    */
-  spacing: number | ((zoom: number, feature: TreeFeature) => number)
+  spacing: number | ((zoom: number, feature: VegetationFeature) => number)
   /** Meters high, from the lowest to the highest, for trees without a height. */
-  heights: readonly [low: number, high: number]
+  treeHeights: readonly [low: number, high: number]
+  /** Meters high, from the lowest to the highest, for bushes without a height. */
+  bushHeights: readonly [low: number, high: number]
   /**
-   * At most this many trees on a terrain tile. A tile with more spots is
-   * thinned evenly — every wood keeps the same share of its spots, spread
+   * At most this many plants on a terrain tile. A tile with more spots is
+   * thinned evenly — every area keeps the same share of its spots, spread
    * over all of it, the same each time it is drawn: sparser woods, never
    * cut ones. The share is the tile's, so a thinned tile is sparser than an
    * unthinned neighbour; a wider `spacing` keeps tiles under it.
@@ -83,32 +91,34 @@ export interface TreesOptions {
   /** Color `highlight()` uses by default. */
   highlightColor: ColorRepresentation
   /**
-   * Hides the trees of tiles farther than this from the camera, in meters —
+   * Hides the plants of tiles farther than this from the camera, in meters —
    * or per part: `(part) => (part === 'trunks' ? 800 : 2500)`, trunks
    * first (crowns hide them from afar). See `FeatureLayer.maxDistance`.
    */
   maxDistance?: LayerDistance
-  /** Terrain tiles below this zoom get no trees. */
+  /** Terrain tiles below this zoom get no plants. */
   minZoom: number
 }
 
-export const defaultTreesOptions: Readonly<
-  Omit<TreesOptions, 'source' | 'material' | 'build' | 'plant'>
+export const defaultVegetationOptions: Readonly<
+  Omit<VegetationOptions, 'source' | 'material' | 'build' | 'plant'>
 > = Object.freeze({
   avoid: [],
   clearance: 2,
-  spacing: 9,
-  heights: [8, 16] as const,
+  spacing: (_zoom: number, feature: VegetationFeature) =>
+    isBush(feature) ? 5 : 9,
+  treeHeights: [8, 16] as const,
+  bushHeights: [2, 4] as const,
   maxPerTile: 12000,
   highlightColor: 0xffb020,
   minZoom: 14
 })
 
-/** The tree (or wood) under a ray: the feature and where it was hit. */
-export type TreeHit = FeatureHit<TreeFeature>
+/** The plant (or its area) under a ray: the feature and where it was hit. */
+export type VegetationHit = FeatureHit<VegetationFeature>
 
 /** A spot the layer plants, in the tile's local coordinates. */
-export interface TreeSpot {
+export interface PlantSpot {
   readonly x: number
   readonly y: number
   /** The rendered ground there. */
@@ -117,8 +127,20 @@ export interface TreeSpot {
   readonly random: number
 }
 
-/** Colors of the crowns (unless the look gives one) and of the trunks. */
+/**
+ * What `plant` can grow at its spot, `height` meters high — by default the
+ * feature's, or between the layer's heights by the spot's `random`.
+ */
+export interface Plants {
+  /** A trunk and a crown (`'trunks'`, `'crowns'`). */
+  readonly tree: (height?: number) => void
+  /** A crown on the ground, wider than high (`'bushes'`). */
+  readonly bush: (height?: number) => void
+}
+
+/** Colors of the crowns and the bushes (unless the look gives one), and of the trunks. */
 export const CROWN_COLOR = '#6f9a4f'
+export const BUSH_COLOR = '#8f9a55'
 export const TRUNK_COLOR = '#7d5c3e'
 
 /** A tree's shape, as shares of its height: the crown and the trunk. */
@@ -127,16 +149,19 @@ const CROWN_RADIUS = 0.24
 const TRUNK_RADIUS = 0.035
 /** Meters trunks reach below the ground. */
 const FOUNDATION = 0.5
+/** A bush's shape, as shares of its height: its radius, the part in the ground. */
+const BUSH_RADIUS = 0.7
+const BUSH_SUNK = 0.1
 
 let shapes: { trunk: BufferGeometry; crown: BufferGeometry } | undefined
 
 /**
- * The trees' shapes, few triangles for many copies, shared by every layer:
+ * The plants' shapes, few triangles for many copies, shared by every layer:
  * a trunk (z from 0 to 1, 8 triangles) and a crown (radius 1, 20
- * triangles, shaded round), white for the parts' colors. Copies of yours
- * may use them (`plant`); never dispose them.
+ * triangles, shaded round; a bush is one too), white for the parts'
+ * colors. Copies of yours may use them (`plant`); never dispose them.
  */
-export function treeShapes() {
+export function plantShapes() {
   if (!shapes) {
     const white = (geometry: BufferGeometry) => {
       const count = geometry.getAttribute('position').count
@@ -232,8 +257,19 @@ function inside(x: number, y: number, rows: Rows) {
   return within
 }
 
+/** Bushes in scrub (`isBush`), trees elsewhere. */
+const defaultPlant: NonNullable<VegetationOptions['plant']> = (
+  _ctx,
+  _spot,
+  feature,
+  plants
+) => {
+  if (isBush(feature)) plants.bush()
+  else plants.tree()
+}
+
 /** Copies of a shape in a part, as `ctx.instances()` adds them. */
-type Copies = ReturnType<TileContext<TreeFeature>['instances']>
+type Copies = ReturnType<TileContext<VegetationFeature>['instances']>
 
 /** Ranks of the spots, for the cap: the buckets of a counting sort. */
 const RANKS = 4096
@@ -252,40 +288,44 @@ interface Prepared {
 }
 
 /**
- * Trees on the terrain: `map.addLayer(new Trees({ source: { api:
- * 'openfreemap' } }))`. Woods are filled with trees on a grid of `spacing`
- * meters, jittered — anchored to the map, so that they never move when a
- * tile is drawn again and never double at tile edges; single trees (points)
- * stand where they are. A tree is a trunk and a crown, copies of one
- * geometry each, standing on the rendered surface; trunks are brown,
- * crowns green or in the look's `color`. What stands at a spot is yours to
- * decide: `plant`.
+ * Trees and bushes on the terrain: `map.addLayer(new Vegetation({ source:
+ * { api: 'openfreemap' } }))`. Woods are filled with trees and scrub with
+ * bushes on a grid of `spacing` meters, jittered — anchored to the map, so
+ * that they never move when a tile is drawn again and never double at tile
+ * edges; single trees and bushes (points) stand where they are. A tree is a
+ * trunk and a crown, a bush a crown on the ground, copies of one geometry
+ * each, standing on the rendered surface; trunks are brown, crowns green
+ * and bushes olive, or both in the look's `color`. What grows at a spot is
+ * yours to decide: `plant`.
  */
-export class Trees extends FeatureLayer<TreeFeature> {
-  declare readonly source: TreeSource
-  readonly options: Omit<TreesOptions, 'source'>
+export class Vegetation extends FeatureLayer<VegetationFeature> {
+  declare readonly source: VegetationSource
+  readonly options: Omit<VegetationOptions, 'source'>
 
-  private readonly prepared = new WeakMap<TreeFeature, Prepared>()
+  private readonly prepared = new WeakMap<VegetationFeature, Prepared>()
   private unsubscribe: (() => void)[] = []
 
   constructor({
     source,
     ...props
-  }: Pick<TreesOptions, 'source'> & Partial<TreesOptions>) {
-    const options = { ...defaultTreesOptions, ...props }
+  }: Pick<VegetationOptions, 'source'> & Partial<VegetationOptions>) {
+    const options = { ...defaultVegetationOptions, ...props }
     super({
-      source: source instanceof TreeSource ? source : new TreeSource(source),
+      source:
+        source instanceof VegetationSource
+          ? source
+          : new VegetationSource(source),
       build: options.build,
       material: options.material,
       highlightColor: options.highlightColor,
       minZoom: options.minZoom,
       maxDistance: options.maxDistance,
-      name: 'trees'
+      name: 'vegetation'
     })
     this.options = options
   }
 
-  /** Trees near a tile drawn again by a layer in `avoid` are planted again. */
+  /** Plants near a tile drawn again by a layer in `avoid` are planted again. */
   override attach(map: Map) {
     super.attach(map)
     this.unsubscribe = this.options.avoid.map((layer) =>
@@ -309,15 +349,19 @@ export class Trees extends FeatureLayer<TreeFeature> {
     super.detach()
   }
 
-  /** Also waits for the layers in `avoid`, which plant trees again. */
+  /** Also waits for the layers in `avoid`, which plant the plants again. */
   override async whenReady(): Promise<void> {
     await Promise.all(this.options.avoid.map((layer) => layer.whenReady()))
     await super.whenReady()
   }
 
-  /** Crowns green unless the layer's look has a color; trunks brown. */
+  /**
+   * Crowns green and bushes olive unless the layer's look has a color;
+   * trunks brown. Parts of yours take the crowns' color.
+   */
   protected override partColor(part: string): ColorRepresentation {
-    return part === 'trunks' ? TRUNK_COLOR : (this.ownLook.color ?? CROWN_COLOR)
+    if (part === 'trunks') return TRUNK_COLOR
+    return this.ownLook.color ?? (part === 'bushes' ? BUSH_COLOR : CROWN_COLOR)
   }
 
   /**
@@ -342,7 +386,7 @@ export class Trees extends FeatureLayer<TreeFeature> {
   }
 
   /** A feature in map units, cached. */
-  private mapUnits(feature: TreeFeature): Prepared {
+  private mapUnits(feature: VegetationFeature): Prepared {
     const zoom = this.map?.options.zoom ?? 0
     const cached = this.prepared.get(feature)
     if (cached?.zoom === zoom) return cached
@@ -389,15 +433,23 @@ export class Trees extends FeatureLayer<TreeFeature> {
   }
 
   protected override draw(
-    ctx: TileContext<TreeFeature>,
-    features: readonly TreeFeature[]
+    ctx: TileContext<VegetationFeature>,
+    features: readonly VegetationFeature[]
   ) {
-    const { plant: own, heights, maxPerTile, avoid, clearance } = this.options
-    // nothing shows: the trees are planted when they do
-    if (!own && !ctx.visible('crowns') && !ctx.visible('trunks')) return
+    const { plant: own, maxPerTile, avoid, clearance } = this.options
+    // nothing shows: the plants are planted when they do
+    if (
+      !own &&
+      !ctx.visible('crowns') &&
+      !ctx.visible('trunks') &&
+      !ctx.visible('bushes')
+    ) {
+      return
+    }
     const { tile, map } = ctx
     const { tileSize } = map.options
-    const { trunk, crown } = treeShapes()
+    const { trunk, crown } = plantShapes()
+    const { treeHeights, bushHeights } = this.options
     const wanted = new Set(features)
     const meters = Utils.tileWidth(map.geoLocation.lat, tile.z)
     const margin = clearance / meters
@@ -406,9 +458,10 @@ export class Trees extends FeatureLayer<TreeFeature> {
     const scale = new Vector3()
     const rotation = new Quaternion()
     let copies: Record<'trunks' | 'crowns', Copies> | undefined
+    let bushes: Copies | undefined
 
     /** A trunk and a crown, `height` meters high. */
-    const tree = ({ x, y, z }: TreeSpot, height: number) => {
+    const tree = ({ x, y, z }: PlantSpot, height: number) => {
       copies ??= {
         trunks: ctx.instances('trunks', trunk),
         crowns: ctx.instances('crowns', crown)
@@ -438,24 +491,51 @@ export class Trees extends FeatureLayer<TreeFeature> {
       copies.crowns.add(matrix)
     }
 
+    /** A crown on the ground, wider than high, `height` meters high. */
+    const bush = ({ x, y, z }: PlantSpot, height: number) => {
+      bushes ??= ctx.instances('bushes', crown)
+      // from a little in the ground (on slopes) up to its height
+      const half = (height * (1 + BUSH_SUNK)) / 2
+      matrix.compose(
+        position.set(x, y, z + (height - half) * ctx.zScale),
+        rotation,
+        scale.set(
+          height * BUSH_RADIUS * ctx.unitsPerMeter,
+          height * BUSH_RADIUS * ctx.unitsPerMeter,
+          half * ctx.zScale
+        )
+      )
+      bushes.add(matrix)
+    }
+
+    // what `plant` grows, at the spot and of the feature being planted
+    let here: PlantSpot = { x: 0, y: 0, z: 0, random: 0 }
+    let current: VegetationFeature | undefined
+    const between = ([low, high]: readonly [number, number]) =>
+      current?.height ?? low + (high - low) * here.random
+    const plants: Plants = {
+      tree: (height = between(treeHeights)) => {
+        tree(here, height)
+      },
+      bush: (height = between(bushHeights)) => {
+        bush(here, height)
+      }
+    }
+    const grow = own ?? defaultPlant
+
     /** What stands at spot `k`, of `feature`. */
-    const plant = (k: number, feature: TreeFeature) => {
+    const plant = (k: number, feature: VegetationFeature) => {
       const lx = (spots[4 * k] - tile.x - 0.5) * tileSize
       const ly = (0.5 - (spots[4 * k + 1] - tile.y)) * tileSize
       const random = spots[4 * k + 2]
-      const spot: TreeSpot = { x: lx, y: ly, z: ctx.groundAt(lx, ly), random }
-      const standard =
-        feature.height ?? heights[0] + (heights[1] - heights[0]) * random
-      if (own) {
-        own(ctx, spot, feature, (height = standard) => {
-          tree(spot, height)
-        })
-      } else tree(spot, standard)
+      here = { x: lx, y: ly, z: ctx.groundAt(lx, ly), random }
+      current = feature
+      grow(ctx, here, feature, plants)
     }
 
-    // the tile's spots, wood after wood; `ends`: where each wood's spots end
+    // the tile's spots, area after area; `ends`: where each area's spots end
     let count = 0
-    const ends: [TreeFeature, number][] = []
+    const ends: [VegetationFeature, number][] = []
     const offer = (x: number, y: number, random: number, rank: number) => {
       if (4 * count === spots.length) {
         const grown = new Float64Array(2 * spots.length)
@@ -469,7 +549,7 @@ export class Trees extends FeatureLayer<TreeFeature> {
       spots[k + 3] = Math.floor(rank * RANKS)
     }
 
-    // a spot of a grid is planted once: by the first wood covering it
+    // a spot of a grid is planted once: by the first area covering it
     const claimed = new globalThis.Map<number, Uint8Array>()
     const claim = (cell: number, i: number, j: number) => {
       // the tile's spots, by their indices from just outside it
@@ -542,8 +622,8 @@ export class Trees extends FeatureLayer<TreeFeature> {
         layer.covers(spots[4 * k], spots[4 * k + 1], margin)
       )
 
-    // over the cap, the spots of the lowest ranks: every wood keeps the same
-    // share of its spots, spread over all of it — never the first rows or woods
+    // over the cap, the spots of the lowest ranks: every area keeps the same
+    // share of its spots, spread over all of it — never the first rows or areas
     let chosen: Uint8Array | undefined
     if (count > maxPerTile) {
       chosen = new Uint8Array(count)

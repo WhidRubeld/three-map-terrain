@@ -1,7 +1,7 @@
 {
   "name": "three-map-terrain",
   "version": "3.4.0",
-  "description": "Real-world 3D terrain for three.js from any map tiles: elevation, imagery, OpenStreetMap buildings, roads and bridges, water and trees, a frame for your own layers, streaming and levels of detail, geolocation, and GLB / STL / USDZ export",
+  "description": "Real-world 3D terrain for three.js from any map tiles: elevation, imagery, OpenStreetMap buildings, roads and bridges, water and vegetation, a frame for your own layers, streaming and levels of detail, geolocation, and GLB / STL / USDZ export",
   "author": "whidrubeld <whidrubeld@gmail.com>",
   "license": "MIT",
   "types": "./dist/index.d.ts",

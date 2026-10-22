@@ -2,45 +2,19 @@
 // removing them, and moved to the next map with the area. All read the
 // OpenFreeMap tiles (one request per tile for all of them).
 
-import { Matrix4, Quaternion, Vector3 } from 'three'
 import {
   Buildings,
   FeatureLayer,
+  isBush,
   type MapLayer,
-  openMapTilesTreeProperties,
   ROAD_KINDS,
   Roads,
   TerrainBase,
-  treeShapes,
-  Trees,
-  type TreesOptions,
+  Vegetation,
   Water
 } from 'three-map-terrain'
 
 import { byPart } from './looks'
-
-const bush = new Matrix4()
-const [position, rotation, scale] = [
-  new Vector3(),
-  new Quaternion(),
-  new Vector3()
-]
-
-/** Scrub as bushes — the trees' crown, 2 to 4 m high, wider — woods as trees. */
-const plant: TreesOptions['plant'] = (ctx, spot, feature, tree) => {
-  if (feature.kind !== 'scrub') {
-    tree()
-    return
-  }
-  const height = 2 + 2 * spot.random
-  const across = 0.7 * height * ctx.unitsPerMeter
-  bush.compose(
-    position.set(spot.x, spot.y, spot.z + 0.4 * height * ctx.zScale),
-    rotation,
-    scale.set(across, across, 0.5 * height * ctx.zScale)
-  )
-  ctx.instances('shrubs', treeShapes().crown).add(bush)
-}
 
 const buildings = new Buildings({
   source: { api: 'openfreemap' },
@@ -54,21 +28,13 @@ const roads = new Roads({
   material: byPart
 })
 const water = new Water({ source: { api: 'openfreemap' }, material: byPart })
-// woods and their scrub — not in the rivers, on the roads or in the houses
-// the woods of the data take in; with those switched off, they grow back
-const trees = new Trees({
-  source: {
-    api: 'openfreemap',
-    // the woods, and scrub (in OpenMapTiles' grass)
-    properties: (p, layer) =>
-      p.subclass === 'scrub' || p.subclass === 'shrubbery'
-        ? { kind: 'scrub' }
-        : openMapTilesTreeProperties(p, layer)
-  },
+// woods and scrub — not in the rivers, on the roads or in the houses the
+// woods of the data take in; with those switched off, they grow back
+const vegetation = new Vegetation({
+  source: { api: 'openfreemap' },
   // twice as far apart a zoom level out
   spacing: (zoom, feature) =>
-    (feature.kind === 'scrub' ? 5 : 9) * 2 ** Math.max(0, 15 - zoom),
-  plant,
+    (isBush(feature) ? 5 : 9) * 2 ** Math.max(0, 15 - zoom),
   avoid: [water, roads, buildings],
   // trunks are thinner than a pixel from afar: not drawn there
   maxDistance: (part) => (part === 'trunks' ? 1200 : undefined),
@@ -79,7 +45,7 @@ export const LAYERS = {
   buildings,
   roads,
   water,
-  trees,
+  vegetation,
   // side walls and a bottom: a solid block to print
   base: new TerrainBase()
 }
