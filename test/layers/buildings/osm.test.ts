@@ -52,6 +52,22 @@ describe('osmBuildingAttributes', () => {
     expect(osmBuildingAttributes({ building: 'yes' }).height).toBeUndefined()
   })
 
+  it('reads the levels of several sections: the highest, the lowest min level', () => {
+    // Cheboksary, Maxim Gorky Avenue 30/1: sections of 9 and 10 levels
+    expect(osmBuildingAttributes({ 'building:levels': '9,10' }).height).toBe(30)
+    expect(osmBuildingAttributes({ 'building:levels': '5; 7' }).height).toBe(21)
+    expect(
+      osmBuildingAttributes({ 'building:min_level': '2;1' }).minHeight
+    ).toBe(3)
+    // nothing to read: no levels, not none
+    expect(
+      osmBuildingAttributes({ 'building:levels': 'many' }).height
+    ).toBeUndefined()
+    expect(osmBuildingAttributes({ 'building:levels': '' }).height).toBe(
+      undefined
+    )
+  })
+
   it('reads min_height or building:min_level', () => {
     expect(osmBuildingAttributes({ min_height: '6 m' }).minHeight).toBe(6)
     expect(osmBuildingAttributes({ 'building:min_level': '2' }).minHeight).toBe(

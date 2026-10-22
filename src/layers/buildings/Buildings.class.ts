@@ -54,7 +54,10 @@ export interface BuildingsOptions {
   featureColors: boolean
   /** Color `highlight()` uses by default. */
   highlightColor: ColorRepresentation
-  /** Height in meters of buildings the source has none for. */
+  /**
+   * Height in meters of buildings the source has none for — or one above
+   * 1000 m, which no building reaches: a data error.
+   */
   defaultHeight: number
   /**
    * Hides the buildings of tiles farther than this from the camera, in
@@ -80,6 +83,14 @@ export const defaultBuildingsOptions: Readonly<
 /** The building under a ray: the feature and where it was hit. */
 export type BuildingHit = FeatureHit<BuildingFeature>
 
+/**
+ * Meters no building reaches (the tallest stands 828 m): a height above it
+ * is a data error — e.g. `building:levels=9,10` read as 910 levels — and
+ * counts as none.
+ */
+const MAX_HEIGHT = 1_000
+const credible = (meters: number | undefined) =>
+  meters !== undefined && meters <= MAX_HEIGHT ? meters : undefined
 /** Meters the walls reach below the lowest ground under them. */
 const FOUNDATION = 0.5
 /** On a slope, at least this much of a grounded building stays above ground (m). */
@@ -299,8 +310,8 @@ export class Buildings extends FeatureLayer<BuildingFeature> {
     const grid = this.gridRect(ctx.tile)
 
     for (const feature of features) {
-      const height = feature.height ?? defaultHeight
-      const minHeight = Math.max(0, feature.minHeight ?? 0)
+      const height = credible(feature.height) ?? defaultHeight
+      const minHeight = Math.max(0, credible(feature.minHeight) ?? 0)
       if (!(height > minHeight)) continue
 
       const polygons = this.clipToGrid(

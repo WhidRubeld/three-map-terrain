@@ -204,7 +204,7 @@ map.focus = camera.position // or controls.target: followed as it moves
 - **On the surface.** Walls start just below the lowest ground under them; the roof is `height` meters above it — and at least 3 m above the highest ground on a slope. Heights are scaled like the terrain. Parts with a `minHeight` (overhangs, towers on podiums) float with a floor; courtyards stay open. Roofs are flat.
 - **Once, whole.** A building is drawn by the terrain tile its center lies in, so one crossing a tile border is drawn once and never cut. Sources whose tiles are coarser than the terrain (most stop at zoom 14) are loaded once for the terrain tiles they cover.
 - **Cut at the edge.** With `clip` (default) buildings end with the grid: those crossing its edge are cut along it, and the parts of buildings outside that reach in are drawn — a clean section on a `TerrainBase`.
-- **Data.** Heights, minimum heights and colors come from the source: OSM `height`, `building:levels` (3 m each), `min_height`, `building:colour`; vector tiles with these precomputed. Outlines that have `building:part`s are left to the parts. Buildings without a height get `defaultHeight`.
+- **Data.** Heights, minimum heights and colors come from the source: OSM `height`, `building:levels` (3 m each; of several sections — `9;10`, `9,10` — the highest), `min_height`, `building:colour`; vector tiles with these precomputed. Outlines that have `building:part`s are left to the parts. Buildings without a height get `defaultHeight` — so do those above 1000 m, which no building reaches: a data error.
 - **Parts.** Every tile has a mesh of `walls` (UVs in meters along and up), `roofs`, `floors` and the `edges` (lines, with `edges` or in wireframe) — each can have [its own material](#materials).
 
 ### Roads and bridges
@@ -710,7 +710,7 @@ With React Three Fiber, pointer events already carry the hit: `map.getLocation(m
 | `clip`           | `true`    | Cut buildings at the edge of the grid, and draw the parts of those outside that reach in                                               |
 | `featureColors`  | `false`   | Draw buildings in the color the source gives them (OSM `building:colour`)                                                              |
 | `highlightColor` | `#ffb020` | The color of `highlight()`                                                                                                             |
-| `defaultHeight`  | `6`       | Meters, for buildings without a height                                                                                                 |
+| `defaultHeight`  | `6`       | Meters, for buildings without a height, or with one above 1000 m (a data error)                                                        |
 | `minZoom`        | `13`      | Terrain tiles below this zoom get no buildings                                                                                         |
 | `maxDistance`    | —         | Meters from the camera beyond which a tile's buildings are hidden, or `(part) => meters \| undefined`; see [Performance](#performance) |
 
@@ -787,6 +787,7 @@ Tiles are fetched with CORS. Network errors, HTTP 408/425/429/5xx and bodies tha
 
 Nothing breaks; worth knowing:
 
+- **Building heights above 1000 m count as none.** No building reaches them (the tallest stands 828 m): they are data errors — OpenFreeMap's tiles carry a 3331 m apartment block whose `building:levels=9,10` was read as 910 levels. Such a building, or a `minHeight` that high, now stands `defaultHeight` high on the ground; `pick` still returns the source's feature. Read from Overpass, `building:levels` of several sections (`9;10`, `9,10`) give the highest — before, such a building had none.
 - **Overlapping woods plant a spot once.** Two woods covering the same ground — `natural=wood` and `landuse=forest` often do — no longer stand two trees on every spot of the grid: fewer copies, the same picture.
 - Single trees from Overpass have the `kind` of their `natural` tag (`'tree'` for the trees the layer asks for).
 - The Overpass queries (`overpassQuery`, `overpassRoadsQuery`, `overpassWaterQuery`, `overpassTreesQuery`) take `more` selectors; sources with a preset `api` take `properties` and `layers`, with `overpass` a `query`.

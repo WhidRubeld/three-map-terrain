@@ -325,7 +325,9 @@ depends on the published package. After a release, bump it there.
   - Grounding: the ground is sampled along the outer walls every half
     terrain segment (`Tile.heightAt`, neighbours if loaded); walls from 0.5 m
     below the lowest point, the roof `height` above it and at least 3 m
-    above the highest; `minHeight > 0` floats with a floor.
+    above the highest; `minHeight > 0` floats with a floor. Heights above
+    `MAX_HEIGHT` (1000 m, more than any building) are data errors and
+    count as none: `defaultHeight`, grounded.
   - `ctx.extrude` into `walls` (UV: meters along, up), `roofs`, `floors`
     (UV: map meters) and `edges` (lines with `edges` or in wireframe; faces
     then get a polygon offset). Edges are the look's color × 0.62 (solid)
