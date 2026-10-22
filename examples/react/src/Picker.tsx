@@ -1,25 +1,40 @@
 import 'ol/ol.css'
 
 import { defaults as defaultControls } from 'ol/control/defaults'
+import { never } from 'ol/events/condition'
+import { equals, type Extent } from 'ol/extent'
 import Feature from 'ol/Feature'
 import type { Geometry } from 'ol/geom'
 import MultiLineString from 'ol/geom/MultiLineString'
 import Point from 'ol/geom/Point'
 import Polygon, { fromExtent } from 'ol/geom/Polygon'
 import { defaults as defaultInteractions } from 'ol/interaction/defaults'
+import ExtentInteraction from 'ol/interaction/Extent'
 import TileLayer from 'ol/layer/Tile'
 import VectorLayer from 'ol/layer/Vector'
 import OlMap from 'ol/Map'
+import { unByKey } from 'ol/Observable'
 import { fromLonLat, toLonLat, transformExtent } from 'ol/proj'
 import OSM, { ATTRIBUTION } from 'ol/source/OSM'
 import VectorSource from 'ol/source/Vector'
 import { Circle, Fill, Stroke, Style } from 'ol/style'
 import View from 'ol/View'
 import { type FormEvent, useEffect, useRef, useState } from 'react'
-import { Map, Utils } from 'three-map-terrain'
+import { Utils } from 'three-map-terrain'
 
 import { LAYERS, layersBelow, minZoom } from './layers'
-import { type Area, kilometers, ZOOMS } from './view'
+import {
+  type Area,
+  areaOf,
+  clamp,
+  type Grid,
+  gridOf,
+  kilometers,
+  onTiles,
+  sameGrid,
+  SIDES,
+  ZOOMS
+} from './view'
 
 /** A place Photon found: its location and, for areas, their extent. */
 interface Place {
@@ -29,20 +44,51 @@ interface Place {
   }
 }
 
-/** The area of `size × size` tiles at `zoom` whose center tile holds the location. */
-function areaAround(lat: number, lon: number, zoom: number, size: number) {
-  const { x, y } = Utils.position2tile(lat, lon, zoom)
-  const [w, s, e, n] = Utils.tile2bbox([x, y, zoom])
-  return { lat: (s + n) / 2, lon: (w + e) / 2, zoom, size }
+/** The extent of tiles at `zoom` in Web Mercator meters: their outer edges. */
+function extentOf({ minX, minY, maxX, maxY }: Grid, zoom: number) {
+  return transformExtent(
+    [
+      Utils.tile2lon(minX, zoom),
+      Utils.tile2lat(maxY + 1, zoom),
+      Utils.tile2lon(maxX + 1, zoom),
+      Utils.tile2lat(minY, zoom)
+    ],
+    'EPSG:4326',
+    'EPSG:3857'
+  )
 }
 
-/** The grid `new Map()` builds for the area; nothing loads before `init()`. */
-const gridOf = ({ lat, lon, zoom, size }: Area) =>
-  new Map({ location: { lat, lon }, options: { zoom, nTiles: size } })
+/**
+ * The tiles under the frame dragged to an extent: the edges on the
+ * nearest tile lines, those dragged (off the lines) 1–5 tiles from those
+ * that stay.
+ */
+function tilesUnder(extent: Extent, zoom: number): Grid {
+  const [west, south, east, north] = transformExtent(
+    extent,
+    'EPSG:3857',
+    'EPSG:4326'
+  )
+  const side = (from: number, to: number) => {
+    const [first, last] = [Math.round(from), Math.round(to) - 1]
+    return Math.abs(from - first) < 1e-6
+      ? [first, clamp(last, first + SIDES.min - 1, first + SIDES.max - 1)]
+      : [clamp(first, last - SIDES.max + 1, last - SIDES.min + 1), last]
+  }
+  const [minX, maxX] = side(
+    Utils.long2tile(west, zoom),
+    Utils.long2tile(east, zoom)
+  )
+  const [minY, maxY] = side(
+    Utils.lat2tile(north, zoom),
+    Utils.lat2tile(south, zoom)
+  )
+  return { minX, minY, maxX, maxY }
+}
 
-/** The area's extent in Web Mercator meters. */
-const extentOf = (area: Area) =>
-  transformExtent(gridOf(area).bounds, 'EPSG:4326', 'EPSG:3857')
+/** Seen from afar, the area is a dot: nothing dimmed, no edges to drag. */
+const small = (marker: Feature, resolution: number) =>
+  (marker.get('width') as number) / resolution < 24
 
 /** The world in Web Mercator meters: dimmed around the area. */
 const WORLD = fromExtent([-20037508.34, -20037508.34, 20037508.34, 20037508.34])
@@ -62,13 +108,21 @@ const STYLES = {
       fill: new Fill({ color: ORANGE }),
       stroke: new Stroke({ color: '#fff', width: 2 })
     })
+  }),
+  handle: new Style({
+    image: new Circle({
+      radius: 6,
+      fill: new Fill({ color: '#fff' }),
+      stroke: new Stroke({ color: ORANGE, width: 2.5 })
+    })
   })
 }
 
 /**
  * A map to pick an area on — OpenStreetMap, with OpenLayers: a click puts
- * the area there, wherever the map is. Its frame is the grid `new Map()`
- * builds, which `map.bounds` gives before anything loads.
+ * the area there, wherever the map is; dragging the frame's edges and
+ * corners reshapes it, a tile at a time. The frame is the grid `new Map()`
+ * gets.
  */
 export function Picker({
   area,
@@ -88,6 +142,19 @@ export function Picker({
     frame: new Feature<Polygon>(),
     marker: new Feature<Point>()
   }))
+  // the frame's edges and corners, dragged
+  const [resize] = useState(
+    () =>
+      new ExtentInteraction({
+        // never a new box: the frame is the one
+        createCondition: never,
+        condition: ({ map }) =>
+          !small(features.marker, map.getView().getResolution() ?? 0),
+        boxStyle: [],
+        pointerStyle: STYLES.handle,
+        pixelTolerance: 12
+      })
+  )
   const [framed, setFramed] = useState(area)
   const [searching, setSearching] = useState(false)
   const [notFound, setNotFound] = useState(false)
@@ -102,7 +169,7 @@ export function Picker({
     const margin = 0.15 * Math.min(width, height)
     // beside the panel on wide screens, below it on narrow ones
     const wide = width > 2 * box.width
-    view.fit(extentOf(next), {
+    view.fit(extentOf(gridOf(next), next.zoom), {
       padding: [
         wide ? margin : box.bottom + margin,
         margin,
@@ -117,14 +184,11 @@ export function Picker({
   useEffect(() => {
     if (!element.current) return
     const { mask, tiles, frame, marker } = features
-    // seen from afar, the area is a dot, and nothing is dimmed
-    const small = (resolution: number) =>
-      (marker.get('width') as number) / resolution < 24
     mask.setStyle((_, resolution) =>
-      small(resolution) ? undefined : STYLES.mask
+      small(marker, resolution) ? undefined : STYLES.mask
     )
     marker.setStyle((_, resolution) =>
-      small(resolution) ? STYLES.marker : undefined
+      small(marker, resolution) ? STYLES.marker : undefined
     )
     tiles.setStyle(STYLES.tiles)
     frame.setStyle(STYLES.frame)
@@ -155,32 +219,57 @@ export function Picker({
     })
     created.on('click', ({ coordinate }) => {
       const [lon, lat] = toLonLat(coordinate)
-      setFramed((current) => areaAround(lat, lon, current.zoom, current.size))
+      setFramed((current) => onTiles({ ...current, lat, lon }))
     })
+    const resized = resize.on('extentchanged', ({ extent }) => {
+      if (!extent) return
+      const zoom = resize.get('zoom') as number
+      const grid = tilesUnder(extent, zoom)
+      const snapped = extentOf(grid, zoom)
+      // the edges to drag stay on the frame, on tile lines
+      if (!equals(extent, snapped)) {
+        resize.setExtent(snapped)
+        return
+      }
+      setFramed((current) =>
+        current.zoom === zoom && sameGrid(gridOf(current), grid)
+          ? current
+          : areaOf(grid, zoom)
+      )
+    })
+    created.addInteraction(resize)
     map.current = created
     fit(area, 0)
     return () => {
+      unByKey(resized)
+      created.removeInteraction(resize)
       created.setTarget(undefined)
       map.current = null
     }
     // made once, around the area it opens on
-  }, [features])
+  }, [features, resize])
 
   // the frame, the tiles in it and the world around dimmed
   useEffect(() => {
     const grid = gridOf(framed)
-    const [west, south, east, north] = grid.bounds
-    const { minX, minY, zoom } = grid.grid
+    const { minX, minY, maxX, maxY } = grid
+    const extent = extentOf(grid, framed.zoom)
+    const [west, south, east, north] = extent
     const lines: number[][][] = []
-    for (let i = 1; i < framed.size; i++) {
-      const lon = Utils.tile2lon(minX + i, zoom)
-      const lat = Utils.tile2lat(minY + i, zoom)
-      lines.push(
-        [fromLonLat([lon, south]), fromLonLat([lon, north])],
-        [fromLonLat([west, lat]), fromLonLat([east, lat])]
-      )
+    for (let x = minX + 1; x <= maxX; x++) {
+      const [lon] = fromLonLat([Utils.tile2lon(x, framed.zoom), 0])
+      lines.push([
+        [lon, south],
+        [lon, north]
+      ])
     }
-    const extent = transformExtent(grid.bounds, 'EPSG:4326', 'EPSG:3857')
+    for (let y = minY + 1; y <= maxY; y++) {
+      const [, lat] = fromLonLat([0, Utils.tile2lat(y, framed.zoom)])
+      lines.push([
+        [west, lat],
+        [east, lat]
+      ])
+    }
     const ring = fromExtent(extent)
     features.mask.setGeometry(
       new Polygon([WORLD.getCoordinates()[0], ring.getCoordinates()[0]])
@@ -189,7 +278,10 @@ export function Picker({
     features.tiles.setGeometry(new MultiLineString(lines))
     features.marker.setGeometry(new Point(fromLonLat([framed.lon, framed.lat])))
     features.marker.set('width', extent[2] - extent[0])
-  }, [features, framed])
+    // the edges to drag are the frame's
+    resize.set('zoom', framed.zoom)
+    resize.setExtent(extent)
+  }, [features, resize, framed])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -200,8 +292,8 @@ export function Picker({
   }, [onCancel])
 
   /** The area at another zoom or size, around the same place, in view. */
-  const reframe = (zoom: number, size: number) => {
-    const next = areaAround(framed.lat, framed.lon, zoom, size)
+  const reframe = (zoom: number, columns: number, rows: number) => {
+    const next = onTiles({ ...framed, zoom, columns, rows })
     setFramed(next)
     fit(next)
   }
@@ -238,9 +330,10 @@ export function Picker({
         (east - west) / 360,
         Utils.lat2tile(south, 0) - Utils.lat2tile(north, 0)
       )
-      const fits = Math.floor(Math.log2(framed.size / across))
+      const tiles = Math.min(framed.columns, framed.rows)
+      const fits = Math.floor(Math.log2(tiles / across))
       const zoom = Math.max(ZOOMS.min, Math.min(framed.zoom, fits))
-      const next = areaAround(lat, lon, zoom, framed.size)
+      const next = onTiles({ ...framed, lat, lon, zoom })
       setFramed(next)
       fit(next)
     } catch {
@@ -258,7 +351,8 @@ export function Picker({
       <aside className='panel' ref={panel}>
         <h1>Pick an area</h1>
         <p className='muted'>
-          Click the map to put the area there; zoom out to go far.
+          Click the map to put the area there, drag its edges to reshape it;
+          zoom out to go far.
         </p>
         <form className='search' onSubmit={(event) => void search(event)}>
           <input
@@ -280,7 +374,9 @@ export function Picker({
               type='button'
               aria-label='Zoom out'
               disabled={framed.zoom <= ZOOMS.min}
-              onClick={() => reframe(framed.zoom - 1, framed.size)}
+              onClick={() =>
+                reframe(framed.zoom - 1, framed.columns, framed.rows)
+              }
             >
               −
             </button>
@@ -289,7 +385,9 @@ export function Picker({
               type='button'
               aria-label='Zoom in'
               disabled={framed.zoom >= ZOOMS.max}
-              onClick={() => reframe(framed.zoom + 1, framed.size)}
+              onClick={() =>
+                reframe(framed.zoom + 1, framed.columns, framed.rows)
+              }
             >
               +
             </button>
@@ -302,8 +400,8 @@ export function Picker({
               <button
                 key={n}
                 type='button'
-                aria-pressed={n === framed.size}
-                onClick={() => reframe(framed.zoom, n)}
+                aria-pressed={n === framed.columns && n === framed.rows}
+                onClick={() => reframe(framed.zoom, n, n)}
               >
                 {n} × {n}
               </button>
@@ -311,8 +409,8 @@ export function Picker({
           </div>
         </div>
         <p className='status'>
-          {framed.lat.toFixed(5)}, {framed.lon.toFixed(5)} ·{' '}
-          {kilometers(framed)} km wide
+          {framed.lat.toFixed(5)}, {framed.lon.toFixed(5)} · {framed.columns} ×{' '}
+          {framed.rows} tiles · {kilometers(framed)} km
         </p>
         {missing.length > 0 && (
           <p className='muted'>

@@ -79,13 +79,14 @@ examples/basic            plain three.js + webpack: San Francisco, Overture
                           imagery toned with a `process`
 examples/react            React Three Fiber + drei + Vite; the live example
                           (GitHub Pages, deployed from master), a small tool:
-                          areas picked on an OpenStreetMap map (Picker.tsx:
-                          OpenLayers, lazy; Photon search) or presets (Lausanne,
+                          areas (`grid`: columns × rows) picked on an
+                          OpenStreetMap map (Picker.tsx: OpenLayers, lazy; edges
+                          dragged with its Extent; Photon search) or presets (Lausanne,
                           Alps), layers toggled with add/removeLayer (layers.ts;
                           scrub as bushes: Trees `plant`), four looks (looks.ts;
                           colored.ts, textured.ts: materials per part), export;
                           the view lives in the URL (view.ts: place or lat/lon/
-                          z/n, ex, look, imagery, layers, pick). No Leaflet
+                          z/w/h, ex, look, imagery, layers, pick). No Leaflet
 docs/                     README images (WebP) of the examples: `yarn screenshots`
 scripts/screenshots.mjs   renders them from the built examples (Chrome + cwebp)
 .skills/                  agent skills (symlinked as .claude/skills)
@@ -117,8 +118,10 @@ depends on the published package. After a release, bump it there.
 
 ## How it works (read before touching src/)
 
-- `Map.init()` creates an `nTiles × nTiles` grid of `Tile`s around the
-  location's tile at `zoom`, loads them in parallel, then stitches seams.
+- `Map.init()` creates the `Tile`s of `map.grid` (`options.grid`: any
+  rectangle of tiles at `zoom`; else `nTiles × nTiles` around the location's
+  tile), loads them in parallel, then stitches seams. The location sets the
+  coordinates (`center`) either way, inside the grid or not.
   It resolves (and calls the optional callback) when geometry is ready;
   textures stream in afterwards (a wireframe `MeshNormalMaterial` placeholder
   is shown meanwhile).

@@ -456,6 +456,54 @@ describe('Map', () => {
       expect(west).toBeLessThan(location.lon)
       expect(north).toBeGreaterThan(location.lat)
     })
+
+    it('loads any rectangle of tiles given as grid, ignoring nTiles', async () => {
+      const grid = { minX: 10, minY: 20, maxX: 11, maxY: 22 }
+      const map = createMap({ options: { tileSegments: 8, nTiles: 5, grid } })
+      const keys = [10, 11]
+        .flatMap((x) => [20, 21, 22].map((y) => `11/${x}/${y}`))
+        .sort()
+
+      expect(map.grid).toEqual({ zoom: 11, ...grid })
+      const [west, south, east, north] = map.bounds
+      expect([west, north]).toEqual(
+        Utils.tile2bbox([10, 20, 11]).filter((_, i) => i === 0 || i === 3)
+      )
+      expect([south, east]).toEqual(
+        Utils.tile2bbox([11, 22, 11]).filter((_, i) => i === 1 || i === 2)
+      )
+
+      await map.init()
+      expect(map.ready).toBe(true)
+      expect(Object.keys(map.tileCache).sort()).toEqual(keys)
+      expect(map.terrain.children).toHaveLength(6)
+      // the location, outside the grid, still sets the coordinates
+      expect(map.center).toEqual({ x: 1069, y: 723 })
+      expect(tileAt(map, 10, 20).mesh.position.toArray()).toEqual([
+        (10 - 1069) * 600,
+        (723 - 20) * 600,
+        0
+      ])
+
+      await map.addTileSegment(12, 20)
+      expect(map.terrain.children).toHaveLength(7)
+      expect(map.removeTileSegment(12, 20)).toBe(true)
+
+      map.clean()
+      await map.init()
+      expect(Object.keys(map.tileCache).sort()).toEqual(keys)
+    })
+
+    it('rejects a grid that is not a rectangle of tiles', () => {
+      for (const grid of [
+        { minX: 11, minY: 20, maxX: 10, maxY: 22 },
+        { minX: 10, minY: 22, maxX: 11, maxY: 20 },
+        { minX: 10.5, minY: 20, maxX: 11, maxY: 22 },
+        { minX: 10, minY: 20, maxX: 11, maxY: Number.NaN }
+      ]) {
+        expect(() => createMap({ options: { grid } })).toThrow(/grid/)
+      }
+    })
   })
 
   describe('export', () => {

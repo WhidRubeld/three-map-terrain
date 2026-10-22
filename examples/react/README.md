@@ -10,16 +10,17 @@ a full app built with the library see
 What it shows:
 
 - **An area** ([src/App.tsx](src/App.tsx)) — `new Map(...)` in `useMemo`
-  for each area, `map.init()` / `map.clean()` in an effect (safe in
+  for each area, its `grid` any rectangle of tiles, `map.init()` / `map.clean()` in an effect (safe in
   `StrictMode`), on Mapterhorn elevation (worldwide, finer where finer data
   exists). It opens on Lausanne, from Lake Geneva up to the cathedral, true
   to scale, with every layer; the Bernese Alps are the other preset. The
   camera looks at the middle of the grid from `map.getTerrainPosition`.
 - **Picking an area** ([src/Picker.tsx](src/Picker.tsx)) — an OpenStreetMap
   map ([OpenLayers](https://openlayers.org), loaded when it opens): a click
-  puts the area there, at the zoom and size chosen; a search
-  ([Photon](https://photon.komoot.io)) takes it to a place. The frame is
-  the grid `new Map()` builds, from `map.bounds` before anything loads.
+  puts the area there, at the zoom chosen; dragging the frame's edges and
+  corners (`ol/interaction/Extent`) reshapes it a tile at a time, 1 to 5
+  tiles a side; a search ([Photon](https://photon.komoot.io)) takes it to a
+  place. The frame is the `grid` the map gets.
 - **Layers** ([src/layers.ts](src/layers.ts)) — OpenFreeMap buildings with
   their edges, roads and railways whose bridges span the valleys, water,
   woods with bushes in their scrub (`Trees` with `plant`, kept off the
@@ -50,8 +51,9 @@ link** shares it:
 | Parameter    | Meaning                                                                  |
 | ------------ | ------------------------------------------------------------------------ |
 | `place`      | a preset: `lausanne` (the default), `alps`                               |
-| `lat`, `lon` | any other area: the location its center tile holds                       |
-| `z`, `n`     | its zoom (8–16) and tiles along a side (3 or 5)                          |
+| `lat`, `lon` | any other area: its middle                                               |
+| `z`          | its zoom (8–16)                                                          |
+| `w`, `h`     | its tiles west to east and north to south (1–5); `n` for both            |
 | `ex`         | vertical exaggeration, 1 by default                                      |
 | `look`       | `plain`, `aerial`, `textured` or `wireframe`                             |
 | `imagery`    | the photos of aerial and textured: `sentinel` or `swisstopo`             |
@@ -60,7 +62,7 @@ link** shares it:
 
 What a link leaves out is the area's default — a preset's own, else
 plain, Sentinel-2 and every layer: `?place=lausanne&look=textured`,
-`?lat=27.98808&lon=86.92529&z=12&n=5&look=textured&layers=water,base`.
+`?lat=27.98808&lon=86.92529&z=12&w=5&h=3&look=textured&layers=water,base`.
 
 `three-map-terrain` is linked from the repository root, so build the library first:
 
