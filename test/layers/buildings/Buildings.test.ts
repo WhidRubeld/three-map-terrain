@@ -286,6 +286,28 @@ describe('Buildings', () => {
     expect(bounds(layer).max.z).toBeCloseTo(low + 12 * zScale, 3)
   })
 
+  it('takes heights no building reaches for none: data errors', async () => {
+    // OpenFreeMap's tiles read building:levels=9,10 as 910 levels: 3331 m
+    const { map, layer } = await setup(
+      [box(0.3, 0.3, 0.05, { height: 3331, minHeight: 2000 })],
+      { defaultHeight: 12 }
+    )
+
+    expect(layer.count).toBe(1)
+    const low = Math.min(groundZ(map, 0.3, 0.3), groundZ(map, 0.35, 0.35))
+    // on the ground, defaultHeight high, no floor
+    expect(bounds(layer).min.z).toBeLessThan(low)
+    expect(bounds(layer).max.z).toBeCloseTo(low + 12 * zScale, 3)
+    expect(part(layer, 'floors')).toHaveLength(0)
+  })
+
+  it('keeps the heights of the tallest buildings', async () => {
+    const { map, layer } = await setup([box(0.3, 0.3, 0.05, { height: 828 })])
+
+    const low = Math.min(groundZ(map, 0.3, 0.3), groundZ(map, 0.35, 0.35))
+    expect(bounds(layer).max.z).toBeCloseTo(low + 828 * zScale, 3)
+  })
+
   it('draws each building once, in the tile its center lies in', async () => {
     // the source returns the same buildings for every tile, like Overpass;
     // one straddles the border of the center tile and its eastern neighbour

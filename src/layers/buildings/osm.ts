@@ -14,13 +14,28 @@ import {
 // kept here for the tests and older imports
 export { joinRings, pointInRing }
 
+/**
+ * A count of levels; several — the sections of one building, `9;10` or
+ * `9,10` — give the highest (or with `pick = Math.min` the lowest).
+ */
+function levelsOf(
+  value: string | undefined,
+  pick: (...counts: number[]) => number = Math.max
+): number | undefined {
+  const counts = (value ?? '').split(/[;,]/).flatMap((part) => {
+    const count = part.trim() === '' ? undefined : toNumber(part)
+    return count === undefined ? [] : [count]
+  })
+  return counts.length > 0 ? pick(...counts) : undefined
+}
+
 /** Height, min height and color of an OSM building or part from its tags. */
 export function osmBuildingAttributes(
   tags: Readonly<Record<string, string | undefined>>
 ): BuildingAttributes {
-  const levels = toNumber(tags['building:levels'])
-  const roofLevels = toNumber(tags['roof:levels']) ?? 0
-  const minLevel = toNumber(tags['building:min_level'])
+  const levels = levelsOf(tags['building:levels'])
+  const roofLevels = levelsOf(tags['roof:levels']) ?? 0
+  const minLevel = levelsOf(tags['building:min_level'], Math.min)
   const color = tags['building:colour']?.trim()
 
   return {
